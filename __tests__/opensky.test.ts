@@ -1090,6 +1090,116 @@ describe('searchFlights', () => {
     );
   });
 
+  it('falls back to the live FlightAware record instead of a future scheduled duplicate when OpenSky has no live match', async () => {
+    process.env.OPENSKY_CLIENT_ID = 'client-from-env';
+    process.env.OPENSKY_CLIENT_SECRET = 'secret-from-env';
+    process.env.FLIGHT_AWARE_API_KEY = 'flightaware-key';
+    delete process.env.FLIGHTAWARE_API_KEY;
+    delete process.env.AVIATION_STACK_API_KEY;
+    delete process.env.MONGODB_URI;
+
+    const now = Math.floor(Date.now() / 1000);
+    const futureDeparture = new Date((now + (48 * 60 * 60)) * 1000).toISOString();
+    const futureArrival = new Date((now + (54 * 60 * 60)) * 1000).toISOString();
+    const liveDeparture = new Date((now - (2 * 60 * 60)) * 1000).toISOString();
+    const livePosition = new Date((now - 120) * 1000).toISOString();
+
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ access_token: 'token-123', expires_in: 1800 }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        time: now,
+        states: [],
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }))
+      .mockResolvedValueOnce(new Response(JSON.stringify([]), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        links: {},
+        num_pages: 1,
+        flights: [
+          {
+            ident: 'ETH575',
+            ident_icao: 'ETH575',
+            ident_iata: 'ET575',
+            fa_flight_id: 'ETH575-future',
+            operator: 'Ethiopian Airlines',
+            operator_icao: 'ETH',
+            operator_iata: 'ET',
+            flight_number: '575',
+            aircraft_type: 'B788',
+            origin: {
+              code: 'KORD',
+              code_icao: 'KORD',
+              code_iata: 'ORD',
+              name: "Chicago O'Hare Intl",
+            },
+            destination: {
+              code: 'HAAB',
+              code_icao: 'HAAB',
+              code_iata: 'ADD',
+              name: "Bole Int'l",
+            },
+            scheduled_out: futureDeparture,
+            scheduled_in: futureArrival,
+            last_position: null,
+          },
+          {
+            ident: 'ETH575',
+            ident_icao: 'ETH575',
+            ident_iata: 'ET575',
+            fa_flight_id: 'ETH575-live',
+            operator: 'Ethiopian Airlines',
+            operator_icao: 'ETH',
+            operator_iata: 'ET',
+            flight_number: '575',
+            aircraft_type: 'B788',
+            origin: {
+              code: 'KORD',
+              code_icao: 'KORD',
+              code_iata: 'ORD',
+              name: "Chicago O'Hare Intl",
+            },
+            destination: {
+              code: 'HAAB',
+              code_icao: 'HAAB',
+              code_iata: 'ADD',
+              name: "Bole Int'l",
+            },
+            actual_out: liveDeparture,
+            last_position: {
+              latitude: 46.4141,
+              longitude: 0.762,
+              altitude: 39450,
+              groundspeed: 460,
+              heading: 117,
+              timestamp: livePosition,
+            },
+          },
+        ],
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }));
+
+    vi.stubGlobal('fetch', fetchMock);
+
+    const searchFlights = await loadSearchFlights();
+    const result = await searchFlights('ETH575');
+
+    expect(result.flights).toHaveLength(1);
+    expect(result.flights[0]?.dataSource).toBe('flightaware');
+    expect(result.flights[0]?.callsign).toBe('ETH575');
+    expect(result.flights[0]?.current?.time).toBe(now - 120);
+    expect(result.flights[0]?.flightNumber).toBe('575');
+  });
+
   it('enriches live OpenSky matches with FlightAware metadata when available', async () => {
     process.env.OPENSKY_CLIENT_ID = 'client-from-env';
     process.env.OPENSKY_CLIENT_SECRET = 'secret-from-env';

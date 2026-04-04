@@ -353,6 +353,79 @@ function getRecordMatchScore(record: FlightAwareFlightRecord, identifier: string
   return 0;
 }
 
+function getRouteFirstSeen(record: FlightAwareFlightRecord): number | null {
+  return toTimestampSeconds(record.actual_out)
+    ?? toTimestampSeconds(record.actual_off)
+    ?? toTimestampSeconds(record.actual_runway_off)
+    ?? toTimestampSeconds(record.estimated_out)
+    ?? toTimestampSeconds(record.estimated_off)
+    ?? toTimestampSeconds(record.scheduled_out)
+    ?? toTimestampSeconds(record.scheduled_off);
+}
+
+function getRouteLastSeen(record: FlightAwareFlightRecord): number | null {
+  return toTimestampSeconds(record.actual_in)
+    ?? toTimestampSeconds(record.actual_on)
+    ?? toTimestampSeconds(record.actual_runway_on)
+    ?? toTimestampSeconds(record.estimated_in)
+    ?? toTimestampSeconds(record.estimated_on)
+    ?? toTimestampSeconds(record.scheduled_in)
+    ?? toTimestampSeconds(record.scheduled_on);
+}
+
+function getRecordTemporalScore(record: FlightAwareFlightRecord): number {
+  const nowSeconds = Math.floor(Date.now() / 1000);
+  const liveTimestamp = toTimestampSeconds(record.last_position?.timestamp);
+  const routeFirstSeen = getRouteFirstSeen(record);
+  const routeLastSeen = getRouteLastSeen(record);
+  const status = normalizeIdentifier(record.status);
+  let score = 0;
+
+  if (liveTimestamp != null) {
+    const liveAgeSeconds = Math.abs(nowSeconds - liveTimestamp);
+    score += 30;
+
+    if (liveAgeSeconds <= 15 * 60) {
+      score += 25;
+    } else if (liveAgeSeconds <= 2 * 60 * 60) {
+      score += 15;
+    } else if (liveAgeSeconds <= 12 * 60 * 60) {
+      score += 5;
+    }
+  }
+
+  if (/(ENROUTE|AIRBORNE|ACTIVE|DEPARTED|TAXI)/.test(status)) {
+    score += 12;
+  }
+
+  if (/(ARRIVED|CANCELLED|DIVERTED)/.test(status)) {
+    score -= 6;
+  }
+
+  const routeDeltas = [routeFirstSeen, routeLastSeen]
+    .filter((timestamp): timestamp is number => timestamp != null)
+    .map((timestamp) => Math.abs(timestamp - nowSeconds));
+  const nearestRouteDelta = routeDeltas.length > 0 ? Math.min(...routeDeltas) : null;
+
+  if (nearestRouteDelta != null) {
+    if (nearestRouteDelta <= 2 * 60 * 60) {
+      score += 10;
+    } else if (nearestRouteDelta <= 12 * 60 * 60) {
+      score += 4;
+    }
+  }
+
+  if (liveTimestamp == null && routeFirstSeen != null && routeFirstSeen > nowSeconds + (6 * 60 * 60)) {
+    score -= 35;
+  }
+
+  if (liveTimestamp == null && routeLastSeen != null && routeLastSeen > nowSeconds + (6 * 60 * 60)) {
+    score -= 20;
+  }
+
+  return score;
+}
+
 function toEnrichment(record: FlightAwareFlightRecord, identifier: string): FlightAwareFlightEnrichment {
   const normalizedIdentifier = normalizeIdentifier(identifier);
   const callsign = normalizeIdentifier(record.ident_icao)
@@ -363,20 +436,8 @@ function toEnrichment(record: FlightAwareFlightRecord, identifier: string): Flig
   const flightNumber = toNullableString(record.flight_number);
   const heading = toNullableNumber(record.last_position?.heading);
   const altitude = toAltitudeMeters(record.last_position?.altitude);
-  const routeFirstSeen = toTimestampSeconds(record.actual_out)
-    ?? toTimestampSeconds(record.actual_off)
-    ?? toTimestampSeconds(record.actual_runway_off)
-    ?? toTimestampSeconds(record.estimated_out)
-    ?? toTimestampSeconds(record.estimated_off)
-    ?? toTimestampSeconds(record.scheduled_out)
-    ?? toTimestampSeconds(record.scheduled_off);
-  const routeLastSeen = toTimestampSeconds(record.actual_in)
-    ?? toTimestampSeconds(record.actual_on)
-    ?? toTimestampSeconds(record.actual_runway_on)
-    ?? toTimestampSeconds(record.estimated_in)
-    ?? toTimestampSeconds(record.estimated_on)
-    ?? toTimestampSeconds(record.scheduled_in)
-    ?? toTimestampSeconds(record.scheduled_on);
+  const routeFirstSeen = getRouteFirstSeen(record);
+  const routeLastSeen = getRouteLastSeen(record);
   const onGround = Boolean(record.cancelled)
     || (altitude != null ? altitude <= 30 : false)
     || (routeLastSeen != null && routeFirstSeen != null && routeLastSeen <= routeFirstSeen);
@@ -539,7 +600,7 @@ export async function lookupFlightAwareFlightWithReport(identifier: string): Pro
       });
 
       for (const record of records) {
-        const score = getRecordMatchScore(record, normalizedIdentifier);
+        const score = getRecordMatchScore(record, normalizedIdentifier) + getRecordTemporalScore(record);
         if (score <= bestScore) {
           continue;
         }

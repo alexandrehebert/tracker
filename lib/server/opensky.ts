@@ -275,7 +275,8 @@ function createTrackedFlightFromAviationstack(
   sourceDetails?: FlightSourceDetail[],
 ): TrackedFlight {
   const current = match.current;
-  const route = sanitizeRouteTimes(createRouteFromAviationstackMatch(match), current?.time ?? null);
+  const routeReferenceTime = current?.time ?? Math.floor(Date.now() / 1000);
+  const route = sanitizeRouteTimes(createRouteFromAviationstackMatch(match), routeReferenceTime);
   const icao24 = normalizeIdentifier(match.aircraft.icao24 ?? match.identifier).toLowerCase() || `as-${normalizeIdentifier(identifier).toLowerCase()}`;
 
   return {
@@ -311,7 +312,8 @@ function createTrackedFlightFromFlightAware(
   sourceDetails?: FlightSourceDetail[],
 ): TrackedFlight {
   const current = match.current;
-  const route = sanitizeRouteTimes(createRouteFromFlightAwareMatch(match), current?.time ?? null);
+  const routeReferenceTime = current?.time ?? Math.floor(Date.now() / 1000);
+  const route = sanitizeRouteTimes(createRouteFromFlightAwareMatch(match), routeReferenceTime);
   const icao24 = normalizeIdentifier(match.aircraft.icao24 ?? match.identifier).toLowerCase() || `fa-${normalizeIdentifier(identifier).toLowerCase()}`;
 
   return {
