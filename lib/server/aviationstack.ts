@@ -1,4 +1,5 @@
 import { geoNaturalEarth1 } from 'd3-geo';
+import type { FlightSourceDetail } from '~/components/tracker/flight/types';
 
 export type AviationstackFlightEnrichment = {
   provider: 'aviationstack';
@@ -102,6 +103,11 @@ type SearchVariant = {
   params: Record<string, string>;
 };
 
+export type AviationstackLookupResult = {
+  match: AviationstackFlightEnrichment | null;
+  report: FlightSourceDetail;
+};
+
 const AVIATIONSTACK_API_BASE = 'https://api.aviationstack.com/v1';
 const TRACKER_MAP_VIEWBOX = { width: 1000, height: 560 };
 const PROVIDER_COOLDOWN_MS = 15 * 60 * 1000;
@@ -157,6 +163,36 @@ function getAccessKey(): string {
 
 function isRateLimited(): boolean {
   return Date.now() < providerCooldownUntil;
+}
+
+function createAviationstackReport(
+  status: FlightSourceDetail['status'],
+  reason: string,
+  usedInResult: boolean,
+  raw: Record<string, unknown> | null = null,
+): FlightSourceDetail {
+  return {
+    source: 'aviationstack',
+    status,
+    usedInResult,
+    reason,
+    raw,
+  };
+}
+
+function summarizeAviationstackMatch(match: AviationstackFlightEnrichment): Record<string, unknown> {
+  return {
+    callsign: match.callsign,
+    flightNumber: match.flightNumber,
+    route: match.route,
+    airline: match.airline,
+    aircraft: match.aircraft,
+    current: match.current,
+    velocity: match.velocity,
+    heading: match.heading,
+    geoAltitude: match.geoAltitude,
+    onGround: match.onGround,
+  };
 }
 
 export function isAviationstackConfigured(): boolean {
@@ -374,16 +410,58 @@ function toEnrichment(record: AviationstackFlightRecord, identifier: string): Av
   };
 }
 
-export async function lookupAviationstackFlight(identifier: string): Promise<AviationstackFlightEnrichment | null> {
+export async function lookupAviationstackFlightWithReport(identifier: string): Promise<AviationstackLookupResult> {
   const normalizedIdentifier = normalizeIdentifier(identifier);
-  if (!normalizedIdentifier || !isAviationstackConfigured() || isRateLimited()) {
-    return null;
+  if (!normalizedIdentifier) {
+    return {
+      match: null,
+      report: createAviationstackReport('skipped', 'Aviationstack lookup skipped because no flight identifier was provided.', false),
+    };
+  }
+
+  if (!isAviationstackConfigured()) {
+    return {
+      match: null,
+      report: createAviationstackReport(
+        'skipped',
+        'Aviationstack lookup skipped because `AVIATION_STACK_API_KEY` is not configured.',
+        false,
+        { identifier: normalizedIdentifier },
+      ),
+    };
+  }
+
+  if (isRateLimited()) {
+    return {
+      match: null,
+      report: createAviationstackReport(
+        'no-data',
+        'Aviationstack is temporarily cooling down after a rate-limit response.',
+        false,
+        { identifier: normalizedIdentifier, cooldownUntil: providerCooldownUntil },
+      ),
+    };
   }
 
   const cachedEntry = lookupCache.get(normalizedIdentifier);
   if (cachedEntry) {
     if (Date.now() < cachedEntry.expiresAt) {
-      return cachedEntry.payload;
+      return {
+        match: cachedEntry.payload,
+        report: cachedEntry.payload
+          ? createAviationstackReport(
+              'used',
+              'Aviationstack returned a cached match and its data was merged into this snapshot.',
+              true,
+              { identifier: normalizedIdentifier, cached: true, match: summarizeAviationstackMatch(cachedEntry.payload) },
+            )
+          : createAviationstackReport(
+              'no-data',
+              'Aviationstack was queried recently but no matching flight was returned.',
+              false,
+              { identifier: normalizedIdentifier, cached: true },
+            ),
+      };
     }
 
     lookupCache.delete(normalizedIdentifier);
@@ -391,23 +469,40 @@ export async function lookupAviationstackFlight(identifier: string): Promise<Avi
 
   let bestMatch: AviationstackFlightEnrichment | null = null;
   let bestScore = 0;
+  const attempts: Array<Record<string, unknown>> = [];
 
-  for (const variant of buildSearchVariants(normalizedIdentifier)) {
-    const records = await fetchFlights(variant.params);
+  try {
+    for (const variant of buildSearchVariants(normalizedIdentifier)) {
+      const records = await fetchFlights(variant.params);
+      attempts.push({
+        variant: variant.cacheKey,
+        params: variant.params,
+        returnedRecords: records.length,
+      });
 
-    for (const record of records) {
-      const score = getRecordMatchScore(record, normalizedIdentifier);
-      if (score <= bestScore) {
-        continue;
+      for (const record of records) {
+        const score = getRecordMatchScore(record, normalizedIdentifier);
+        if (score <= bestScore) {
+          continue;
+        }
+
+        bestScore = score;
+        bestMatch = toEnrichment(record, normalizedIdentifier);
       }
 
-      bestScore = score;
-      bestMatch = toEnrichment(record, normalizedIdentifier);
+      if (bestScore >= 110) {
+        break;
+      }
     }
-
-    if (bestScore >= 110) {
-      break;
-    }
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : 'Aviationstack request failed unexpectedly.';
+    return {
+      match: null,
+      report: createAviationstackReport('error', reason, false, {
+        identifier: normalizedIdentifier,
+        attempts,
+      }),
+    };
   }
 
   lookupCache.set(normalizedIdentifier, {
@@ -415,21 +510,68 @@ export async function lookupAviationstackFlight(identifier: string): Promise<Avi
     expiresAt: Date.now() + getCacheTtlMs(),
   });
 
-  return bestMatch;
+  if (!bestMatch) {
+    return {
+      match: null,
+      report: createAviationstackReport(
+        'no-data',
+        'Aviationstack was queried but returned no matching flight for this identifier.',
+        false,
+        {
+          identifier: normalizedIdentifier,
+          attempts,
+        },
+      ),
+    };
+  }
+
+  return {
+    match: bestMatch,
+    report: createAviationstackReport(
+      'used',
+      'Aviationstack returned a matching flight and its data was merged into this snapshot.',
+      true,
+      {
+        identifier: normalizedIdentifier,
+        attempts,
+        match: summarizeAviationstackMatch(bestMatch),
+      },
+    ),
+  };
 }
 
-export async function lookupAviationstackFlights(identifiers: string[]): Promise<Map<string, AviationstackFlightEnrichment>> {
+export async function lookupAviationstackFlight(identifier: string): Promise<AviationstackFlightEnrichment | null> {
+  const result = await lookupAviationstackFlightWithReport(identifier);
+  if (result.report.status === 'error') {
+    throw new Error(result.report.reason);
+  }
+
+  return result.match;
+}
+
+export async function lookupAviationstackFlightsWithReport(identifiers: string[]): Promise<Map<string, AviationstackLookupResult>> {
   const results = await Promise.all(
     identifiers.map(async (identifier) => ({
       identifier,
-      match: await lookupAviationstackFlight(identifier),
+      result: await lookupAviationstackFlightWithReport(identifier),
     })),
   );
 
+  const reports = new Map<string, AviationstackLookupResult>();
+  for (const entry of results) {
+    reports.set(entry.identifier, entry.result);
+  }
+
+  return reports;
+}
+
+export async function lookupAviationstackFlights(identifiers: string[]): Promise<Map<string, AviationstackFlightEnrichment>> {
+  const results = await lookupAviationstackFlightsWithReport(identifiers);
   const matches = new Map<string, AviationstackFlightEnrichment>();
-  for (const result of results) {
+
+  for (const [identifier, result] of results.entries()) {
     if (result.match) {
-      matches.set(result.identifier, result.match);
+      matches.set(identifier, result.match);
     }
   }
 

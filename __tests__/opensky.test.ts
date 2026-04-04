@@ -1,5 +1,77 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
+const mockMongoCollections = new Map<string, Map<string, Record<string, unknown>>>();
+
+function getMockMongoCollection(dbName: string, collectionName: string) {
+  const key = `${dbName}:${collectionName}`;
+  let store = mockMongoCollections.get(key);
+  if (!store) {
+    store = new Map<string, Record<string, unknown>>();
+    mockMongoCollections.set(key, store);
+  }
+
+  return store;
+}
+
+vi.mock('mongodb', () => {
+  class MongoClient {
+    constructor(_uri: string) {}
+
+    async connect() {
+      return this;
+    }
+
+    db(dbName: string) {
+      return {
+        collection(collectionName: string) {
+          const store = getMockMongoCollection(dbName, collectionName);
+
+          return {
+            async createIndex() {
+              return `${collectionName}_idx`;
+            },
+            async findOne(query: { _id: string; expiresAt?: { $gt: Date } }) {
+              const document = store.get(query._id);
+              if (!document) {
+                return null;
+              }
+
+              const expiryLimit = query.expiresAt?.$gt;
+              const expiresAt = document.expiresAt;
+              if (expiryLimit && expiresAt instanceof Date && expiresAt <= expiryLimit) {
+                return null;
+              }
+
+              return structuredClone(document);
+            },
+            async updateOne(
+              filter: { _id: string },
+              update: { $set: Record<string, unknown> },
+            ) {
+              const current = store.get(filter._id) ?? { _id: filter._id };
+              const next = {
+                ...current,
+                ...structuredClone(update.$set),
+                _id: filter._id,
+              } satisfies Record<string, unknown>;
+
+              store.set(filter._id, next);
+              return {
+                acknowledged: true,
+                matchedCount: current._id ? 1 : 0,
+                modifiedCount: 1,
+                upsertedCount: current._id ? 0 : 1,
+              };
+            },
+          };
+        },
+      };
+    }
+  }
+
+  return { MongoClient };
+});
+
 async function loadSearchFlights() {
   vi.resetModules();
   return (await import('~/lib/server/opensky')).searchFlights;
@@ -10,15 +82,23 @@ async function loadFlightSelectionDetails() {
   return (await import('~/lib/server/opensky')).getFlightSelectionDetails;
 }
 
+async function loadFlightCache() {
+  vi.resetModules();
+  return await import('~/lib/server/flightCache');
+}
+
 describe('searchFlights', () => {
   const originalClientId = process.env.OPENSKY_CLIENT_ID;
   const originalClientSecret = process.env.OPENSKY_CLIENT_SECRET;
   const originalAviationStackApiKey = process.env.AVIATION_STACK_API_KEY;
+  const originalFlightAwareApiKey = process.env.FLIGHTAWARE_API_KEY;
+  const originalFlightAwareApiKeyAlt = process.env.FLIGHT_AWARE_API_KEY;
   const originalMongoDbUri = process.env.MONGODB_URI;
   const originalCacheTtl = process.env.OPENSKY_CACHE_TTL_SECONDS;
 
   beforeEach(() => {
     vi.restoreAllMocks();
+    mockMongoCollections.clear();
     delete process.env.OPENSKY_CLIENT_ID;
     delete process.env.OPENSKY_CLIENT_SECRET;
   });
@@ -40,6 +120,18 @@ describe('searchFlights', () => {
       delete process.env.AVIATION_STACK_API_KEY;
     } else {
       process.env.AVIATION_STACK_API_KEY = originalAviationStackApiKey;
+    }
+
+    if (originalFlightAwareApiKey === undefined) {
+      delete process.env.FLIGHTAWARE_API_KEY;
+    } else {
+      process.env.FLIGHTAWARE_API_KEY = originalFlightAwareApiKey;
+    }
+
+    if (originalFlightAwareApiKeyAlt === undefined) {
+      delete process.env.FLIGHT_AWARE_API_KEY;
+    } else {
+      process.env.FLIGHT_AWARE_API_KEY = originalFlightAwareApiKeyAlt;
     }
 
     if (originalMongoDbUri === undefined) {
@@ -105,7 +197,7 @@ describe('searchFlights', () => {
     process.env.OPENSKY_CLIENT_ID = 'client-from-env';
     process.env.OPENSKY_CLIENT_SECRET = 'secret-from-env';
     process.env.OPENSKY_CACHE_TTL_SECONDS = '300';
-    delete process.env.MONGODB_URI;
+    process.env.MONGODB_URI = 'mongodb://mock:27017/tracker';
 
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify({ access_token: 'token-123', expires_in: 1800 }), {
@@ -127,11 +219,202 @@ describe('searchFlights', () => {
     expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
+  it('persists shared fetch-history snapshots across refreshes and cached reads', async () => {
+    process.env.OPENSKY_CLIENT_ID = 'client-from-env';
+    process.env.OPENSKY_CLIENT_SECRET = 'secret-from-env';
+    process.env.OPENSKY_CACHE_TTL_SECONDS = '300';
+    delete process.env.AVIATION_STACK_API_KEY;
+    delete process.env.FLIGHT_AWARE_API_KEY;
+    delete process.env.FLIGHTAWARE_API_KEY;
+    process.env.MONGODB_URI = 'mongodb://mock:27017/tracker';
+
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ access_token: 'token-123', expires_in: 1800 }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        time: 1_700_000_600,
+        states: [[
+          '39bd24',
+          'AFR123',
+          'France',
+          1_700_000_580,
+          1_700_000_600,
+          -15.4,
+          49.5,
+          10_668,
+          false,
+          905,
+          281,
+          0,
+          null,
+          10_668,
+          '1234',
+          false,
+          0,
+          null,
+        ]],
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ path: [] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }))
+      .mockResolvedValueOnce(new Response(JSON.stringify([]), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        time: 1_700_000_900,
+        states: [[
+          '39bd24',
+          'AFR123',
+          'France',
+          1_700_000_880,
+          1_700_000_900,
+          -14.9,
+          49.8,
+          11_050,
+          false,
+          920,
+          284,
+          0,
+          null,
+          11_050,
+          '1234',
+          false,
+          0,
+          null,
+        ]],
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ path: [] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }))
+      .mockResolvedValueOnce(new Response(JSON.stringify([]), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }));
+
+    vi.stubGlobal('fetch', fetchMock);
+
+    const searchFlights = await loadSearchFlights();
+    const firstResult = await searchFlights('AFR123');
+    const refreshedResult = await searchFlights('AFR123', { forceRefresh: true });
+    const cachedResult = await searchFlights('AFR123');
+
+    expect(firstResult.flights[0]?.fetchHistory).toHaveLength(1);
+    expect(refreshedResult.flights[0]?.fetchHistory).toHaveLength(2);
+    expect(cachedResult.flights[0]?.fetchHistory).toHaveLength(2);
+    expect(cachedResult.flights[0]?.lastContact).toBe(1_700_000_900);
+    expect(fetchMock).toHaveBeenCalledTimes(7);
+  });
+
+  it('keeps selected-flight snapshots in shared history after a cached page reload', async () => {
+    process.env.MONGODB_URI = 'mongodb://mock:27017/tracker';
+
+    const { readFlightSearchCache, writeFlightDetailsCache, writeFlightSearchCache } = await loadFlightCache();
+    const cacheKey = 'shared-history:afr123';
+
+    const baseFlight = {
+      icao24: '39bd24',
+      callsign: 'AFR123',
+      originCountry: 'France',
+      matchedBy: ['callsign'],
+      lastContact: 1_700_000_900,
+      current: null,
+      originPoint: null,
+      track: [],
+      rawTrack: [],
+      onGround: false,
+      velocity: 920,
+      heading: 284,
+      verticalRate: 0,
+      geoAltitude: 11_050,
+      baroAltitude: 11_050,
+      squawk: '1234',
+      category: null,
+      route: {
+        departureAirport: 'LFPG',
+        arrivalAirport: 'KJFK',
+        firstSeen: 1_700_000_000,
+        lastSeen: 1_700_002_400,
+      },
+      dataSource: 'opensky' as const,
+      sourceDetails: [],
+    };
+
+    await writeFlightSearchCache(cacheKey, {
+      query: 'AFR123',
+      requestedIdentifiers: ['AFR123'],
+      matchedIdentifiers: ['AFR123'],
+      notFoundIdentifiers: [],
+      fetchedAt: 1_700_000_000_000,
+      flights: [baseFlight],
+    }, 'search');
+
+    await writeFlightSearchCache(cacheKey, {
+      query: 'AFR123',
+      requestedIdentifiers: ['AFR123'],
+      matchedIdentifiers: ['AFR123'],
+      notFoundIdentifiers: [],
+      fetchedAt: 1_700_000_060_000,
+      flights: [
+        {
+          ...baseFlight,
+          lastContact: 1_700_000_960,
+          velocity: 930,
+          geoAltitude: 11_200,
+          baroAltitude: 11_200,
+        },
+      ],
+    }, 'manual-refresh');
+
+    await writeFlightDetailsCache('details:39bd24', {
+      icao24: '39bd24',
+      callsign: 'AFR123',
+      fetchedAt: 1_700_000_090_000,
+      route: {
+        departureAirport: 'LFPG',
+        arrivalAirport: 'KJFK',
+        firstSeen: 1_700_000_000,
+        lastSeen: 1_700_002_400,
+      },
+      departureAirport: null,
+      arrivalAirport: null,
+      flightNumber: '123',
+      airline: {
+        name: 'Air France',
+        iata: 'AF',
+        icao: 'AFR',
+      },
+      aircraft: {
+        registration: 'F-GZNN',
+        iata: 'B77W',
+        icao: 'B77W',
+        icao24: '39BD24',
+        model: 'Boeing 777-300ER',
+      },
+      dataSource: 'hybrid',
+      sourceDetails: [],
+    }, 'search');
+
+    const cachedResult = await readFlightSearchCache(cacheKey);
+
+    expect(cachedResult?.flights[0]?.fetchHistory).toHaveLength(3);
+  });
+
   it('bypasses the cached search result when forceRefresh is requested', async () => {
     process.env.OPENSKY_CLIENT_ID = 'client-from-env';
     process.env.OPENSKY_CLIENT_SECRET = 'secret-from-env';
     process.env.OPENSKY_CACHE_TTL_SECONDS = '300';
-    delete process.env.MONGODB_URI;
+    process.env.MONGODB_URI = 'mongodb://mock:27017/tracker';
 
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify({ access_token: 'token-123', expires_in: 1800 }), {
@@ -686,6 +969,164 @@ describe('searchFlights', () => {
       },
       dataSource: 'hybrid',
     });
+    expect(result.flights[0]?.sourceDetails).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          source: 'opensky',
+          status: 'used',
+        }),
+        expect.objectContaining({
+          source: 'aviationstack',
+          status: 'used',
+          usedInResult: true,
+        }),
+      ]),
+    );
+  });
+
+  it('enriches live OpenSky matches with FlightAware metadata when available', async () => {
+    process.env.OPENSKY_CLIENT_ID = 'client-from-env';
+    process.env.OPENSKY_CLIENT_SECRET = 'secret-from-env';
+    process.env.FLIGHT_AWARE_API_KEY = 'flightaware-key';
+    delete process.env.FLIGHTAWARE_API_KEY;
+    delete process.env.AVIATION_STACK_API_KEY;
+    delete process.env.MONGODB_URI;
+
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ access_token: 'token-123', expires_in: 1800 }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        time: 1_700_000_600,
+        states: [[
+          '39bd24',
+          'AFR123',
+          'France',
+          1_700_000_580,
+          1_700_000_600,
+          -15.4,
+          49.5,
+          10_668,
+          false,
+          905,
+          281,
+          0,
+          null,
+          10_668,
+          '1234',
+          false,
+          0,
+          null,
+        ]],
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        path: [
+          [1_700_000_300, 49.8, -12.0, 9_500, 270, false],
+          [1_700_000_480, 49.6, -13.5, 10_100, 276, false],
+        ],
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }))
+      .mockResolvedValueOnce(new Response(JSON.stringify([
+        {
+          estDepartureAirport: 'LFPG',
+          estArrivalAirport: 'KJFK',
+          firstSeen: 1_700_000_000,
+          lastSeen: 1_700_002_400,
+        },
+      ]), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        links: {},
+        num_pages: 1,
+        flights: [
+          {
+            ident: 'AFR123',
+            ident_icao: 'AFR123',
+            ident_iata: 'AF123',
+            fa_flight_id: 'AFR123-1712225100-airline-0123',
+            operator: 'Air France',
+            operator_icao: 'AFR',
+            operator_iata: 'AF',
+            flight_number: '123',
+            registration: 'F-GZNN',
+            atc_ident: 'AFR123',
+            aircraft_type: 'B77W',
+            origin: {
+              code: 'LFPG',
+              code_icao: 'LFPG',
+              code_iata: 'CDG',
+              name: 'Paris Charles de Gaulle Airport',
+              city: 'Paris',
+            },
+            destination: {
+              code: 'KJFK',
+              code_icao: 'KJFK',
+              code_iata: 'JFK',
+              name: 'John F. Kennedy International Airport',
+              city: 'New York',
+            },
+            scheduled_out: '2026-04-04T08:15:00Z',
+            estimated_out: '2026-04-04T08:18:00Z',
+            actual_out: '2026-04-04T08:19:00Z',
+            estimated_in: '2026-04-04T14:10:00Z',
+            last_position: {
+              fa_flight_id: 'AFR123-1712225100-airline-0123',
+              altitude: 35000,
+              groundspeed: 485,
+              heading: 281,
+              latitude: 49.5,
+              longitude: -15.4,
+              timestamp: '2026-04-04T10:05:00Z',
+            },
+          },
+        ],
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }));
+
+    vi.stubGlobal('fetch', fetchMock);
+
+    const searchFlights = await loadSearchFlights();
+    const result = await searchFlights('AFR123');
+
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('aeroapi.flightaware.com/aeroapi/flights/AFR123'))).toBe(true);
+    expect(result.flights).toHaveLength(1);
+    expect(result.notFoundIdentifiers).toEqual([]);
+    expect(result.flights[0]).toMatchObject({
+      callsign: 'AFR123',
+      flightNumber: '123',
+      airline: {
+        name: 'Air France',
+        icao: 'AFR',
+      },
+      aircraft: {
+        registration: 'F-GZNN',
+        model: 'B77W',
+      },
+      dataSource: 'hybrid',
+    });
+    expect(result.flights[0]?.sourceDetails).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          source: 'opensky',
+          status: 'used',
+        }),
+        expect.objectContaining({
+          source: 'flightaware',
+          status: 'used',
+          usedInResult: true,
+        }),
+      ]),
+    );
   });
 
   it('falls back to Aviationstack when OpenSky has no live match', async () => {
@@ -996,7 +1437,7 @@ describe('searchFlights', () => {
   it('caches selected-flight airport detail lookups for repeated selections', async () => {
     process.env.OPENSKY_CLIENT_ID = 'client-from-env';
     process.env.OPENSKY_CLIENT_SECRET = 'secret-from-env';
-    delete process.env.MONGODB_URI;
+    process.env.MONGODB_URI = 'mongodb://mock:27017/tracker';
 
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify({ access_token: 'token-123', expires_in: 1800 }), {

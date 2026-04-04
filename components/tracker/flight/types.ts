@@ -30,8 +30,18 @@ export interface FlightAircraftDetails {
   model: string | null;
 }
 
-export type FlightDataSource = 'opensky' | 'aviationstack' | 'hybrid';
+export type FlightDataSource = 'opensky' | 'aviationstack' | 'flightaware' | 'hybrid';
 export type FlightFetchTrigger = 'search' | 'auto-refresh' | 'manual-refresh';
+export type FlightSourceName = 'opensky' | 'aviationstack' | 'flightaware';
+export type FlightSourceStatus = 'used' | 'no-data' | 'skipped' | 'error';
+
+export interface FlightSourceDetail {
+  source: FlightSourceName;
+  status: FlightSourceStatus;
+  usedInResult: boolean;
+  reason: string;
+  raw?: Record<string, unknown> | null;
+}
 
 export interface FlightFetchSnapshot {
   id: string;
@@ -52,6 +62,7 @@ export interface FlightFetchSnapshot {
   aircraft?: FlightAircraftDetails | null;
   departureAirport?: AirportDetails | null;
   arrivalAirport?: AirportDetails | null;
+  sourceDetails?: FlightSourceDetail[];
 }
 
 export interface TrackedFlight {
@@ -77,6 +88,7 @@ export interface TrackedFlight {
   airline?: FlightAirlineDetails | null;
   aircraft?: FlightAircraftDetails | null;
   dataSource?: FlightDataSource;
+  sourceDetails?: FlightSourceDetail[];
   fetchHistory?: FlightFetchSnapshot[];
 }
 
@@ -115,6 +127,7 @@ export interface SelectedFlightDetails {
   airline?: FlightAirlineDetails | null;
   aircraft?: FlightAircraftDetails | null;
   dataSource?: FlightDataSource;
+  sourceDetails?: FlightSourceDetail[];
   fetchHistory?: FlightFetchSnapshot[];
 }
 

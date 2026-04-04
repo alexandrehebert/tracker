@@ -5,6 +5,7 @@ import { curveMonotoneX, line as d3Line } from 'd3-shape';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Activity,
+  ChevronDown,
   CircleAlert,
   Clock3,
   Gauge,
@@ -29,6 +30,8 @@ import type {
   FlightFetchSnapshot,
   FlightFetchTrigger,
   FlightMapPoint,
+  FlightSourceDetail,
+  FlightSourceName,
   SelectedFlightDetails as SelectedFlightDetailsPayload,
   TrackerApiResponse,
   TrackedFlight,
@@ -38,6 +41,18 @@ import type {
 const AUTO_REFRESH_MS = 60_000;
 const STORAGE_KEY = 'tracker:last-query';
 const URL_QUERY_KEY = 'q';
+const TRACKER_SOURCES: FlightSourceName[] = ['opensky', 'aviationstack', 'flightaware'];
+
+function formatSourceLabel(source: FlightSourceName): string {
+  switch (source) {
+    case 'flightaware':
+      return 'FlightAware';
+    case 'aviationstack':
+      return 'Aviationstack';
+    default:
+      return 'OpenSky';
+  }
+}
 
 interface FlightTrackerClientProps {
   map: WorldMapPayload;
@@ -105,9 +120,29 @@ function formatSpeed(value: number | null): string {
   return value == null ? '—' : `${Math.round(value * 3.6).toLocaleString()} km/h`;
 }
 
-function formatDataSourceLabel(dataSource: FlightDataSource | undefined): string {
+function formatDataSourceLabel(
+  dataSource: FlightDataSource | undefined,
+  sourceDetails?: FlightSourceDetail[] | null,
+): string {
+  const usedSources = (sourceDetails ?? [])
+    .filter((detail) => detail.usedInResult)
+    .map((detail) => detail.source);
+  const uniqueUsedSources = Array.from(new Set(usedSources));
+
+  if (uniqueUsedSources.length > 1) {
+    return uniqueUsedSources.map((source) => formatSourceLabel(source)).join(' + ');
+  }
+
+  if (uniqueUsedSources.length === 1) {
+    return formatSourceLabel(uniqueUsedSources[0]!);
+  }
+
   if (dataSource === 'hybrid') {
-    return 'OpenSky + Aviationstack';
+    return 'Multiple sources';
+  }
+
+  if (dataSource === 'flightaware') {
+    return 'FlightAware';
   }
 
   return dataSource === 'aviationstack' ? 'Aviationstack' : 'OpenSky';
@@ -133,6 +168,61 @@ function formatFetchTriggerLabel(trigger: FlightFetchTrigger): string {
     default:
       return 'Search';
   }
+}
+
+function formatSourceStatusLabel(status: FlightSourceDetail['status']): string {
+  switch (status) {
+    case 'used':
+      return 'Used';
+    case 'error':
+      return 'Error';
+    case 'no-data':
+      return 'No data';
+    default:
+      return 'Skipped';
+  }
+}
+
+function getSourceStatusClassName(status: FlightSourceDetail['status']): string {
+  switch (status) {
+    case 'used':
+      return 'border-emerald-400/30 bg-emerald-500/10 text-emerald-100';
+    case 'error':
+      return 'border-rose-400/30 bg-rose-500/10 text-rose-100';
+    case 'no-data':
+      return 'border-amber-400/30 bg-amber-500/10 text-amber-50';
+    default:
+      return 'border-slate-500/30 bg-slate-800/80 text-slate-200';
+  }
+}
+
+function mergeSourceDetails(
+  previous: FlightSourceDetail[] | undefined,
+  next: FlightSourceDetail[] | undefined,
+): FlightSourceDetail[] | undefined {
+  const merged = new Map<FlightSourceDetail['source'], FlightSourceDetail>();
+
+  for (const detail of [...(previous ?? []), ...(next ?? [])]) {
+    const existing = merged.get(detail.source);
+    if (!existing) {
+      merged.set(detail.source, detail);
+      continue;
+    }
+
+    const priority = { used: 4, error: 3, 'no-data': 2, skipped: 1 } as const;
+    const shouldUseIncomingStatus = priority[detail.status] >= priority[existing.status];
+
+    merged.set(detail.source, {
+      ...existing,
+      ...detail,
+      status: shouldUseIncomingStatus ? detail.status : existing.status,
+      usedInResult: existing.usedInResult || detail.usedInResult,
+      reason: detail.reason || existing.reason,
+      raw: detail.raw ?? existing.raw ?? null,
+    });
+  }
+
+  return merged.size > 0 ? Array.from(merged.values()) : undefined;
 }
 
 function normalizeHistoryIdentifier(value: string | null | undefined): string {
@@ -258,6 +348,7 @@ function reconcileTrackedFlight(previous: TrackedFlight | undefined, next: Track
     airline: next.airline ?? previous.airline,
     aircraft: next.aircraft ?? previous.aircraft,
     dataSource: mergeDataSource(previous.dataSource, next.dataSource),
+    sourceDetails: mergeSourceDetails(previous.sourceDetails, next.sourceDetails),
     fetchHistory: next.fetchHistory ?? previous.fetchHistory,
   };
 }
@@ -281,6 +372,7 @@ function reconcileSelectedFlightDetails(
     airline: next.airline ?? previous.airline,
     aircraft: next.aircraft ?? previous.aircraft,
     dataSource: mergeDataSource(previous.dataSource, next.dataSource),
+    sourceDetails: mergeSourceDetails(previous.sourceDetails, next.sourceDetails),
     fetchHistory: next.fetchHistory ?? previous.fetchHistory,
   };
 }
@@ -310,6 +402,7 @@ function buildFlightFetchSnapshot(
     aircraft: details?.aircraft ?? flight.aircraft ?? null,
     departureAirport: details?.departureAirport ?? null,
     arrivalAirport: details?.arrivalAirport ?? null,
+    sourceDetails: mergeSourceDetails(flight.sourceDetails, details?.sourceDetails) ?? [],
   };
 }
 
@@ -347,6 +440,7 @@ function mergeFlightFetchHistory(
       aircraft: snapshot.aircraft ?? current.aircraft,
       departureAirport: snapshot.departureAirport ?? current.departureAirport,
       arrivalAirport: snapshot.arrivalAirport ?? current.arrivalAirport,
+      sourceDetails: mergeSourceDetails(current.sourceDetails, snapshot.sourceDetails),
       dataSource: mergeDataSource(current.dataSource, snapshot.dataSource) ?? 'opensky',
     };
 
@@ -367,6 +461,7 @@ function mergeFlightFetchHistory(
     flightNumber: lastEntry.flightNumber,
     airline: lastEntry.airline,
     aircraft: lastEntry.aircraft,
+    sourceDetails: lastEntry.sourceDetails,
   }) : null;
   const snapshotComparable = JSON.stringify({
     dataSource: snapshot.dataSource,
@@ -381,6 +476,7 @@ function mergeFlightFetchHistory(
     flightNumber: snapshot.flightNumber,
     airline: snapshot.airline,
     aircraft: snapshot.aircraft,
+    sourceDetails: snapshot.sourceDetails,
   });
 
   if (previousComparable === snapshotComparable) {
@@ -389,6 +485,18 @@ function mergeFlightFetchHistory(
 
   nextHistory.push(snapshot);
   return nextHistory.slice(-8);
+}
+
+function mergeFetchHistorySources(...lists: Array<FlightFetchSnapshot[] | undefined>): FlightFetchSnapshot[] {
+  return lists.reduce<FlightFetchSnapshot[]>((merged, history) => {
+    let nextMerged = merged;
+
+    for (const snapshot of history ?? []) {
+      nextMerged = mergeFlightFetchHistory(nextMerged, snapshot);
+    }
+
+    return nextMerged;
+  }, []);
 }
 
 function reconcileTrackerPayload(
@@ -424,7 +532,14 @@ function reconcileTrackerPayload(
     ...incoming,
     flights: mergedFlights.map((flight) => {
       const snapshot = buildFlightFetchSnapshot(flight, incoming.fetchedAt, trigger);
-      const fetchHistory = mergeFlightFetchHistory(historyByFlight.get(flight.icao24), snapshot);
+      const fetchHistory = mergeFlightFetchHistory(
+        mergeFetchHistorySources(
+          historyByFlight.get(flight.icao24),
+          previousByIcao24.get(flight.icao24)?.fetchHistory,
+          flight.fetchHistory,
+        ),
+        snapshot,
+      );
       historyByFlight.set(flight.icao24, fetchHistory);
 
       return {
@@ -452,6 +567,20 @@ function summarizeSnapshotChanges(
       label: 'Source',
       value: `${formatDataSourceLabel(previousSnapshot.dataSource)} → ${formatDataSourceLabel(snapshot.dataSource)}`,
     });
+  }
+
+  for (const source of TRACKER_SOURCES) {
+    const currentSourceDetail = snapshot.sourceDetails?.find((detail) => detail.source === source);
+    const previousSourceDetail = previousSnapshot.sourceDetails?.find((detail) => detail.source === source);
+    const currentStatus = currentSourceDetail?.status ?? 'skipped';
+    const previousStatus = previousSourceDetail?.status ?? 'skipped';
+
+    if (currentStatus !== previousStatus) {
+      changes.push({
+        label: formatSourceLabel(source),
+        value: `${formatSourceStatusLabel(previousStatus)} → ${formatSourceStatusLabel(currentStatus)}`,
+      });
+    }
   }
 
   if (currentRoute !== previousRoute) {
@@ -526,13 +655,14 @@ function AltitudeTrendChart({ flight }: { flight: TrackedFlight }) {
   const timedSamples = samples.filter((sample) => sample.time != null && Number.isFinite(sample.time));
   const minAltitude = Math.min(...altitudes);
   const maxAltitude = Math.max(...altitudes);
+  const altitudeRange = Math.max(0, maxAltitude - minAltitude);
   const minTime = timedSamples[0]?.time ?? null;
   const maxTime = timedSamples.at(-1)?.time ?? null;
   const hasTimeScale = minTime != null && maxTime != null && maxTime > minTime;
 
   const altitudePadding = minAltitude === maxAltitude
     ? 300
-    : Math.max(120, (maxAltitude - minAltitude) * 0.35);
+    : Math.max(120, altitudeRange * 0.35);
   const altitudeDomainStart = minAltitude - altitudePadding;
   const altitudeDomainEnd = maxAltitude + altitudePadding;
   const timeDomainStart = minTime ?? 0;
@@ -543,6 +673,11 @@ function AltitudeTrendChart({ flight }: { flight: TrackedFlight }) {
   const yScale = scaleLinear()
     .domain([altitudeDomainStart, altitudeDomainEnd])
     .range([height - padding, padding]);
+  const scaleMarkers = [
+    { label: 'High', value: maxAltitude },
+    { label: 'Mid', value: minAltitude + (altitudeRange / 2) },
+    { label: 'Low', value: minAltitude },
+  ];
 
   const plottedPoints = samples.map((sample, index) => ({
     altitude: sample.altitude as number,
@@ -574,35 +709,62 @@ function AltitudeTrendChart({ flight }: { flight: TrackedFlight }) {
         </div>
       </div>
 
-      <div className="relative block w-full rounded-lg text-left">
-        <svg
-          viewBox={`0 0 ${width} ${height}`}
-          role="img"
-          aria-label={`Altitude history for ${chartLabel}`}
-          className="h-20 w-full"
-          preserveAspectRatio="none"
-        >
-          <path
-            d={linePath}
-            fill="none"
-            stroke="rgb(34 211 238)"
-            strokeWidth="2.5"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-          />
-        </svg>
-        {lastPointPosition ? (
-          <span
-            aria-hidden="true"
-            className="pointer-events-none absolute h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full border border-white/80 bg-white shadow-[0_0_0_2px_rgba(34,211,238,0.28)]"
-            style={lastPointPosition}
-          />
-        ) : null}
+      <div className="grid grid-cols-[minmax(0,4.5rem)_minmax(0,1fr)] items-stretch gap-3">
+        <div className="flex h-20 flex-col justify-between text-[10px] leading-none text-slate-400">
+          {scaleMarkers.map((marker) => (
+            <div key={marker.label} className="space-y-0.5">
+              <span className="sr-only">{`${marker.label} ${formatAltitude(marker.value)}`}</span>
+              <div className="uppercase tracking-[0.18em] text-slate-500">{marker.label}</div>
+              <div className="tabular-nums text-slate-200">{formatAltitude(marker.value)}</div>
+            </div>
+          ))}
+        </div>
+
+        <div className="relative block w-full rounded-lg text-left">
+          <svg
+            viewBox={`0 0 ${width} ${height}`}
+            role="img"
+            aria-label={`Altitude history for ${chartLabel}`}
+            className="h-20 w-full"
+            preserveAspectRatio="none"
+          >
+            {scaleMarkers.map((marker) => (
+              <line
+                key={`guide-${marker.label}`}
+                x1={padding}
+                x2={width - padding}
+                y1={yScale(marker.value)}
+                y2={yScale(marker.value)}
+                stroke="rgba(148, 163, 184, 0.24)"
+                strokeWidth="1"
+                strokeDasharray="4 4"
+              />
+            ))}
+            <path
+              d={linePath}
+              fill="none"
+              stroke="rgb(34 211 238)"
+              strokeWidth="2.5"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            />
+          </svg>
+          {lastPointPosition ? (
+            <span
+              aria-hidden="true"
+              className="pointer-events-none absolute h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full border border-white/80 bg-white shadow-[0_0_0_2px_rgba(34,211,238,0.28)]"
+              style={lastPointPosition}
+            />
+          ) : null}
+        </div>
       </div>
 
       <div className="mt-2 flex items-center justify-between text-[11px] text-slate-400">
-        <span>{samples[0]?.time ? formatTimestamp(samples[0].time * 1000) : 'Start'}</span>
-        <span>{samples.at(-1)?.time ? formatTimestamp((samples.at(-1)?.time ?? 0) * 1000) : 'Now'}</span>
+        <span>Range {formatAltitude(altitudeRange)}</span>
+        <div className="flex items-center gap-3">
+          <span>{samples[0]?.time ? formatTimestamp(samples[0].time * 1000) : 'Start'}</span>
+          <span>{samples.at(-1)?.time ? formatTimestamp((samples.at(-1)?.time ?? 0) * 1000) : 'Now'}</span>
+        </div>
       </div>
     </div>
   );
@@ -671,7 +833,10 @@ function SelectedFlightDetails({
   const airlineName = details?.airline?.name ?? flight.airline?.name ?? '—';
   const aircraftModel = details?.aircraft?.model ?? flight.aircraft?.model ?? '—';
   const aircraftRegistration = details?.aircraft?.registration ?? flight.aircraft?.registration ?? null;
-  const dataSourceLabel = formatDataSourceLabel(details?.dataSource ?? flight.dataSource ?? 'opensky');
+  const dataSourceLabel = formatDataSourceLabel(
+    details?.dataSource ?? flight.dataSource ?? 'opensky',
+    mergeSourceDetails(flight.sourceDetails, details?.sourceDetails),
+  );
 
   return (
     <div className="rounded-2xl border border-cyan-400/30 bg-cyan-500/10 p-4 text-sm text-slate-200 shadow-lg shadow-cyan-950/20">
@@ -734,7 +899,7 @@ function SelectedFlightDetails({
 
       <div className="mt-4 flex items-center justify-between gap-3 rounded-2xl border border-white/10 bg-slate-950/35 px-3 py-2 text-xs text-slate-300">
         <p>
-          {fetchHistory.length} snapshot{fetchHistory.length === 1 ? '' : 's'} reconciled during this session.
+          {fetchHistory.length} cached snapshot{fetchHistory.length === 1 ? '' : 's'} shared across refreshes.
         </p>
         <button
           type="button"
@@ -860,20 +1025,27 @@ function FlightFetchHistoryModal({
           {orderedHistory.map((snapshot, index) => {
             const previousSnapshot = orderedHistory[index + 1] ?? null;
             const changes = summarizeSnapshotChanges(snapshot, previousSnapshot);
+            const hasNoMaterialChanges = changes.length === 1
+              && changes[0]?.label === 'Diff'
+              && changes[0]?.value === 'No material change detected';
+            const sourceBreakdown: FlightSourceDetail[] = TRACKER_SOURCES.map((source) => (
+              snapshot.sourceDetails?.find((detail) => detail.source === source)
+              ?? {
+                source,
+                status: 'skipped',
+                usedInResult: false,
+                reason: source === 'aviationstack'
+                  ? 'No Aviationstack diagnostic data was recorded for this snapshot.'
+                  : source === 'flightaware'
+                    ? 'No FlightAware diagnostic data was recorded for this snapshot.'
+                    : 'No OpenSky diagnostic data was recorded for this snapshot.',
+                raw: null,
+              } satisfies FlightSourceDetail
+            ));
 
-            return (
-              <section key={snapshot.id} className="rounded-2xl border border-white/10 bg-slate-900/70 p-4 text-sm text-slate-200">
-                <div className="flex flex-wrap items-start justify-between gap-3">
-                  <div>
-                    <div className="text-xs uppercase tracking-[0.2em] text-cyan-200/80">{formatFetchTriggerLabel(snapshot.trigger)}</div>
-                    <div className="mt-1 text-sm text-slate-300">{formatDateTimeMillis(snapshot.capturedAt)}</div>
-                  </div>
-                  <span className="rounded-full border border-cyan-300/30 bg-cyan-500/10 px-2.5 py-1 text-[11px] font-semibold text-cyan-100">
-                    {formatDataSourceLabel(snapshot.dataSource)}
-                  </span>
-                </div>
-
-                <dl className="mt-3 grid grid-cols-2 gap-2 text-xs [&>div]:min-w-0 [&_dd]:break-words">
+            const snapshotBody = (
+              <div className="mt-3">
+                <dl className="grid grid-cols-2 gap-2 text-xs [&>div]:min-w-0 [&_dd]:break-words">
                   <div>
                     <dt className="text-slate-400">Route</dt>
                     <dd>{snapshot.route.departureAirport ?? '—'} → {snapshot.route.arrivalAirport ?? '—'}</dd>
@@ -892,21 +1064,72 @@ function FlightFetchHistoryModal({
                   </div>
                 </dl>
 
-                <div className="mt-3 flex flex-wrap gap-2">
-                  {changes.map((change) => (
-                    <span
-                      key={`${snapshot.id}-${change.label}`}
-                      className="rounded-full border border-white/10 bg-slate-950/70 px-2.5 py-1 text-[11px] text-slate-200"
-                    >
-                      <span className="font-semibold text-cyan-100">{change.label}:</span> {change.value}
-                    </span>
+                {!hasNoMaterialChanges ? (
+                  <div className="mt-3 flex flex-wrap gap-2">
+                    {changes.map((change) => (
+                      <span
+                        key={`${snapshot.id}-${change.label}`}
+                        className="rounded-full border border-white/10 bg-slate-950/70 px-2.5 py-1 text-[11px] text-slate-200"
+                      >
+                        <span className="font-semibold text-cyan-100">{change.label}:</span> {change.value}
+                      </span>
+                    ))}
+                  </div>
+                ) : null}
+
+                <div className="mt-3 grid gap-3 md:grid-cols-2">
+                  {sourceBreakdown.map((detail) => (
+                    <div key={`${snapshot.id}-${detail.source}`} className="rounded-2xl border border-white/10 bg-slate-950/55 p-3">
+                      <div className="flex items-start justify-between gap-2">
+                        <div>
+                          <div className="text-sm font-semibold text-white">{formatSourceLabel(detail.source)}</div>
+                          <div className="mt-1 text-[11px] text-slate-300">{detail.reason}</div>
+                        </div>
+                        <span className={`shrink-0 whitespace-nowrap rounded-full border px-2 py-1 text-[10px] font-semibold ${getSourceStatusClassName(detail.status)}`}>
+                          {formatSourceStatusLabel(detail.status)}
+                        </span>
+                      </div>
+
+                      <div className="mt-2 text-[11px] text-cyan-100/90">
+                        {detail.usedInResult ? 'Used in the reconciled snapshot' : 'Not used in the reconciled snapshot'}
+                      </div>
+
+                      <details className="mt-2 rounded-xl border border-white/10 bg-slate-900/70 px-2.5 py-2 text-[11px] text-slate-300">
+                        <summary className="cursor-pointer font-semibold text-cyan-100">View source payload</summary>
+                        <pre className="mt-2 overflow-x-auto whitespace-pre-wrap break-words text-[11px] text-slate-200">{JSON.stringify(detail.raw ?? null, null, 2)}</pre>
+                      </details>
+                    </div>
                   ))}
                 </div>
 
                 <details className="mt-3 rounded-2xl border border-white/10 bg-slate-950/55 px-3 py-2 text-xs text-slate-300">
-                  <summary className="cursor-pointer font-semibold text-cyan-100">View raw snapshot</summary>
+                  <summary className="cursor-pointer font-semibold text-cyan-100">View raw reconciled snapshot</summary>
                   <pre className="mt-2 overflow-x-auto whitespace-pre-wrap break-words text-[11px] text-slate-200">{JSON.stringify(snapshot, null, 2)}</pre>
                 </details>
+              </div>
+            );
+
+            return (
+              <section key={snapshot.id} className="rounded-2xl border border-white/10 bg-slate-900/70 p-4 text-sm text-slate-200">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <div className="text-xs uppercase tracking-[0.2em] text-cyan-200/80">{formatFetchTriggerLabel(snapshot.trigger)}</div>
+                    <div className="mt-1 text-sm text-slate-300">{formatDateTimeMillis(snapshot.capturedAt)}</div>
+                  </div>
+                  <span className="rounded-full border border-cyan-300/30 bg-cyan-500/10 px-2.5 py-1 text-[11px] font-semibold text-cyan-100">
+                    {formatDataSourceLabel(snapshot.dataSource, snapshot.sourceDetails)}
+                  </span>
+                </div>
+
+                {hasNoMaterialChanges ? (
+                  <details className="group mt-3 text-xs text-slate-300">
+                    <summary className="flex cursor-pointer list-none items-center gap-2 font-semibold text-cyan-100 transition hover:text-cyan-50 [&::-webkit-details-marker]:hidden">
+                      <ChevronDown className="h-4 w-4 shrink-0 transition-transform duration-200 group-open:rotate-180" />
+                      <span>No material change detected</span>
+                    </summary>
+                    {snapshotBody}
+                  </details>
+                ) : snapshotBody}
               </section>
             );
           })}
@@ -1020,7 +1243,10 @@ function FlightTrackerDashboard({ map }: FlightTrackerClientProps) {
       return [];
     }
 
-    return selectedFlight.fetchHistory ?? flightFetchHistoryRef.current.get(selectedFlight.icao24) ?? [];
+    return mergeFetchHistorySources(
+      selectedFlight.fetchHistory,
+      flightFetchHistoryRef.current.get(selectedFlight.icao24),
+    );
   }, [selectedFlight]);
 
   useEffect(() => {
@@ -1046,7 +1272,7 @@ function FlightTrackerDashboard({ map }: FlightTrackerClientProps) {
     if (cachedDetails) {
       setSelectedFlightDetails({
         ...cachedDetails,
-        fetchHistory: selectedFlight.fetchHistory ?? cachedDetails.fetchHistory,
+        fetchHistory: mergeFetchHistorySources(selectedFlight.fetchHistory, cachedDetails.fetchHistory),
       });
       setSelectedFlightDetailsError(null);
       setIsLoadingSelectedFlightDetails(false);
@@ -1104,7 +1330,14 @@ function FlightTrackerDashboard({ map }: FlightTrackerClientProps) {
           ?? null;
         const reconciledDetails = reconcileSelectedFlightDetails(previousDetails, payload);
         const snapshot = buildFlightFetchSnapshot(selectedFlight, reconciledDetails.fetchedAt, shouldForceRefresh ? 'manual-refresh' : 'search', reconciledDetails);
-        const fetchHistory = mergeFlightFetchHistory(flightFetchHistoryRef.current.get(selectedFlight.icao24), snapshot);
+        const fetchHistory = mergeFlightFetchHistory(
+          mergeFetchHistorySources(
+            flightFetchHistoryRef.current.get(selectedFlight.icao24),
+            selectedFlight.fetchHistory,
+            reconciledDetails.fetchHistory,
+          ),
+          snapshot,
+        );
         flightFetchHistoryRef.current.set(selectedFlight.icao24, fetchHistory);
 
         const nextDetails = {
@@ -1240,7 +1473,7 @@ function FlightTrackerDashboard({ map }: FlightTrackerClientProps) {
 
         return {
           ...current,
-          fetchHistory: matchingFlight.fetchHistory ?? current.fetchHistory,
+          fetchHistory: mergeFetchHistorySources(matchingFlight.fetchHistory, current.fetchHistory),
         };
       });
       setStaleMatchNotice(

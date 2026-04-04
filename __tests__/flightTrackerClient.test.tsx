@@ -91,6 +91,41 @@ const responsePayload = {
         firstSeen: null,
         lastSeen: null,
       },
+      dataSource: 'hybrid',
+      sourceDetails: [
+        {
+          source: 'opensky',
+          status: 'used',
+          usedInResult: true,
+          reason: 'OpenSky matched this flight from live state vectors and recent route history.',
+          raw: {
+            route: {
+              departureAirport: 'CDG',
+              arrivalAirport: 'JFK',
+            },
+          },
+        },
+        {
+          source: 'aviationstack',
+          status: 'used',
+          usedInResult: true,
+          reason: 'Aviationstack returned a matching flight and its data was merged into this snapshot.',
+          raw: {
+            flightNumber: '12',
+            airline: 'Air France',
+          },
+        },
+        {
+          source: 'flightaware',
+          status: 'used',
+          usedInResult: true,
+          reason: 'FlightAware AeroAPI returned a matching flight and its data was merged into this snapshot.',
+          raw: {
+            flightNumber: '12',
+            registration: 'F-GZNN',
+          },
+        },
+      ],
     },
   ],
 };
@@ -125,6 +160,41 @@ const detailsPayload = {
     latitude: 40.6413,
     longitude: -73.7781,
   },
+  dataSource: 'hybrid',
+  sourceDetails: [
+    {
+      source: 'opensky',
+      status: 'used',
+      usedInResult: true,
+      reason: 'OpenSky route history was used to populate the selected-flight details.',
+      raw: {
+        route: {
+          departureAirport: 'CDG',
+          arrivalAirport: 'JFK',
+        },
+      },
+    },
+    {
+      source: 'aviationstack',
+      status: 'used',
+      usedInResult: true,
+      reason: 'Aviationstack returned a matching flight and its data was merged into this snapshot.',
+      raw: {
+        flightNumber: '12',
+        airline: 'Air France',
+      },
+    },
+    {
+      source: 'flightaware',
+      status: 'used',
+      usedInResult: true,
+      reason: 'FlightAware AeroAPI returned a matching flight and its data was merged into this snapshot.',
+      raw: {
+        flightNumber: '12',
+        registration: 'F-GZNN',
+      },
+    },
+  ],
 };
 
 describe('FlightTrackerClient', () => {
@@ -291,8 +361,160 @@ describe('FlightTrackerClient', () => {
 
     const dialog = await screen.findByRole('dialog', { name: /flight fetch history/i });
     expect(within(dialog).getByText(/manual refresh/i)).toBeInTheDocument();
+    expect(within(dialog).getAllByText(/^OpenSky$/i).length).toBeGreaterThan(0);
+    expect(within(dialog).getAllByText(/^Aviationstack$/i).length).toBeGreaterThan(0);
+    expect(within(dialog).getAllByText(/^FlightAware$/i).length).toBeGreaterThan(0);
+    expect(within(dialog).getAllByText(/OpenSky matched this flight from live state vectors/i).length).toBeGreaterThan(0);
+    expect(within(dialog).getAllByText(/Aviationstack returned a matching flight and its data was merged/i).length).toBeGreaterThan(0);
+    expect(within(dialog).getAllByText(/FlightAware AeroAPI returned a matching flight and its data was merged/i).length).toBeGreaterThan(0);
+    expect(within(dialog).getAllByText(/used in the reconciled snapshot/i).length).toBeGreaterThan(0);
     expect(within(dialog).getAllByText(/^Altitude$/i).length).toBeGreaterThan(0);
     expect(within(dialog).getAllByText(/10,850 m/i).length).toBeGreaterThan(0);
+  });
+
+  it('folds unchanged fetch-history snapshots when a provider remains skipped', async () => {
+    const user = userEvent.setup();
+    const initialPayload = {
+      ...responsePayload,
+      fetchedAt: 1_700_000_000_000,
+      flights: [
+        {
+          ...responsePayload.flights[0],
+          sourceDetails: [
+            {
+              source: 'opensky' as const,
+              status: 'used' as const,
+              usedInResult: true,
+              reason: 'OpenSky matched this flight from live state vectors and recent route history.',
+              raw: { source: 'opensky' },
+            },
+          ],
+        },
+      ],
+    };
+    const refreshedPayload = {
+      ...initialPayload,
+      fetchedAt: 1_700_000_060_000,
+      flights: [
+        {
+          ...initialPayload.flights[0],
+          sourceDetails: [
+            ...initialPayload.flights[0].sourceDetails,
+            {
+              source: 'flightaware' as const,
+              status: 'skipped' as const,
+              usedInResult: false,
+              reason: 'FlightAware returned no usable match for this snapshot.',
+              raw: null,
+            },
+          ],
+        },
+      ],
+    };
+
+    vi.spyOn(window, 'fetch').mockImplementation(async (input) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      const payload = url.includes('refresh=1') ? refreshedPayload : initialPayload;
+
+      return new Response(JSON.stringify(payload), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    });
+
+    render(<FlightTrackerClient map={map} />);
+
+    await user.type(screen.getByLabelText(/flight identifiers/i), 'AFR12');
+    await user.click(screen.getByRole('button', { name: /track flights/i }));
+    expect(await screen.findByText(/selected flight/i)).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: /refresh/i }));
+    await user.click(await screen.findByRole('button', { name: /view fetch history/i }));
+
+    const dialog = await screen.findByRole('dialog', { name: /flight fetch history/i });
+    expect(within(dialog).getByText(/No material change detected/i)).toBeInTheDocument();
+    expect(within(dialog).queryByText(/Skipped → Skipped/i)).not.toBeInTheDocument();
+  });
+
+  it('keeps shared cached fetch history returned by the API', async () => {
+    const user = userEvent.setup();
+    const cachedFetchedAt = 1_700_000_000_000;
+    const cachedSearchPayload = {
+      ...responsePayload,
+      fetchedAt: cachedFetchedAt,
+      flights: [
+        {
+          ...responsePayload.flights[0],
+          lastContact: 1_700_000_000,
+          fetchHistory: [
+            {
+              id: '3c675a:search:1699999940000',
+              capturedAt: 1_699_999_940_000,
+              trigger: 'search' as const,
+              dataSource: 'hybrid' as const,
+              matchedBy: ['callsign'],
+              route: {
+                departureAirport: 'CDG',
+                arrivalAirport: 'JFK',
+                firstSeen: null,
+                lastSeen: null,
+              },
+              current: null,
+              onGround: false,
+              lastContact: 1_699_999_940,
+              velocity: 220,
+              heading: 180,
+              geoAltitude: 9600,
+              baroAltitude: 9650,
+              sourceDetails: responsePayload.flights[0].sourceDetails,
+            },
+            {
+              id: `3c675a:search:${cachedFetchedAt}`,
+              capturedAt: cachedFetchedAt,
+              trigger: 'search' as const,
+              dataSource: 'hybrid' as const,
+              matchedBy: ['callsign'],
+              route: {
+                departureAirport: 'CDG',
+                arrivalAirport: 'JFK',
+                firstSeen: null,
+                lastSeen: null,
+              },
+              current: null,
+              onGround: false,
+              lastContact: 1_700_000_000,
+              velocity: 230,
+              heading: 180,
+              geoAltitude: 10000,
+              baroAltitude: 10050,
+              sourceDetails: responsePayload.flights[0].sourceDetails,
+            },
+          ],
+        },
+      ],
+    };
+    const cachedDetailsPayload = {
+      ...detailsPayload,
+      fetchedAt: cachedFetchedAt,
+    };
+
+    vi.spyOn(window, 'fetch').mockImplementation(async (input) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      const payload = url.startsWith('/api/tracker/details') ? cachedDetailsPayload : cachedSearchPayload;
+
+      return new Response(JSON.stringify(payload), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    });
+
+    render(<FlightTrackerClient map={map} />);
+
+    await user.type(screen.getByLabelText(/flight identifiers/i), 'AFR12');
+    await user.click(screen.getByRole('button', { name: /track flights/i }));
+
+    expect(await screen.findByText(/selected flight/i)).toBeInTheDocument();
+    expect(await screen.findByText(/2 cached snapshots shared across refreshes/i)).toBeInTheDocument();
   });
 
   it('clears tracked flights when the search field is emptied', async () => {
@@ -427,6 +649,19 @@ describe('FlightTrackerClient', () => {
 
     expect(await screen.findByText(/altitude trend/i)).toBeInTheDocument();
     expect(screen.getByRole('img', { name: /altitude history for AFR12/i })).toBeInTheDocument();
+  });
+
+  it('shows the altitude variation scale for the selected flight chart', async () => {
+    const user = userEvent.setup();
+
+    render(<FlightTrackerClient map={map} />);
+
+    await user.type(screen.getByLabelText(/flight identifiers/i), 'AFR12');
+    await user.click(screen.getByRole('button', { name: /track flights/i }));
+
+    expect(await screen.findByText(/range 1,800 m/i)).toBeInTheDocument();
+    expect(screen.getByText(/high 10,000 m/i)).toBeInTheDocument();
+    expect(screen.getByText(/low 8,200 m/i)).toBeInTheDocument();
   });
 
   it('renders the altitude trend endpoint marker as a circular overlay', async () => {

@@ -11,10 +11,6 @@ describe('airport directory helpers', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
     delete process.env.MONGODB_URI;
-    globalThis.__trackerMongoClientPromise__ = undefined;
-    globalThis.__trackerFlightCacheIndexesReady__ = undefined;
-    globalThis.__trackerFlightDetailsCacheIndexesReady__ = undefined;
-    globalThis.__trackerAirportDirectoryCacheIndexesReady__ = undefined;
   });
 
   afterEach(() => {
@@ -24,10 +20,6 @@ describe('airport directory helpers', () => {
       process.env.MONGODB_URI = originalMongoDbUri;
     }
 
-    globalThis.__trackerMongoClientPromise__ = undefined;
-    globalThis.__trackerFlightCacheIndexesReady__ = undefined;
-    globalThis.__trackerFlightDetailsCacheIndexesReady__ = undefined;
-    globalThis.__trackerAirportDirectoryCacheIndexesReady__ = undefined;
     vi.unstubAllGlobals();
     vi.doUnmock('mongodb');
   });
