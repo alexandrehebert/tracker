@@ -105,6 +105,60 @@ function getVisibleRoutePoints(flight: TrackedFlight): FlightMapPoint[] {
     });
 }
 
+function getAirportRoutePoint({
+  airport,
+  projectPoint,
+  time,
+}: {
+  airport: SelectedFlightDetails['departureAirport'] | SelectedFlightDetails['arrivalAirport'] | null | undefined;
+  projectPoint: ReturnType<typeof createFlightMapPointProjector>;
+  time: number | null;
+}): FlightMapPoint | null {
+  if (airport?.latitude == null || airport?.longitude == null) {
+    return null;
+  }
+
+  return projectPoint({
+    latitude: airport.latitude,
+    longitude: airport.longitude,
+    time,
+    altitude: 0,
+    onGround: true,
+  });
+}
+
+function getSelectedRoutePoints({
+  flight,
+  selectedFlightDetails,
+  projectPoint,
+}: {
+  flight: TrackedFlight;
+  selectedFlightDetails: SelectedFlightDetails | null | undefined;
+  projectPoint: ReturnType<typeof createFlightMapPointProjector>;
+}): FlightMapPoint[] {
+  const visibleRoutePoints = getVisibleRoutePoints(flight);
+  const matchedDetails = selectedFlightDetails?.icao24 === flight.icao24 ? selectedFlightDetails : null;
+  const firstVisiblePoint = visibleRoutePoints[0] ?? null;
+  const departureTime = flight.route.firstSeen ?? (firstVisiblePoint?.time != null ? firstVisiblePoint.time - 1 : null);
+  const departurePoint = getAirportRoutePoint({
+    airport: matchedDetails?.departureAirport,
+    projectPoint,
+    time: departureTime,
+  });
+
+  if (!departurePoint) {
+    return visibleRoutePoints;
+  }
+
+  if (!firstVisiblePoint) {
+    return [departurePoint];
+  }
+
+  return getPointDistanceKm(departurePoint, firstVisiblePoint) <= 80
+    ? [departurePoint, ...visibleRoutePoints.slice(1)]
+    : [departurePoint, ...visibleRoutePoints];
+}
+
 function toDegrees(value: number): number {
   return value * (180 / Math.PI);
 }
@@ -280,9 +334,7 @@ function getForecastRoutePoints({
     });
 }
 
-function getFlightBounds(flight: TrackedFlight) {
-  const points = getVisibleRoutePoints(flight);
-
+function getRouteBounds(points: FlightMapPoint[]) {
   if (points.length === 0) {
     return null;
   }
@@ -561,8 +613,17 @@ export default function FlightMap2D({
   }, [flights, selectedIcao24]);
 
   const selectedRoutePoints = useMemo(() => {
-    return selectedFlight ? getVisibleRoutePoints(selectedFlight) : [];
-  }, [selectedFlight]);
+    if (!selectedFlight) {
+      return [];
+    }
+
+    return getSelectedRoutePoints({
+      flight: selectedFlight,
+      selectedFlightDetails: selectedFlightDetails?.icao24 === selectedFlight.icao24 ? selectedFlightDetails : null,
+      projectPoint,
+    });
+  }, [projectPoint, selectedFlight, selectedFlightDetails]);
+
 
   const renderedFlights = useMemo(() => {
     if (!selectedFlight) {
@@ -605,14 +666,14 @@ export default function FlightMap2D({
       return;
     }
 
-    const bounds = getFlightBounds(selectedFlight);
+    const bounds = getRouteBounds(selectedRoutePoints);
     if (!bounds) {
       return;
     }
 
     focusBounds(bounds);
     lastAutoFocusedFlightRef.current = selectedFlight.icao24;
-  }, [focusBounds, selectedFlight]);
+  }, [focusBounds, selectedFlight, selectedRoutePoints]);
 
   return (
     <div className="absolute inset-0">

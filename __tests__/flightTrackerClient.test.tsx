@@ -10,9 +10,11 @@ vi.mock('~/components/tracker/TrackerZoomControls', () => ({
   },
 }));
 
+const mockFlightMap2D = vi.fn((_props: unknown) => <div data-testid="flight-map" />);
+
 vi.mock('~/components/tracker/flight/FlightMap2D', () => ({
-  default: function MockFlightMap2D() {
-    return <div data-testid="flight-map" />;
+  default: function MockFlightMap2D(props: unknown) {
+    return mockFlightMap2D(props);
   },
 }));
 
@@ -199,6 +201,8 @@ const detailsPayload = {
 
 describe('FlightTrackerClient', () => {
   beforeEach(() => {
+    mockFlightMap2D.mockClear();
+
     vi.stubGlobal(
       'matchMedia',
       vi.fn().mockImplementation(() => ({
@@ -252,6 +256,98 @@ describe('FlightTrackerClient', () => {
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+  });
+
+  it('keeps the earliest known origin point when refresh reconciliation receives a later partial track', async () => {
+    const user = userEvent.setup();
+    const baseTime = 1_700_100_000;
+    const initialTrack = Array.from({ length: 120 }, (_, index) => ({
+      time: baseTime + index * 60,
+      latitude: 41.9742 + index * 0.01,
+      longitude: -87.9073 + index * 0.25,
+      x: 120 + index,
+      y: 180 - index * 0.25,
+      altitude: index === 0 ? 0 : 3_000 + index * 35,
+      heading: 102,
+      onGround: index === 0,
+    }));
+    const refreshedTrack = [
+      ...initialTrack.slice(30),
+      ...Array.from({ length: 30 }, (_, index) => ({
+        time: baseTime + (120 + index) * 60,
+        latitude: 43.1742 + index * 0.01,
+        longitude: -57.9073 + index * 0.25,
+        x: 240 + index,
+        y: 150 - index * 0.25,
+        altitude: 7_200 + index * 20,
+        heading: 105,
+        onGround: false,
+      })),
+    ];
+
+    const initialPayload = {
+      ...responsePayload,
+      fetchedAt: baseTime * 1000,
+      flights: [
+        {
+          ...responsePayload.flights[0],
+          lastContact: initialTrack.at(-1)?.time ?? null,
+          current: initialTrack.at(-1)!,
+          originPoint: initialTrack[0]!,
+          track: initialTrack,
+        },
+      ],
+    };
+    const refreshedPayload = {
+      ...responsePayload,
+      fetchedAt: (baseTime + 7_200) * 1000,
+      flights: [
+        {
+          ...responsePayload.flights[0],
+          lastContact: refreshedTrack.at(-1)?.time ?? null,
+          current: refreshedTrack.at(-1)!,
+          originPoint: refreshedTrack[0]!,
+          track: refreshedTrack,
+        },
+      ],
+    };
+
+    const fetchMock = vi.spyOn(window, 'fetch').mockImplementation(async (input) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      const payload = url.startsWith('/api/tracker/details')
+        ? detailsPayload
+        : (url.includes('refresh=1') ? refreshedPayload : initialPayload);
+
+      return new Response(JSON.stringify(payload), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    });
+
+    window.history.replaceState({}, '', '/en/tracker?q=AFR12');
+    render(<FlightTrackerClient map={map} />);
+
+    expect(await screen.findByText(/selected flight/i)).toBeInTheDocument();
+
+    await waitFor(() => {
+      const latestCall = mockFlightMap2D.mock.calls.at(-1);
+      const latestProps = latestCall?.[0] as { flights?: Array<{ originPoint?: { time: number | null }; track?: Array<{ time: number | null }> }> } | undefined;
+      expect(latestProps?.flights?.[0]?.originPoint?.time).toBe(initialTrack[0]?.time ?? null);
+      expect(latestProps?.flights?.[0]?.track?.[0]?.time).toBe(initialTrack[0]?.time ?? null);
+    });
+
+    await user.click(screen.getByRole('button', { name: /^refresh$/i }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith('/api/tracker?q=AFR12&refresh=1', { cache: 'no-store' });
+    });
+
+    await waitFor(() => {
+      const latestCall = mockFlightMap2D.mock.calls.at(-1);
+      const latestProps = latestCall?.[0] as { flights?: Array<{ originPoint?: { time: number | null }; track?: Array<{ time: number | null }> }> } | undefined;
+      expect(latestProps?.flights?.[0]?.originPoint?.time).toBe(initialTrack[0]?.time ?? null);
+      expect(latestProps?.flights?.[0]?.track?.[0]?.time).toBe(initialTrack[0]?.time ?? null);
     });
   });
 

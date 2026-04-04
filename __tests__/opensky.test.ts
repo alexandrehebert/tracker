@@ -316,6 +316,112 @@ describe('searchFlights', () => {
     expect(fetchMock).toHaveBeenCalledTimes(7);
   });
 
+  it('preserves the earliest known origin point when shared-cache reconciliation receives a later partial track', async () => {
+    process.env.MONGODB_URI = 'mongodb://mock:27017/tracker';
+
+    const { readFlightSearchCache, writeFlightSearchCache } = await loadFlightCache();
+    const cacheKey = 'preserve-origin:afr123';
+    const initialTrack = Array.from({ length: 120 }, (_, index) => ({
+      time: 1_700_100_000 + index * 60,
+      latitude: 41.9742 + index * 0.01,
+      longitude: -87.9073 + index * 0.25,
+      x: 120 + index,
+      y: 180 - index * 0.25,
+      altitude: index === 0 ? 0 : 3_000 + index * 35,
+      heading: 102,
+      onGround: index === 0,
+    }));
+    const refreshedTrack = [
+      ...initialTrack.slice(30),
+      ...Array.from({ length: 30 }, (_, index) => ({
+        time: 1_700_100_000 + (120 + index) * 60,
+        latitude: 43.1742 + index * 0.01,
+        longitude: -57.9073 + index * 0.25,
+        x: 240 + index,
+        y: 150 - index * 0.25,
+        altitude: 7_200 + index * 20,
+        heading: 105,
+        onGround: false,
+      })),
+    ];
+
+    await writeFlightSearchCache(cacheKey, {
+      query: 'AFR123',
+      requestedIdentifiers: ['AFR123'],
+      matchedIdentifiers: ['AFR123'],
+      notFoundIdentifiers: [],
+      fetchedAt: 1_700_100_000_000,
+      flights: [
+        {
+          icao24: '39bd24',
+          callsign: 'AFR123',
+          originCountry: 'France',
+          matchedBy: ['AFR123'],
+          lastContact: initialTrack.at(-1)?.time ?? null,
+          current: initialTrack.at(-1)!,
+          originPoint: initialTrack[0]!,
+          track: initialTrack,
+          rawTrack: initialTrack,
+          onGround: false,
+          velocity: 905,
+          heading: 102,
+          verticalRate: 0,
+          geoAltitude: initialTrack.at(-1)?.altitude ?? null,
+          baroAltitude: initialTrack.at(-1)?.altitude ?? null,
+          squawk: '1234',
+          category: null,
+          route: {
+            departureAirport: 'KORD',
+            arrivalAirport: 'HAAB',
+            firstSeen: null,
+            lastSeen: null,
+          },
+        },
+      ],
+    }, 'search');
+
+    await writeFlightSearchCache(cacheKey, {
+      query: 'AFR123',
+      requestedIdentifiers: ['AFR123'],
+      matchedIdentifiers: ['AFR123'],
+      notFoundIdentifiers: [],
+      fetchedAt: 1_700_107_200_000,
+      flights: [
+        {
+          icao24: '39bd24',
+          callsign: 'AFR123',
+          originCountry: 'France',
+          matchedBy: ['AFR123'],
+          lastContact: refreshedTrack.at(-1)?.time ?? null,
+          current: refreshedTrack.at(-1)!,
+          originPoint: refreshedTrack[0]!,
+          track: refreshedTrack,
+          rawTrack: refreshedTrack,
+          onGround: false,
+          velocity: 920,
+          heading: 105,
+          verticalRate: 0,
+          geoAltitude: refreshedTrack.at(-1)?.altitude ?? null,
+          baroAltitude: refreshedTrack.at(-1)?.altitude ?? null,
+          squawk: '1234',
+          category: null,
+          route: {
+            departureAirport: 'KORD',
+            arrivalAirport: 'HAAB',
+            firstSeen: null,
+            lastSeen: null,
+          },
+        },
+      ],
+    }, 'manual-refresh');
+
+    const cachedResult = await readFlightSearchCache(cacheKey);
+
+    expect(cachedResult?.flights[0]?.originPoint?.time).toBe(initialTrack[0]?.time ?? null);
+    expect(cachedResult?.flights[0]?.track[0]?.time).toBe(initialTrack[0]?.time ?? null);
+    expect(cachedResult?.flights[0]?.track).toHaveLength(120);
+  });
+
   it('keeps selected-flight snapshots in shared history after a cached page reload', async () => {
     process.env.MONGODB_URI = 'mongodb://mock:27017/tracker';
 

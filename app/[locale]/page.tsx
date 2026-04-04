@@ -1,10 +1,12 @@
 import type { Metadata } from 'next';
+import { notFound } from 'next/navigation';
 import { Globe2, Plane, Radar, Route, Sparkles } from 'lucide-react';
 import LanguageSwitcher from '~/components/LanguageSwitcher';
 import { HeroSection } from '~/components/landing/HeroSection';
 import { StatsSection } from '~/components/landing/StatsSection';
 import { MapSection } from '~/components/landing/MapSection';
 import { Link } from '~/i18n/navigation';
+import { isValidLocale } from '~/i18n/routing';
 import { getWorldMapPayload } from '~/lib/server/worldMap';
 import { buildSmoothRoutePath } from '~/lib/utils/routePath';
 
@@ -108,6 +110,11 @@ function FeatureCard({ title, body }: { title: string; body: string }) {
 
 export async function generateMetadata({ params }: HomePageProps): Promise<Metadata> {
   const { locale } = await params;
+
+  if (!isValidLocale(locale)) {
+    notFound();
+  }
+
   const copy = getCopy(locale);
 
   return {
@@ -134,6 +141,11 @@ export async function generateMetadata({ params }: HomePageProps): Promise<Metad
 
 export default async function HomePage({ params }: HomePageProps) {
   const { locale } = await params;
+
+  if (!isValidLocale(locale)) {
+    notFound();
+  }
+
   const copy = getCopy(locale);
   const map = await getWorldMapPayload(locale);
   const currentYear = new Date().getFullYear();

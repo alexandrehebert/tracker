@@ -1,4 +1,5 @@
 import { render, screen } from '@testing-library/react';
+import { geoNaturalEarth1 } from 'd3-geo';
 import { zoomIdentity } from 'd3-zoom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { WorldMapPayload } from '~/lib/server/worldMap';
@@ -308,6 +309,46 @@ describe('FlightMap2D', () => {
     });
 
     expect(routePath?.getAttribute('d')).toMatch(/[CQ]/);
+  });
+
+  it('uses the resolved departure airport as the selected route start when live track history begins mid-flight', () => {
+    const departureAirportDetails: SelectedFlightDetails = {
+      ...selectedFlightDetails,
+      route: {
+        ...selectedFlightDetails.route,
+        departureAirport: 'KORD',
+      },
+      departureAirport: {
+        code: 'KORD',
+        iata: 'ORD',
+        icao: 'KORD',
+        name: "Chicago O'Hare International Airport",
+        city: 'Chicago',
+        country: 'United States',
+        latitude: 41.9742,
+        longitude: -87.9073,
+      },
+    };
+
+    const { container } = renderMap(false, {
+      flights: [trackedFlight],
+      selectedIcao24: trackedFlight.icao24,
+      selectedFlightDetails: departureAirportDetails,
+    });
+
+    const projection = geoNaturalEarth1();
+    projection.fitSize([map.viewBox.width, map.viewBox.height], { type: 'Sphere' } as never);
+    const departureCoordinates = projection([-87.9073, 41.9742]);
+
+    expect(departureCoordinates).not.toBeNull();
+
+    const expectedOriginTransform = `translate(${departureCoordinates?.[0]} ${departureCoordinates?.[1]}) scale(1)`;
+    const markerTransforms = Array.from(container.querySelectorAll('g.cursor-pointer')).map(
+      (marker) => marker.getAttribute('transform'),
+    );
+
+    expect(markerTransforms).toContain(expectedOriginTransform);
+    expect(markerTransforms).not.toContain(`translate(${trackedFlight.originPoint?.x} ${trackedFlight.originPoint?.y}) scale(1)`);
   });
 
   it('only draws the route for the selected flight when several flights are tracked', () => {

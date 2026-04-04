@@ -1,5 +1,7 @@
 import type { Metadata } from 'next';
+import { notFound } from 'next/navigation';
 import FlightTrackerClient from '~/components/tracker/flight/FlightTrackerClient';
+import { isValidLocale } from '~/i18n/routing';
 import { getWorldMapPayload } from '~/lib/server/worldMap';
 
 export const dynamic = 'force-dynamic';
@@ -17,6 +19,11 @@ export async function generateMetadata(): Promise<Metadata> {
 
 export default async function TrackerPage({ params }: TrackerPageProps) {
   const { locale } = await params;
+
+  if (!isValidLocale(locale)) {
+    notFound();
+  }
+
   const map = await getWorldMapPayload(locale);
 
   return (

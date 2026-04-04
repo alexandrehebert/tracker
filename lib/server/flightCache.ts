@@ -114,6 +114,8 @@ function mergeUniqueStrings(...lists: Array<string[] | undefined>): string[] {
   );
 }
 
+const MAX_RECONCILED_TRACK_POINTS = 120;
+
 function chooseMostRecentPoint(next: FlightMapPoint | null, previous: FlightMapPoint | null): FlightMapPoint | null {
   if (!next) {
     return previous;
@@ -134,6 +136,39 @@ function chooseMostRecentPoint(next: FlightMapPoint | null, previous: FlightMapP
   return previous.time != null ? previous : next;
 }
 
+function chooseEarliestPoint(next: FlightMapPoint | null, previous: FlightMapPoint | null): FlightMapPoint | null {
+  if (!next) {
+    return previous;
+  }
+
+  if (!previous) {
+    return next;
+  }
+
+  if (next.time != null && previous.time != null) {
+    return next.time <= previous.time ? next : previous;
+  }
+
+  if (next.time != null) {
+    return next;
+  }
+
+  return previous.time != null ? previous : next;
+}
+
+function limitTrackPoints(points: FlightMapPoint[]): FlightMapPoint[] {
+  if (points.length <= MAX_RECONCILED_TRACK_POINTS) {
+    return points;
+  }
+
+  const lastIndex = points.length - 1;
+
+  return Array.from({ length: MAX_RECONCILED_TRACK_POINTS }, (_, sampleIndex) => {
+    const pointIndex = Math.floor((sampleIndex * lastIndex) / (MAX_RECONCILED_TRACK_POINTS - 1));
+    return points[pointIndex] ?? null;
+  }).filter((point): point is FlightMapPoint => Boolean(point));
+}
+
 function mergeTrackPoints(previous: FlightMapPoint[] = [], next: FlightMapPoint[] = []): FlightMapPoint[] {
   const merged = new Map<string, FlightMapPoint>();
 
@@ -145,7 +180,7 @@ function mergeTrackPoints(previous: FlightMapPoint[] = [], next: FlightMapPoint[
     merged.set(key, point);
   }
 
-  return Array.from(merged.values())
+  const sortedPoints = Array.from(merged.values())
     .sort((first, second) => {
       if (first.time == null && second.time == null) {
         return 0;
@@ -160,8 +195,9 @@ function mergeTrackPoints(previous: FlightMapPoint[] = [], next: FlightMapPoint[
       }
 
       return first.time - second.time;
-    })
-    .slice(-120);
+    });
+
+  return limitTrackPoints(sortedPoints);
 }
 
 function mergeRouteValues(
@@ -224,6 +260,10 @@ function reconcileTrackedFlightForCache(previous: TrackedFlight | undefined, nex
   const mergedCurrent = chooseMostRecentPoint(next.current, previous.current);
   const mergedTrack = mergeTrackPoints(previous.track, next.track);
   const mergedRawTrack = mergeTrackPoints(previous.rawTrack ?? previous.track, next.rawTrack ?? next.track);
+  const mergedOriginPoint = chooseEarliestPoint(
+    chooseEarliestPoint(mergedTrack[0] ?? null, next.originPoint),
+    previous.originPoint,
+  ) ?? mergedCurrent;
   const previousLastContact = previous.lastContact ?? Number.NEGATIVE_INFINITY;
   const nextLastContact = next.lastContact ?? Number.NEGATIVE_INFINITY;
   const mergedLastContact = Number.isFinite(Math.max(previousLastContact, nextLastContact))
@@ -238,7 +278,7 @@ function reconcileTrackedFlightForCache(previous: TrackedFlight | undefined, nex
     matchedBy: mergeUniqueStrings(previous.matchedBy, next.matchedBy),
     lastContact: mergedLastContact,
     current: mergedCurrent,
-    originPoint: mergedTrack[0] ?? next.originPoint ?? previous.originPoint ?? mergedCurrent,
+    originPoint: mergedOriginPoint,
     track: mergedTrack.length ? mergedTrack : (next.track.length ? next.track : previous.track),
     rawTrack: mergedRawTrack.length ? mergedRawTrack : (next.rawTrack ?? previous.rawTrack ?? []),
     onGround: nextLastContact >= previousLastContact ? next.onGround : previous.onGround,

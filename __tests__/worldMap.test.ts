@@ -23,4 +23,18 @@ describe('getWorldMapPayload', () => {
     expect(germany).toBeDefined();
     expect(germany?.name).toBe('Allemagne');
   });
+
+  it('falls back safely for invalid locale probes', async () => {
+    await expect(getWorldMapPayload('.env')).resolves.toMatchObject({
+      viewBox: {
+        width: expect.any(Number),
+        height: expect.any(Number),
+      },
+    });
+
+    const map = await getWorldMapPayload('.env');
+    const germany = map.countries.find((country) => country.code === 'DE');
+
+    expect(germany?.name).toBe('Germany');
+  });
 });

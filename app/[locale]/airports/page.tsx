@@ -1,8 +1,10 @@
 import type { Metadata } from 'next';
+import { notFound } from 'next/navigation';
 import { Plane, Radar } from 'lucide-react';
 import LanguageSwitcher from '~/components/LanguageSwitcher';
 import { AirportsExplorer } from '~/components/airports/AirportsExplorer';
 import { Link } from '~/i18n/navigation';
+import { isValidLocale } from '~/i18n/routing';
 import { getWorldMapPayload } from '~/lib/server/worldMap';
 
 export const dynamic = 'force-dynamic';
@@ -33,6 +35,11 @@ function getCopy(locale: string) {
 
 export async function generateMetadata({ params }: AirportsPageProps): Promise<Metadata> {
   const { locale } = await params;
+
+  if (!isValidLocale(locale)) {
+    notFound();
+  }
+
   const copy = getCopy(locale);
 
   return {
@@ -46,6 +53,11 @@ export async function generateMetadata({ params }: AirportsPageProps): Promise<M
 
 export default async function AirportsPage({ params }: AirportsPageProps) {
   const { locale } = await params;
+
+  if (!isValidLocale(locale)) {
+    notFound();
+  }
+
   const copy = getCopy(locale);
   const map = await getWorldMapPayload(locale);
 

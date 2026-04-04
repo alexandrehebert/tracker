@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { geoNaturalEarth1, geoPath } from 'd3-geo';
 import { City } from 'country-state-city';
 import countries, { type Country } from 'world-countries';
+import { getSafeLocale } from '~/i18n/routing';
 
 const MAP_VIEWBOX = { width: 1000, height: 560 };
 const MIN_CLICKABLE_COUNTRY_SIZE = 5;
@@ -339,6 +340,7 @@ async function loadGeoJson(): Promise<GeoJSON.FeatureCollection> {
 }
 
 async function buildWorldMapPayload(locale: string): Promise<WorldMapPayload> {
+  const safeLocale = getSafeLocale(locale);
   const geoData = await loadGeoJson();
   const indexes = buildCountryIndexes();
   const projection = createWorldProjection(geoData);
@@ -393,7 +395,7 @@ async function buildWorldMapPayload(locale: string): Promise<WorldMapPayload> {
     const lng = Number.isFinite(country.latlng?.[1]) ? country.latlng[1] : 0;
     mapCountries.push({
       code: country.cca2,
-      name: getLocalizedCountryName(country, locale),
+      name: getLocalizedCountryName(country, safeLocale),
       capital: country.capital[0],
       flag: country.flag,
       path,
@@ -409,7 +411,7 @@ async function buildWorldMapPayload(locale: string): Promise<WorldMapPayload> {
     });
   }
 
-  mapCountries.sort((left, right) => left.name.localeCompare(right.name, locale));
+  mapCountries.sort((left, right) => left.name.localeCompare(right.name, safeLocale));
 
   return {
     countries: mapCountries,
@@ -418,15 +420,17 @@ async function buildWorldMapPayload(locale: string): Promise<WorldMapPayload> {
 }
 
 export async function getWorldMapPayload(locale: string): Promise<WorldMapPayload> {
+  const safeLocale = getSafeLocale(locale);
+
   if (!cachedPayloadPromise) {
     cachedPayloadPromise = buildWorldMapPayload('en');
   }
 
-  if (locale === 'en') {
+  if (safeLocale === 'en') {
     return cachedPayloadPromise;
   }
 
-  return buildWorldMapPayload(locale);
+  return buildWorldMapPayload(safeLocale);
 }
 
 export async function projectCoordinatesToMap({ latitude, longitude }: Coordinates): Promise<{ x: number; y: number } | null> {
