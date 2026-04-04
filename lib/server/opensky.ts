@@ -173,7 +173,15 @@ function sanitizeRouteTimes(route: TrackedFlightRoute, referenceTime?: number | 
 }
 
 function isSyntheticAircraftIdentifier(value: string): boolean {
-  return value.startsWith('as-') || value.startsWith('fa-');
+  const normalizedValue = normalizeIdentifier(value).toLowerCase();
+
+  if (!normalizedValue) {
+    return false;
+  }
+
+  return normalizedValue.startsWith('as-')
+    || normalizedValue.startsWith('fa-')
+    || (!/^[0-9a-f]{6}$/.test(normalizedValue) && normalizedValue.includes('-'));
 }
 
 function createRouteFromAviationstackMatch(match: AviationstackFlightEnrichment): TrackedFlightRoute {

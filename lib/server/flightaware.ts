@@ -206,7 +206,8 @@ export function isFlightAwareConfigured(): boolean {
 }
 
 function buildSyntheticIcao24(identifier: string): string {
-  return `fa-${normalizeIdentifier(identifier).toLowerCase()}`;
+  const normalizedIdentifier = normalizeIdentifier(identifier).toLowerCase();
+  return normalizedIdentifier.startsWith('fa-') ? normalizedIdentifier : `fa-${normalizedIdentifier}`;
 }
 
 function projectPoint(params: {
@@ -390,7 +391,7 @@ function toEnrichment(record: FlightAwareFlightRecord, identifier: string): Flig
 
   return {
     provider: 'flightaware',
-    identifier: toNullableString(record.fa_flight_id) || buildSyntheticIcao24(callsign),
+    identifier: buildSyntheticIcao24(toNullableString(record.fa_flight_id) || callsign),
     faFlightId: toNullableString(record.fa_flight_id),
     callsign,
     flightNumber,

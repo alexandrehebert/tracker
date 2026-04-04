@@ -1195,6 +1195,7 @@ describe('searchFlights', () => {
 
     expect(result.flights).toHaveLength(1);
     expect(result.flights[0]?.dataSource).toBe('flightaware');
+    expect(result.flights[0]?.icao24).toBe('fa-eth575-live');
     expect(result.flights[0]?.callsign).toBe('ETH575');
     expect(result.flights[0]?.current?.time).toBe(now - 120);
     expect(result.flights[0]?.flightNumber).toBe('575');
