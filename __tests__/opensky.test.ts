@@ -79,7 +79,7 @@ async function loadSearchFlights() {
 
 async function loadFlightSelectionDetails() {
   vi.resetModules();
-  return (await import('~/lib/server/opensky')).getFlightSelectionDetails;
+  return (await import('~/lib/server/flightSelectionDetails')).getFlightSelectionDetails;
 }
 
 async function loadFlightCache() {
