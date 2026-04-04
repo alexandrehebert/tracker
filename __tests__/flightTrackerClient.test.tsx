@@ -236,8 +236,12 @@ describe('FlightTrackerClient', () => {
 
     expect(await screen.findByText(/selected flight/i)).toBeInTheDocument();
 
-    const flightCard = screen.getByRole('button', { name: /afr12/i });
-    const colorDot = within(flightCard).getByLabelText(/map color/i);
+    const flightCard = screen.getAllByRole('button', { name: /afr12/i })
+      .find((element) => within(element).queryByLabelText(/map color/i));
+
+    expect(flightCard).toBeDefined();
+
+    const colorDot = within(flightCard as HTMLElement).getByLabelText(/map color/i);
 
     expect(colorDot).toHaveStyle({ backgroundColor: '#38bdf8' });
   });
@@ -271,6 +275,38 @@ describe('FlightTrackerClient', () => {
     expect(screen.queryByText(/^Arrival observed$/i)).not.toBeInTheDocument();
   });
 
+  it('hides an impossible departure-observed time when it is later than the last OpenSky observation', async () => {
+    const user = userEvent.setup();
+    const inconsistentDetailsPayload = {
+      ...detailsPayload,
+      route: {
+        ...detailsPayload.route,
+        firstSeen: Math.round(Date.now() / 1000) + 3600,
+        lastSeen: null,
+      },
+    };
+
+    vi.spyOn(window, 'fetch').mockImplementation(async (input) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      const payload = url.startsWith('/api/tracker/details') ? inconsistentDetailsPayload : responsePayload;
+
+      return new Response(JSON.stringify(payload), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    });
+
+    render(<FlightTrackerClient map={map} />);
+
+    await user.type(screen.getByLabelText(/flight identifiers/i), 'AFR12');
+    await user.click(screen.getByRole('button', { name: /track flights/i }));
+
+    expect(await screen.findByText('Paris Charles de Gaulle Airport')).toBeInTheDocument();
+
+    const departureLabel = screen.getByText(/^Departure observed$/i);
+    expect(departureLabel.nextElementSibling).toHaveTextContent('—');
+  });
+
   it('renders a simple altitude trend chart for the selected flight', async () => {
     const user = userEvent.setup();
 
@@ -281,6 +317,584 @@ describe('FlightTrackerClient', () => {
 
     expect(await screen.findByText(/altitude trend/i)).toBeInTheDocument();
     expect(screen.getByRole('img', { name: /altitude history for AFR12/i })).toBeInTheDocument();
+  });
+
+  it('toggles the altitude chart between normalized and raw api data when clicked', async () => {
+    const user = userEvent.setup();
+    const togglePayload = {
+      ...responsePayload,
+      flights: [
+        {
+          ...responsePayload.flights[0],
+          track: [
+            {
+              time: Math.round(Date.now() / 1000) - 180,
+              latitude: 48.2,
+              longitude: 1.8,
+              x: 0,
+              y: 0,
+              altitude: 10000,
+              heading: 180,
+              onGround: false,
+            },
+            {
+              time: Math.round(Date.now() / 1000) - 120,
+              latitude: 48.4,
+              longitude: 1.95,
+              x: 0,
+              y: 0,
+              altitude: 10000,
+              heading: 180,
+              onGround: false,
+            },
+            {
+              time: Math.round(Date.now() / 1000) - 60,
+              latitude: 48.6,
+              longitude: 2.1,
+              x: 0,
+              y: 0,
+              altitude: 10000,
+              heading: 180,
+              onGround: false,
+            },
+          ],
+          rawTrack: [
+            {
+              time: Math.round(Date.now() / 1000) - 180,
+              latitude: 48.2,
+              longitude: 1.8,
+              x: 0,
+              y: 0,
+              altitude: 10000,
+              heading: 180,
+              onGround: false,
+            },
+            {
+              time: Math.round(Date.now() / 1000) - 120,
+              latitude: 48.4,
+              longitude: 1.95,
+              x: 0,
+              y: 0,
+              altitude: 9600,
+              heading: 180,
+              onGround: false,
+            },
+            {
+              time: Math.round(Date.now() / 1000) - 60,
+              latitude: 48.6,
+              longitude: 2.1,
+              x: 0,
+              y: 0,
+              altitude: 10000,
+              heading: 180,
+              onGround: false,
+            },
+          ],
+        },
+      ],
+    };
+
+    vi.spyOn(window, 'fetch').mockImplementation(async (input) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      const payload = url.startsWith('/api/tracker/details') ? detailsPayload : togglePayload;
+
+      return new Response(JSON.stringify(payload), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    });
+
+    render(<FlightTrackerClient map={map} />);
+
+    await user.type(screen.getByLabelText(/flight identifiers/i), 'AFR12');
+    await user.click(screen.getByRole('button', { name: /track flights/i }));
+
+    expect(await screen.findByText(/normalized track/i)).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: /show raw altitude history for AFR12/i }));
+
+    expect(screen.getByText(/raw api data/i)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /show normalized altitude history for AFR12/i })).toBeInTheDocument();
+  });
+
+  it('plots the altitude trend chronologically so a long cruise shows as a long flat segment', async () => {
+    const user = userEvent.setup();
+    const now = Math.round(Date.now() / 1000);
+    const chronologyPayload = {
+      ...responsePayload,
+      flights: [
+        {
+          ...responsePayload.flights[0],
+          current: {
+            ...responsePayload.flights[0].current,
+            time: now - 60,
+            altitude: 11100,
+          },
+          track: [
+            {
+              time: now - 3600,
+              latitude: 47.9,
+              longitude: 1.5,
+              x: 0,
+              y: 0,
+              altitude: 8200,
+              heading: 180,
+              onGround: false,
+            },
+            {
+              time: now - 3300,
+              latitude: 48.0,
+              longitude: 1.6,
+              x: 0,
+              y: 0,
+              altitude: 11100,
+              heading: 180,
+              onGround: false,
+            },
+            {
+              time: now - 600,
+              latitude: 48.5,
+              longitude: 2.0,
+              x: 0,
+              y: 0,
+              altitude: 11100,
+              heading: 180,
+              onGround: false,
+            },
+          ],
+          lastContact: now - 60,
+          geoAltitude: 11100,
+          baroAltitude: 11100,
+        },
+      ],
+    };
+
+    vi.spyOn(window, 'fetch').mockImplementation(async (input) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      const payload = url.startsWith('/api/tracker/details') ? detailsPayload : chronologyPayload;
+
+      return new Response(JSON.stringify(payload), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    });
+
+    render(<FlightTrackerClient map={map} />);
+
+    await user.type(screen.getByLabelText(/flight identifiers/i), 'AFR12');
+    await user.click(screen.getByRole('button', { name: /track flights/i }));
+
+    const chart = await screen.findByRole('img', { name: /altitude history for AFR12/i });
+    const path = chart.querySelector('path');
+    const coordinates = Array.from((path?.getAttribute('d') ?? '').matchAll(/-?\d+(?:\.\d+)?/g)).map(([value]) => Number(value));
+    const anchorPoints = coordinates.length >= 8
+      ? [
+          { x: coordinates[0]!, y: coordinates[1]! },
+          ...Array.from({ length: Math.floor((coordinates.length - 2) / 6) }, (_, index) => ({
+            x: coordinates[(index * 6) + 6]!,
+            y: coordinates[(index * 6) + 7]!,
+          })),
+        ]
+      : [];
+
+    expect(anchorPoints).toHaveLength(3);
+
+    const earlySegmentWidth = anchorPoints[1]!.x - anchorPoints[0]!.x;
+    const cruiseSegmentWidth = anchorPoints[2]!.x - anchorPoints[1]!.x;
+    const cruiseSegmentHeight = Math.abs(anchorPoints[2]!.y - anchorPoints[1]!.y);
+
+    expect(cruiseSegmentWidth).toBeGreaterThan(earlySegmentWidth * 3);
+    expect(cruiseSegmentHeight).toBeLessThan(1);
+  });
+
+  it('does not inject the live altitude snapshot as an extra jump at the end of the history line', async () => {
+    const user = userEvent.setup();
+    const now = Math.round(Date.now() / 1000);
+    const liveSnapshotPayload = {
+      ...responsePayload,
+      flights: [
+        {
+          ...responsePayload.flights[0],
+          current: {
+            ...responsePayload.flights[0].current,
+            time: now,
+            altitude: 11450,
+          },
+          track: [
+            {
+              time: now - 1800,
+              latitude: 48.2,
+              longitude: 1.8,
+              x: 0,
+              y: 0,
+              altitude: 11100,
+              heading: 180,
+              onGround: false,
+            },
+            {
+              time: now - 900,
+              latitude: 48.4,
+              longitude: 2.0,
+              x: 0,
+              y: 0,
+              altitude: 11100,
+              heading: 180,
+              onGround: false,
+            },
+            {
+              time: now - 300,
+              latitude: 48.6,
+              longitude: 2.2,
+              x: 0,
+              y: 0,
+              altitude: 11100,
+              heading: 180,
+              onGround: false,
+            },
+          ],
+          lastContact: now,
+          geoAltitude: 11450,
+          baroAltitude: 11420,
+        },
+      ],
+    };
+
+    vi.spyOn(window, 'fetch').mockImplementation(async (input) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      const payload = url.startsWith('/api/tracker/details') ? detailsPayload : liveSnapshotPayload;
+
+      return new Response(JSON.stringify(payload), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    });
+
+    render(<FlightTrackerClient map={map} />);
+
+    await user.type(screen.getByLabelText(/flight identifiers/i), 'AFR12');
+    await user.click(screen.getByRole('button', { name: /track flights/i }));
+
+    const chart = await screen.findByRole('img', { name: /altitude history for AFR12/i });
+    const path = chart.querySelector('path');
+    const coordinates = Array.from((path?.getAttribute('d') ?? '').matchAll(/-?\d+(?:\.\d+)?/g)).map(([value]) => Number(value));
+    const anchorPoints = coordinates.length >= 8
+      ? [
+          { x: coordinates[0]!, y: coordinates[1]! },
+          ...Array.from({ length: Math.floor((coordinates.length - 2) / 6) }, (_, index) => ({
+            x: coordinates[(index * 6) + 6]!,
+            y: coordinates[(index * 6) + 7]!,
+          })),
+        ]
+      : [];
+
+    expect(anchorPoints).toHaveLength(3);
+    expect(Math.abs(anchorPoints[2]!.y - anchorPoints[1]!.y)).toBeLessThan(1);
+    expect(screen.getAllByText('11,450 m').length).toBeGreaterThan(0);
+  });
+
+  it('renders a stable cruise segment when the backend provides normalized altitude history', async () => {
+    const user = userEvent.setup();
+    const now = Math.round(Date.now() / 1000);
+    const normalizedCruisePayload = {
+      ...responsePayload,
+      flights: [
+        {
+          ...responsePayload.flights[0],
+          current: {
+            ...responsePayload.flights[0].current,
+            altitude: 11100,
+          },
+          track: [
+            {
+              time: now - 300,
+              latitude: 48.2,
+              longitude: 1.8,
+              x: 0,
+              y: 0,
+              altitude: 11100,
+              heading: 180,
+              onGround: false,
+            },
+            {
+              time: now - 240,
+              latitude: 48.3,
+              longitude: 1.9,
+              x: 0,
+              y: 0,
+              altitude: 11100,
+              heading: 180,
+              onGround: false,
+            },
+            {
+              time: now - 180,
+              latitude: 48.4,
+              longitude: 2.0,
+              x: 0,
+              y: 0,
+              altitude: 11100,
+              heading: 180,
+              onGround: false,
+            },
+            {
+              time: now - 120,
+              latitude: 48.5,
+              longitude: 2.1,
+              x: 0,
+              y: 0,
+              altitude: 11100,
+              heading: 180,
+              onGround: false,
+            },
+            {
+              time: now - 60,
+              latitude: 48.6,
+              longitude: 2.2,
+              x: 0,
+              y: 0,
+              altitude: 11100,
+              heading: 180,
+              onGround: false,
+            },
+          ],
+          geoAltitude: 11100,
+          baroAltitude: 11100,
+        },
+      ],
+    };
+
+    vi.spyOn(window, 'fetch').mockImplementation(async (input) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      const payload = url.startsWith('/api/tracker/details') ? detailsPayload : normalizedCruisePayload;
+
+      return new Response(JSON.stringify(payload), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    });
+
+    render(<FlightTrackerClient map={map} />);
+
+    await user.type(screen.getByLabelText(/flight identifiers/i), 'AFR12');
+    await user.click(screen.getByRole('button', { name: /track flights/i }));
+
+    const chart = await screen.findByRole('img', { name: /altitude history for AFR12/i });
+    const path = chart.querySelector('path');
+    const yCoordinates = Array.from((path?.getAttribute('d') ?? '').matchAll(/-?\d+(?:\.\d+)?/g))
+      .map(([value]) => Number(value))
+      .filter((_, index) => index % 2 === 1);
+
+    expect(yCoordinates.length).toBeGreaterThan(1);
+    expect(Math.max(...yCoordinates) - Math.min(...yCoordinates)).toBeLessThan(10);
+  });
+
+  it('preserves genuine climb changes instead of flattening them into a stair-step plateau', async () => {
+    const user = userEvent.setup();
+    const now = Math.round(Date.now() / 1000);
+    const climbingPayload = {
+      ...responsePayload,
+      flights: [
+        {
+          ...responsePayload.flights[0],
+          current: {
+            ...responsePayload.flights[0].current,
+            altitude: 11887,
+          },
+          track: [
+            {
+              time: now - 300,
+              latitude: 48.2,
+              longitude: 1.8,
+              x: 0,
+              y: 0,
+              altitude: 10972,
+              heading: 180,
+              onGround: false,
+            },
+            {
+              time: now - 240,
+              latitude: 48.3,
+              longitude: 1.9,
+              x: 0,
+              y: 0,
+              altitude: 11277,
+              heading: 180,
+              onGround: false,
+            },
+            {
+              time: now - 180,
+              latitude: 48.4,
+              longitude: 2.0,
+              x: 0,
+              y: 0,
+              altitude: 11582,
+              heading: 180,
+              onGround: false,
+            },
+            {
+              time: now - 120,
+              latitude: 48.5,
+              longitude: 2.1,
+              x: 0,
+              y: 0,
+              altitude: 11277,
+              heading: 180,
+              onGround: false,
+            },
+            {
+              time: now - 60,
+              latitude: 48.6,
+              longitude: 2.2,
+              x: 0,
+              y: 0,
+              altitude: 11582,
+              heading: 180,
+              onGround: false,
+            },
+            {
+              time: now - 30,
+              latitude: 48.7,
+              longitude: 2.3,
+              x: 0,
+              y: 0,
+              altitude: 11887,
+              heading: 180,
+              onGround: false,
+            },
+          ],
+          geoAltitude: 11887,
+          baroAltitude: 11887,
+        },
+      ],
+    };
+
+    vi.spyOn(window, 'fetch').mockImplementation(async (input) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      const payload = url.startsWith('/api/tracker/details') ? detailsPayload : climbingPayload;
+
+      return new Response(JSON.stringify(payload), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    });
+
+    render(<FlightTrackerClient map={map} />);
+
+    await user.type(screen.getByLabelText(/flight identifiers/i), 'AFR12');
+    await user.click(screen.getByRole('button', { name: /track flights/i }));
+
+    const chart = await screen.findByRole('img', { name: /altitude history for AFR12/i });
+    const path = chart.querySelector('path');
+    const coordinates = Array.from((path?.getAttribute('d') ?? '').matchAll(/-?\d+(?:\.\d+)?/g)).map(([value]) => Number(value));
+    const anchorPoints = coordinates.length >= 8
+      ? [
+          { x: coordinates[0]!, y: coordinates[1]! },
+          ...Array.from({ length: Math.floor((coordinates.length - 2) / 6) }, (_, index) => ({
+            x: coordinates[(index * 6) + 6]!,
+            y: coordinates[(index * 6) + 7]!,
+          })),
+        ]
+      : [];
+
+    expect(anchorPoints).toHaveLength(6);
+    expect(anchorPoints[2]!.y).toBeLessThan(anchorPoints[1]!.y - 0.5);
+    expect(anchorPoints[4]!.y).toBeLessThan(anchorPoints[3]!.y - 0.5);
+  });
+
+  it('keeps near-level cruise history from stretching into a tall zigzag chart', async () => {
+    const user = userEvent.setup();
+    const cruisePayload = {
+      ...responsePayload,
+      flights: [
+        {
+          ...responsePayload.flights[0],
+          current: {
+            ...responsePayload.flights[0].current,
+            altitude: 11125,
+          },
+          track: [
+            {
+              time: Math.round(Date.now() / 1000) - 300,
+              latitude: 48.2,
+              longitude: 1.8,
+              x: 0,
+              y: 0,
+              altitude: 11020,
+              heading: 180,
+              onGround: false,
+            },
+            {
+              time: Math.round(Date.now() / 1000) - 240,
+              latitude: 48.3,
+              longitude: 1.9,
+              x: 0,
+              y: 0,
+              altitude: 11100,
+              heading: 180,
+              onGround: false,
+            },
+            {
+              time: Math.round(Date.now() / 1000) - 180,
+              latitude: 48.4,
+              longitude: 2.0,
+              x: 0,
+              y: 0,
+              altitude: 11010,
+              heading: 180,
+              onGround: false,
+            },
+            {
+              time: Math.round(Date.now() / 1000) - 120,
+              latitude: 48.5,
+              longitude: 2.1,
+              x: 0,
+              y: 0,
+              altitude: 11110,
+              heading: 180,
+              onGround: false,
+            },
+            {
+              time: Math.round(Date.now() / 1000) - 60,
+              latitude: 48.6,
+              longitude: 2.2,
+              x: 0,
+              y: 0,
+              altitude: 11025,
+              heading: 180,
+              onGround: false,
+            },
+          ],
+          geoAltitude: 11125,
+          baroAltitude: 11100,
+        },
+      ],
+    };
+
+    vi.spyOn(window, 'fetch').mockImplementation(async (input) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      const payload = url.startsWith('/api/tracker/details') ? detailsPayload : cruisePayload;
+
+      return new Response(JSON.stringify(payload), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    });
+
+    render(<FlightTrackerClient map={map} />);
+
+    await user.type(screen.getByLabelText(/flight identifiers/i), 'AFR12');
+    await user.click(screen.getByRole('button', { name: /track flights/i }));
+
+    const chart = await screen.findByRole('img', { name: /altitude history for AFR12/i });
+    const line = chart.querySelector('path, polyline');
+
+    expect(line).not.toBeNull();
+
+    const yCoordinates = Array.from((line?.getAttribute('d') ?? line?.getAttribute('points') ?? '').matchAll(/-?\d+(?:\.\d+)?/g))
+      .map(([value]) => Number(value))
+      .filter((_, index) => index % 2 === 1);
+
+    expect(yCoordinates.length).toBeGreaterThan(1);
+    expect(Math.max(...yCoordinates) - Math.min(...yCoordinates)).toBeLessThan(20);
   });
 
   it('reuses cached airport details after a refresh for the same selected flight', async () => {

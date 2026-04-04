@@ -191,6 +191,132 @@ describe('searchFlights', () => {
     expect(result.flights[0]?.originPoint?.time).toBe(1_700_000_000);
   });
 
+  it('normalizes altitude glitches and fills short climb gaps in the backend track history', async () => {
+    process.env.OPENSKY_CLIENT_ID = 'client-from-env';
+    process.env.OPENSKY_CLIENT_SECRET = 'secret-from-env';
+
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ access_token: 'token-123', expires_in: 1800 }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        time: 1_700_000_620,
+        states: [[
+          'abc123',
+          'HLF9872',
+          'Poland',
+          1_700_000_610,
+          1_700_000_620,
+          104.3,
+          43.2,
+          11_200,
+          false,
+          230,
+          90,
+          0,
+          null,
+          11_200,
+          '1234',
+          false,
+          0,
+          null,
+        ]],
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        path: [
+          [1_700_000_000, 50.0, 19.0, 10_000, 70, false],
+          [1_700_000_060, 50.2, 19.5, 10_000, 72, false],
+          [1_700_000_120, 50.4, 20.0, 9_600, 74, false],
+          [1_700_000_180, 50.6, 20.5, 10_000, 76, false],
+          [1_700_000_600, 51.4, 22.0, 11_200, 82, false],
+        ],
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }))
+      .mockResolvedValueOnce(new Response(JSON.stringify([]), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }));
+
+    vi.stubGlobal('fetch', fetchMock);
+
+    const searchFlights = await loadSearchFlights();
+    const result = await searchFlights('HLF9872');
+    const track = result.flights[0]?.track ?? [];
+
+    expect(track.find((point) => point.time === 1_700_000_120)?.altitude).toBe(10_000);
+    expect(track.length).toBeGreaterThan(5);
+    expect(track.some((point) => point.time != null && point.time > 1_700_000_180 && point.time < 1_700_000_600)).toBe(true);
+  });
+
+  it('removes short two-point altitude wobble noise more aggressively', async () => {
+    process.env.OPENSKY_CLIENT_ID = 'client-from-env';
+    process.env.OPENSKY_CLIENT_SECRET = 'secret-from-env';
+
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ access_token: 'token-123', expires_in: 1800 }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        time: 1_700_000_360,
+        states: [[
+          'abc123',
+          'HLF9872',
+          'Poland',
+          1_700_000_350,
+          1_700_000_360,
+          104.3,
+          43.2,
+          10_050,
+          false,
+          230,
+          90,
+          0,
+          null,
+          10_050,
+          '1234',
+          false,
+          0,
+          null,
+        ]],
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        path: [
+          [1_700_000_000, 50.0, 19.0, 10_000, 70, false],
+          [1_700_000_060, 50.1, 19.2, 10_030, 71, false],
+          [1_700_000_120, 50.2, 19.4, 10_420, 72, false],
+          [1_700_000_180, 50.3, 19.6, 9_620, 73, false],
+          [1_700_000_240, 50.4, 19.8, 10_040, 74, false],
+          [1_700_000_300, 50.5, 20.0, 10_020, 75, false],
+        ],
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }))
+      .mockResolvedValueOnce(new Response(JSON.stringify([]), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }));
+
+    vi.stubGlobal('fetch', fetchMock);
+
+    const searchFlights = await loadSearchFlights();
+    const result = await searchFlights('HLF9872');
+    const track = result.flights[0]?.track ?? [];
+
+    expect(track.find((point) => point.time === 1_700_000_120)?.altitude).toBeCloseTo(10_035, -1);
+    expect(track.find((point) => point.time === 1_700_000_180)?.altitude).toBeCloseTo(10_035, -1);
+  });
+
   it('falls back to recent flight history when a live callsign is temporarily missing', async () => {
     process.env.OPENSKY_CLIENT_ID = 'client-from-env';
     process.env.OPENSKY_CLIENT_SECRET = 'secret-from-env';
@@ -551,6 +677,102 @@ describe('searchFlights', () => {
       icao24: '39BD24',
     });
     expect(result.dataSource).toBe('hybrid');
+  });
+
+  it('ignores Aviationstack route timestamps that land after the OpenSky reference window', async () => {
+    process.env.OPENSKY_CLIENT_ID = 'client-from-env';
+    process.env.OPENSKY_CLIENT_SECRET = 'secret-from-env';
+    process.env.AVIATION_STACK_API_KEY = 'aviationstack-key';
+    delete process.env.MONGODB_URI;
+
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ access_token: 'token-123', expires_in: 1800 }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }))
+      .mockResolvedValueOnce(new Response(JSON.stringify([]), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        data: [
+          {
+            flight_status: 'active',
+            departure: {
+              airport: 'Paris Charles de Gaulle Airport',
+              iata: 'CDG',
+              icao: 'LFPG',
+              actual: '2026-04-04T15:44:00+02:00',
+            },
+            arrival: {
+              airport: 'John F. Kennedy International Airport',
+              iata: 'JFK',
+              icao: 'KJFK',
+              estimated: '2026-04-04T18:30:00-04:00',
+            },
+            airline: {
+              name: 'Air France',
+              iata: 'AF',
+              icao: 'AFR',
+            },
+            flight: {
+              number: '706',
+              iata: 'AF706',
+              icao: 'AFR706',
+            },
+            aircraft: {
+              registration: 'F-GZNT',
+              icao24: '39bd24',
+              iata: 'B77W',
+              icao: 'B77W',
+            },
+            live: null,
+          },
+        ],
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        LFPG: {
+          iata: 'CDG',
+          icao: 'LFPG',
+          name: 'Paris Charles de Gaulle Airport',
+          city: 'Paris',
+          country: 'France',
+          lat: 49.0097,
+          lon: 2.5479,
+          tz: 'Europe/Paris',
+        },
+        KJFK: {
+          iata: 'JFK',
+          icao: 'KJFK',
+          name: 'John F. Kennedy International Airport',
+          city: 'New York',
+          country: 'United States',
+          lat: 40.6413,
+          lon: -73.7781,
+          tz: 'America/New_York',
+        },
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }));
+
+    vi.stubGlobal('fetch', fetchMock);
+
+    const getFlightSelectionDetails = await loadFlightSelectionDetails();
+    const result = await getFlightSelectionDetails({
+      icao24: '39bd24',
+      callsign: 'AFR706',
+      departureAirport: 'CDG',
+      arrivalAirport: 'JFK',
+      lastSeen: 1_775_274_600,
+    });
+
+    expect(result.route.firstSeen).toBeNull();
+    expect(result.route.lastSeen).toBeNull();
+    expect(result.airline?.name).toBe('Air France');
   });
 
   it('caches selected-flight airport detail lookups for repeated selections', async () => {

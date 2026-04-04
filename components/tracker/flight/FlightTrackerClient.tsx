@@ -73,6 +73,18 @@ function formatDateTimeSeconds(timestampSeconds: number | null): string {
   }).format(timestampSeconds * 1000);
 }
 
+function sanitizeObservedTimestamp(timestampSeconds: number | null, latestAllowedTimestampSeconds: number | null): number | null {
+  if (timestampSeconds == null) {
+    return null;
+  }
+
+  if (latestAllowedTimestampSeconds != null && timestampSeconds > latestAllowedTimestampSeconds) {
+    return null;
+  }
+
+  return timestampSeconds;
+}
+
 function formatAltitude(value: number | null): string {
   return value == null ? '—' : `${Math.round(value).toLocaleString()} m`;
 }
@@ -81,32 +93,79 @@ function formatSpeed(value: number | null): string {
   return value == null ? '—' : `${Math.round(value * 3.6).toLocaleString()} km/h`;
 }
 
-function buildAltitudeTrendSamples(flight: TrackedFlight): Array<{ altitude: number; time: number | null }> {
-  const samples = flight.track
-    .map((point) => ({
-      altitude: point.altitude,
-      time: point.time,
-    }))
-    .filter((point): point is { altitude: number; time: number | null } => point.altitude != null && Number.isFinite(point.altitude));
+type AltitudeTrendChartPoint = {
+  altitude: number;
+  time: number | null;
+  x: number;
+  y: number;
+};
 
-  const currentAltitude = flight.current?.altitude ?? flight.geoAltitude ?? flight.baroAltitude;
-  const currentTime = flight.current?.time ?? flight.lastContact ?? null;
-
-  if (currentAltitude != null && Number.isFinite(currentAltitude)) {
-    const lastSample = samples.at(-1);
-    if (!lastSample || lastSample.altitude !== currentAltitude || lastSample.time !== currentTime) {
-      samples.push({
-        altitude: currentAltitude,
-        time: currentTime,
-      });
-    }
+function projectTrendValue(
+  value: number,
+  domainStart: number,
+  domainEnd: number,
+  rangeStart: number,
+  rangeEnd: number,
+): number {
+  if (domainStart === domainEnd) {
+    return (rangeStart + rangeEnd) / 2;
   }
 
-  return samples.slice(-24);
+  const ratio = (value - domainStart) / (domainEnd - domainStart);
+  return rangeStart + (ratio * (rangeEnd - rangeStart));
+}
+
+function buildAltitudeTrendPath(points: AltitudeTrendChartPoint[]): string {
+  if (points.length === 0) {
+    return '';
+  }
+
+  if (points.length === 1) {
+    return `M ${points[0]!.x} ${points[0]!.y}`;
+  }
+
+  if (points.length === 2) {
+    return `M ${points[0]!.x} ${points[0]!.y} L ${points[1]!.x} ${points[1]!.y}`;
+  }
+
+  const smoothing = 0.35;
+  let path = `M ${points[0]!.x} ${points[0]!.y}`;
+
+  for (let index = 0; index < points.length - 1; index += 1) {
+    const current = points[index]!;
+    const next = points[index + 1]!;
+    const controlOffset = (next.x - current.x) * smoothing;
+
+    path += ` C ${current.x + controlOffset} ${current.y}, ${next.x - controlOffset} ${next.y}, ${next.x} ${next.y}`;
+  }
+
+  return path;
 }
 
 function AltitudeTrendChart({ flight }: { flight: TrackedFlight }) {
-  const samples = useMemo(() => buildAltitudeTrendSamples(flight), [flight]);
+  const [showRawTrack, setShowRawTrack] = useState(false);
+
+  useEffect(() => {
+    setShowRawTrack(false);
+  }, [flight.icao24]);
+
+  const hasDistinctRawTrack = useMemo(() => {
+    if (!flight.rawTrack?.length || flight.rawTrack.length !== flight.track.length) {
+      return Boolean(flight.rawTrack?.length);
+    }
+
+    return flight.rawTrack.some((point, index) => {
+      const normalizedPoint = flight.track[index];
+      return point.time !== normalizedPoint?.time || point.altitude !== normalizedPoint?.altitude;
+    });
+  }, [flight.rawTrack, flight.track]);
+
+  const displayTrack = showRawTrack && flight.rawTrack?.length ? flight.rawTrack : flight.track;
+  const samples = useMemo(() => (
+    displayTrack
+      .filter((point) => point.altitude != null && Number.isFinite(point.altitude))
+      .slice(-24)
+  ), [displayTrack]);
 
   if (samples.length < 2) {
     return (
@@ -120,23 +179,35 @@ function AltitudeTrendChart({ flight }: { flight: TrackedFlight }) {
   const width = 240;
   const height = 72;
   const padding = 6;
-  const altitudes = samples.map((sample) => sample.altitude);
+  const altitudes = samples.map((sample) => sample.altitude as number);
+  const timedSamples = samples.filter((sample) => sample.time != null && Number.isFinite(sample.time));
   const minAltitude = Math.min(...altitudes);
   const maxAltitude = Math.max(...altitudes);
-  const altitudeRange = Math.max(maxAltitude - minAltitude, 1);
-  const plottedPoints = samples.map((sample, index) => {
-    const x = padding + (index / (samples.length - 1)) * (width - (padding * 2));
-    const y = height - padding - (((sample.altitude - minAltitude) / altitudeRange) * (height - (padding * 2)));
+  const minTime = timedSamples[0]?.time ?? null;
+  const maxTime = timedSamples.at(-1)?.time ?? null;
+  const hasTimeScale = minTime != null && maxTime != null && maxTime > minTime;
 
-    return {
-      ...sample,
-      x,
-      y,
-    };
-  });
-  const linePoints = plottedPoints.map((point) => `${point.x},${point.y}`).join(' ');
+  const altitudePadding = minAltitude === maxAltitude
+    ? 300
+    : Math.max(120, (maxAltitude - minAltitude) * 0.35);
+  const altitudeDomainStart = minAltitude - altitudePadding;
+  const altitudeDomainEnd = maxAltitude + altitudePadding;
+  const timeDomainStart = minTime ?? 0;
+  const timeDomainEnd = maxTime ?? Math.max(samples.length - 1, 1);
+
+  const plottedPoints = samples.map((sample, index) => ({
+    altitude: sample.altitude as number,
+    time: sample.time,
+    x: hasTimeScale && sample.time != null
+      ? projectTrendValue(sample.time, timeDomainStart, timeDomainEnd, padding, width - padding)
+      : projectTrendValue(index, 0, Math.max(samples.length - 1, 1), padding, width - padding),
+    y: projectTrendValue(sample.altitude as number, altitudeDomainStart, altitudeDomainEnd, height - padding, padding),
+  } satisfies AltitudeTrendChartPoint));
+  const linePath = buildAltitudeTrendPath(plottedPoints);
   const lastPoint = plottedPoints.at(-1) ?? plottedPoints[plottedPoints.length - 1];
+  const currentAltitude = flight.current?.altitude ?? flight.geoAltitude ?? flight.baroAltitude ?? lastPoint?.altitude ?? null;
   const chartLabel = flight.callsign || flight.icao24.toUpperCase();
+  const chartModeLabel = showRawTrack ? 'Raw API data' : 'Normalized track';
 
   return (
     <div className="mt-4 rounded-2xl border border-white/10 bg-slate-950/45 p-3">
@@ -144,30 +215,43 @@ function AltitudeTrendChart({ flight }: { flight: TrackedFlight }) {
         <div>
           <div className="text-xs uppercase tracking-[0.2em] text-cyan-200/80">Altitude trend</div>
           <div className="text-[11px] text-slate-400">Recent track history</div>
+          <div className="text-[11px] text-slate-500">{hasDistinctRawTrack ? `${chartModeLabel} • click chart to toggle` : chartModeLabel}</div>
         </div>
         <div className="text-right">
-          <div className="text-sm font-semibold text-white">{formatAltitude(lastPoint?.altitude ?? null)}</div>
+          <div className="text-sm font-semibold text-white">{formatAltitude(currentAltitude)}</div>
           <div className="text-[11px] text-slate-400">current</div>
         </div>
       </div>
 
-      <svg
-        viewBox={`0 0 ${width} ${height}`}
-        role="img"
-        aria-label={`Altitude history for ${chartLabel}`}
-        className="h-20 w-full"
-        preserveAspectRatio="none"
+      <button
+        type="button"
+        onClick={() => {
+          if (hasDistinctRawTrack) {
+            setShowRawTrack((current) => !current);
+          }
+        }}
+        aria-label={`${showRawTrack ? 'Show normalized' : 'Show raw'} altitude history for ${chartLabel}`}
+        aria-pressed={showRawTrack}
+        className={`block w-full rounded-lg text-left ${hasDistinctRawTrack ? 'cursor-pointer focus:outline-none focus:ring-2 focus:ring-cyan-300/70' : 'cursor-default'}`}
       >
-        <polyline
-          points={linePoints}
-          fill="none"
-          stroke="rgb(34 211 238)"
-          strokeWidth="2.5"
-          strokeLinecap="round"
-          strokeLinejoin="round"
-        />
-        {lastPoint ? <circle cx={lastPoint.x} cy={lastPoint.y} r="3" fill="rgb(255 255 255)" /> : null}
-      </svg>
+        <svg
+          viewBox={`0 0 ${width} ${height}`}
+          role="img"
+          aria-label={`Altitude history for ${chartLabel}`}
+          className="h-20 w-full"
+          preserveAspectRatio="none"
+        >
+          <path
+            d={linePath}
+            fill="none"
+            stroke="rgb(34 211 238)"
+            strokeWidth="2.5"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+          {lastPoint ? <circle cx={lastPoint.x} cy={lastPoint.y} r="3" fill="rgb(255 255 255)" /> : null}
+        </svg>
+      </button>
 
       <div className="mt-2 flex items-center justify-between text-[11px] text-slate-400">
         <span>{samples[0]?.time ? formatTimestamp(samples[0].time * 1000) : 'Start'}</span>
@@ -226,9 +310,13 @@ function SelectedFlightDetails({
   isLoadingDetails: boolean;
   detailsError: string | null;
 }) {
-  const observedArrivalTime = details?.route?.lastSeen ?? flight.route.lastSeen;
+  const observedArrivalTime = sanitizeObservedTimestamp(details?.route?.lastSeen ?? flight.route.lastSeen, flight.lastContact);
   const observedStatusLabel = flight.onGround ? 'Arrival observed' : 'Last observed';
   const observedStatusTime = flight.onGround ? observedArrivalTime : flight.lastContact;
+  const departureObservedTime = sanitizeObservedTimestamp(
+    details?.route?.firstSeen ?? flight.route.firstSeen,
+    observedStatusTime ?? flight.lastContact,
+  );
   const airlineName = details?.airline?.name ?? flight.airline?.name ?? '—';
   const aircraftModel = details?.aircraft?.model ?? flight.aircraft?.model ?? '—';
   const aircraftRegistration = details?.aircraft?.registration ?? flight.aircraft?.registration ?? null;
@@ -345,7 +433,7 @@ function SelectedFlightDetails({
           <dl className="grid grid-cols-1 gap-2 sm:grid-cols-2">
             <div>
               <dt className="text-slate-400">Departure observed</dt>
-              <dd>{formatDateTimeSeconds(details.route?.firstSeen ?? flight.route.firstSeen)}</dd>
+              <dd>{formatDateTimeSeconds(departureObservedTime)}</dd>
             </div>
             <div>
               <dt className="text-slate-400">{observedStatusLabel}</dt>
@@ -483,9 +571,13 @@ function FlightTrackerDashboard({ map }: FlightTrackerClientProps) {
       searchParams.set('arrivalAirport', selectedFlight.route.arrivalAirport);
     }
 
-    const lastSeen = selectedFlight.route.lastSeen ?? selectedFlight.lastContact;
-    if (lastSeen) {
-      searchParams.set('lastSeen', String(lastSeen));
+    const referenceTime = selectedFlight.lastContact ?? selectedFlight.route.lastSeen ?? selectedFlight.route.firstSeen;
+    if (referenceTime) {
+      searchParams.set('referenceTime', String(referenceTime));
+    }
+
+    if (selectedFlight.route.lastSeen) {
+      searchParams.set('lastSeen', String(selectedFlight.route.lastSeen));
     }
 
     let isCancelled = false;

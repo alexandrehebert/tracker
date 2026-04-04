@@ -20,20 +20,23 @@ export async function GET(request: NextRequest) {
   }
 
   try {
+    const parseOptionalTimestamp = (key: string) => {
+      const value = request.nextUrl.searchParams.get(key)?.trim()
+      if (!value) {
+        return null
+      }
+
+      const parsed = Number.parseInt(value, 10)
+      return Number.isFinite(parsed) ? parsed : null
+    }
+
     const payload = await getFlightSelectionDetails({
       icao24,
       callsign: request.nextUrl.searchParams.get('callsign')?.trim() ?? null,
       departureAirport: request.nextUrl.searchParams.get('departureAirport')?.trim() ?? null,
       arrivalAirport: request.nextUrl.searchParams.get('arrivalAirport')?.trim() ?? null,
-      lastSeen: (() => {
-        const value = request.nextUrl.searchParams.get('lastSeen')?.trim()
-        if (!value) {
-          return null
-        }
-
-        const parsed = Number.parseInt(value, 10)
-        return Number.isFinite(parsed) ? parsed : null
-      })(),
+      referenceTime: parseOptionalTimestamp('referenceTime'),
+      lastSeen: parseOptionalTimestamp('lastSeen'),
     })
 
     return NextResponse.json(payload, {

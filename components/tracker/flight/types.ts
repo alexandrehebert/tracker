@@ -39,6 +39,7 @@ export interface TrackedFlight {
   current: FlightMapPoint | null;
   originPoint: FlightMapPoint | null;
   track: FlightMapPoint[];
+  rawTrack?: FlightMapPoint[];
   onGround: boolean;
   velocity: number | null;
   heading: number | null;

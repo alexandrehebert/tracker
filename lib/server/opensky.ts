@@ -10,6 +10,15 @@ const TRACKER_MAP_VIEWBOX = { width: 1000, height: 560 };
 const TOKEN_REFRESH_MARGIN_MS = 30_000;
 const RECENT_FLIGHTS_LOOKBACK_SECONDS = 6 * 60 * 60;
 const RECENT_FLIGHTS_CACHE_TTL_MS = 60_000;
+const ROUTE_TIME_RECONCILIATION_GRACE_SECONDS = 15 * 60;
+const TRACK_ALTITUDE_NOISE_MAX_NEIGHBOR_DELTA_METERS = 140;
+const TRACK_ALTITUDE_NOISE_MIN_DEVIATION_METERS = 140;
+const TRACK_ALTITUDE_NOISE_MIN_SWING_METERS = 300;
+const TRACK_ALTITUDE_NOISE_SMOOTHING_PASSES = 2;
+const TRACK_INTERPOLATION_MIN_GAP_SECONDS = 3 * 60;
+const TRACK_INTERPOLATION_MAX_GAP_SECONDS = 15 * 60;
+const TRACK_INTERPOLATION_STEP_SECONDS = 2 * 60;
+const TRACK_INTERPOLATION_MIN_ALTITUDE_DELTA_METERS = 150;
 
 type Credentials = {
   clientId: string;
@@ -59,6 +68,11 @@ type ParsedState = {
   category: number | null;
 };
 
+type TrackHistory = {
+  track: FlightMapPoint[];
+  rawTrack: FlightMapPoint[];
+};
+
 let credentialsCache: Credentials | null = null;
 let tokenCache: { accessToken: string; expiresAt: number } | null = null;
 let recentFlightsCache: { flights: OpenSkyRecentFlight[]; expiresAt: number } | null = null;
@@ -96,16 +110,17 @@ function buildFlightDetailsCacheKey(params: {
   icao24: string;
   departureAirport?: string | null;
   arrivalAirport?: string | null;
+  referenceTime?: number | null;
   lastSeen?: number | null;
 }): string {
-  const lastSeen = typeof params.lastSeen === 'number' && Number.isFinite(params.lastSeen)
-    ? Math.floor(params.lastSeen)
-    : 0;
+  const referenceTime = normalizeUnixSeconds(params.referenceTime) ?? 0;
+  const lastSeen = normalizeUnixSeconds(params.lastSeen) ?? 0;
 
   return [
     normalizeIdentifier(params.icao24),
     normalizeIdentifier(params.departureAirport ?? ''),
     normalizeIdentifier(params.arrivalAirport ?? ''),
+    String(referenceTime),
     String(lastSeen),
   ].join(':');
 }
@@ -116,6 +131,38 @@ function createEmptyRoute(): TrackedFlightRoute {
     arrivalAirport: null,
     firstSeen: null,
     lastSeen: null,
+  };
+}
+
+function normalizeUnixSeconds(value: number | null | undefined): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? Math.floor(value) : null;
+}
+
+function sanitizeRouteTimes(route: TrackedFlightRoute, referenceTime?: number | null): TrackedFlightRoute {
+  const normalizedReferenceTime = normalizeUnixSeconds(referenceTime);
+  const isTooFarInFuture = (timestamp: number | null) => normalizedReferenceTime != null
+    && timestamp != null
+    && timestamp > normalizedReferenceTime + ROUTE_TIME_RECONCILIATION_GRACE_SECONDS;
+
+  let firstSeen = normalizeUnixSeconds(route.firstSeen);
+  let lastSeen = normalizeUnixSeconds(route.lastSeen);
+
+  if (isTooFarInFuture(firstSeen)) {
+    firstSeen = null;
+  }
+
+  if (isTooFarInFuture(lastSeen)) {
+    lastSeen = null;
+  }
+
+  if (firstSeen != null && lastSeen != null && firstSeen > lastSeen) {
+    firstSeen = null;
+  }
+
+  return {
+    ...route,
+    firstSeen,
+    lastSeen,
   };
 }
 
@@ -164,7 +211,7 @@ function mergeAirportDetails(
 
 function createTrackedFlightFromAviationstack(identifier: string, match: AviationstackFlightEnrichment): TrackedFlight {
   const current = match.current;
-  const route = createRouteFromAviationstackMatch(match);
+  const route = sanitizeRouteTimes(createRouteFromAviationstackMatch(match), current?.time ?? null);
   const icao24 = normalizeIdentifier(match.aircraft.icao24 ?? match.identifier).toLowerCase() || `as-${normalizeIdentifier(identifier).toLowerCase()}`;
 
   return {
@@ -176,6 +223,7 @@ function createTrackedFlightFromAviationstack(identifier: string, match: Aviatio
     current,
     originPoint: current,
     track: current ? [current] : [],
+    rawTrack: current ? [current] : [],
     onGround: match.onGround,
     velocity: match.velocity,
     heading: match.heading ?? current?.heading ?? null,
@@ -207,15 +255,16 @@ function mergeTrackedFlightWithAviationstack(
     current: flight.current ?? match.current,
     originPoint: flight.originPoint ?? flight.current ?? match.current,
     track: flight.track.length > 0 ? flight.track : (match.current ? [match.current] : []),
+    rawTrack: flight.rawTrack?.length ? flight.rawTrack : (flight.track.length > 0 ? flight.track : (match.current ? [match.current] : [])),
     velocity: flight.velocity ?? match.velocity,
     heading: flight.heading ?? match.heading ?? match.current?.heading ?? null,
     geoAltitude: flight.geoAltitude ?? flight.baroAltitude ?? match.geoAltitude ?? match.current?.altitude ?? null,
-    route: {
+    route: sanitizeRouteTimes({
       departureAirport: flight.route.departureAirport ?? match.route.departureAirport,
       arrivalAirport: flight.route.arrivalAirport ?? match.route.arrivalAirport,
       firstSeen: flight.route.firstSeen ?? match.route.firstSeen,
       lastSeen: flight.route.lastSeen ?? match.route.lastSeen,
-    },
+    }, flight.lastContact),
     flightNumber: flight.flightNumber ?? match.flightNumber,
     airline: flight.airline ?? match.airline,
     aircraft: flight.aircraft ?? match.aircraft,
@@ -325,6 +374,10 @@ function writeRecentSearchResult(cacheKey: string, payload: TrackerApiResponse) 
   });
 }
 
+function payloadHasRawTrackData(payload: TrackerApiResponse): boolean {
+  return payload.flights.every((flight) => Array.isArray(flight.rawTrack));
+}
+
 function projectPoint(params: {
   latitude: number | null;
   longitude: number | null;
@@ -374,6 +427,139 @@ function sortTrackPointsChronologically(points: FlightMapPoint[]): FlightMapPoin
 
     return first.time - second.time;
   });
+}
+
+function removeObviousAltitudeNoise(points: FlightMapPoint[]): FlightMapPoint[] {
+  if (points.length < 3) {
+    return points;
+  }
+
+  const normalized = [...points];
+
+  for (let pass = 0; pass < TRACK_ALTITUDE_NOISE_SMOOTHING_PASSES; pass += 1) {
+    for (let index = 1; index < normalized.length - 1; index += 1) {
+      const point = normalized[index]!;
+      const previous = normalized[index - 1]!;
+      const next = normalized[index + 1]!;
+
+      if (point.altitude == null || previous.altitude == null || next.altitude == null) {
+        continue;
+      }
+
+      const baselineAltitude = (previous.altitude + next.altitude) / 2;
+      const areImmediateNeighborsAligned = Math.abs(previous.altitude - next.altitude) <= TRACK_ALTITUDE_NOISE_MAX_NEIGHBOR_DELTA_METERS;
+      const isSinglePointOutlier = Math.abs(point.altitude - baselineAltitude) >= TRACK_ALTITUDE_NOISE_MIN_DEVIATION_METERS;
+
+      if (areImmediateNeighborsAligned && isSinglePointOutlier) {
+        normalized[index] = {
+          ...point,
+          altitude: baselineAltitude,
+        };
+      }
+    }
+
+    for (let index = 1; index < normalized.length - 2; index += 1) {
+      const start = normalized[index - 1]!;
+      const first = normalized[index]!;
+      const second = normalized[index + 1]!;
+      const end = normalized[index + 2]!;
+
+      if (
+        start.altitude == null
+        || first.altitude == null
+        || second.altitude == null
+        || end.altitude == null
+      ) {
+        continue;
+      }
+
+      const baselineAltitude = (start.altitude + end.altitude) / 2;
+      const firstOffset = first.altitude - baselineAltitude;
+      const secondOffset = second.altitude - baselineAltitude;
+      const areAnchorsAligned = Math.abs(start.altitude - end.altitude) <= TRACK_ALTITUDE_NOISE_MAX_NEIGHBOR_DELTA_METERS;
+      const swingsAcrossBaseline = firstOffset * secondOffset < 0;
+      const isShortWobble = Math.abs(firstOffset) >= TRACK_ALTITUDE_NOISE_MIN_DEVIATION_METERS
+        && Math.abs(secondOffset) >= TRACK_ALTITUDE_NOISE_MIN_DEVIATION_METERS
+        && Math.abs(first.altitude - second.altitude) >= TRACK_ALTITUDE_NOISE_MIN_SWING_METERS;
+
+      if (areAnchorsAligned && swingsAcrossBaseline && isShortWobble) {
+        const altitudeStep = (end.altitude - start.altitude) / 3;
+
+        normalized[index] = {
+          ...first,
+          altitude: start.altitude + altitudeStep,
+        };
+        normalized[index + 1] = {
+          ...second,
+          altitude: start.altitude + (altitudeStep * 2),
+        };
+        index += 1;
+      }
+    }
+  }
+
+  return normalized;
+}
+
+function interpolateTrackPoint(start: FlightMapPoint, end: FlightMapPoint, ratio: number): FlightMapPoint {
+  return {
+    time: start.time != null && end.time != null
+      ? Math.round(start.time + ((end.time - start.time) * ratio))
+      : null,
+    latitude: start.latitude + ((end.latitude - start.latitude) * ratio),
+    longitude: start.longitude + ((end.longitude - start.longitude) * ratio),
+    x: start.x + ((end.x - start.x) * ratio),
+    y: start.y + ((end.y - start.y) * ratio),
+    altitude: start.altitude != null && end.altitude != null
+      ? start.altitude + ((end.altitude - start.altitude) * ratio)
+      : (start.altitude ?? end.altitude ?? null),
+    heading: start.heading != null && end.heading != null
+      ? start.heading + ((end.heading - start.heading) * ratio)
+      : (end.heading ?? start.heading ?? null),
+    onGround: start.onGround && end.onGround,
+  };
+}
+
+function fillTrackDataGaps(points: FlightMapPoint[]): FlightMapPoint[] {
+  if (points.length < 2) {
+    return points;
+  }
+
+  const normalized: FlightMapPoint[] = [points[0]!];
+
+  for (let index = 1; index < points.length; index += 1) {
+    const current = points[index]!;
+    const previous = normalized[normalized.length - 1]!;
+    const gapSeconds = previous.time != null && current.time != null ? current.time - previous.time : 0;
+    const altitudeDelta = previous.altitude != null && current.altitude != null
+      ? Math.abs(current.altitude - previous.altitude)
+      : 0;
+
+    const shouldInterpolate = !previous.onGround
+      && !current.onGround
+      && gapSeconds >= TRACK_INTERPOLATION_MIN_GAP_SECONDS
+      && gapSeconds <= TRACK_INTERPOLATION_MAX_GAP_SECONDS
+      && altitudeDelta >= TRACK_INTERPOLATION_MIN_ALTITUDE_DELTA_METERS;
+
+    if (shouldInterpolate) {
+      const interpolationCount = Math.min(
+        3,
+        Math.max(0, Math.ceil(gapSeconds / TRACK_INTERPOLATION_STEP_SECONDS) - 1),
+      );
+
+      for (let step = 1; step <= interpolationCount; step += 1) {
+        normalized.push(interpolateTrackPoint(previous, current, step / (interpolationCount + 1)));
+      }
+    }
+
+    normalized.push(current);
+  }
+
+  return normalized;
+}
+
+function normalizeTrackHistory(points: FlightMapPoint[]): FlightMapPoint[] {
+  return fillTrackDataGaps(removeObviousAltitudeNoise(sortTrackPointsChronologically(points)));
 }
 
 async function readCredentialsFromEnv(): Promise<Credentials> {
@@ -528,7 +714,7 @@ function matchesRecentFlightIdentifier(flight: OpenSkyRecentFlight, identifier: 
   });
 }
 
-async function getTrackForAircraft(icao24: string, referenceTime = 0): Promise<FlightMapPoint[]> {
+async function getTrackForAircraft(icao24: string, referenceTime = 0): Promise<TrackHistory> {
   const safeReferenceTime = Number.isFinite(referenceTime) && referenceTime > 0 ? Math.floor(referenceTime) : 0;
   const response = await fetchOpenSky<OpenSkyTrackResponse | null>('/tracks/all', {
     icao24,
@@ -536,8 +722,7 @@ async function getTrackForAircraft(icao24: string, referenceTime = 0): Promise<F
   });
 
   const path = Array.isArray(response?.path) ? response.path : [];
-
-  return sortTrackPointsChronologically(
+  const rawTrack = sortTrackPointsChronologically(
     path
       .map((point) => {
         if (!Array.isArray(point)) return null;
@@ -552,6 +737,11 @@ async function getTrackForAircraft(icao24: string, referenceTime = 0): Promise<F
       })
       .filter((point): point is FlightMapPoint => Boolean(point)),
   );
+
+  return {
+    rawTrack,
+    track: normalizeTrackHistory(rawTrack),
+  };
 }
 
 async function getRecentRoute(icao24: string, referenceTime: number): Promise<TrackedFlightRoute> {
@@ -579,6 +769,7 @@ export async function getFlightSelectionDetails(params: {
   callsign?: string | null;
   departureAirport?: string | null;
   arrivalAirport?: string | null;
+  referenceTime?: number | null;
   lastSeen?: number | null;
 }): Promise<SelectedFlightDetails> {
   const normalizedIcao24 = normalizeIdentifier(params.icao24).toLowerCase();
@@ -590,6 +781,7 @@ export async function getFlightSelectionDetails(params: {
     icao24: normalizedIcao24,
     departureAirport: params.departureAirport,
     arrivalAirport: params.arrivalAirport,
+    referenceTime: params.referenceTime,
     lastSeen: params.lastSeen,
   });
 
@@ -607,11 +799,10 @@ export async function getFlightSelectionDetails(params: {
     const fallbackRoute = createEmptyRoute();
     fallbackRoute.departureAirport = params.departureAirport ?? null;
     fallbackRoute.arrivalAirport = params.arrivalAirport ?? null;
-    fallbackRoute.lastSeen = params.lastSeen ?? null;
 
-    const referenceTime = typeof params.lastSeen === 'number' && Number.isFinite(params.lastSeen) && params.lastSeen > 0
-      ? Math.floor(params.lastSeen)
-      : Math.floor(Date.now() / 1000);
+    const referenceTime = normalizeUnixSeconds(params.referenceTime)
+      ?? normalizeUnixSeconds(params.lastSeen)
+      ?? Math.floor(Date.now() / 1000);
 
     const shouldUseOpenSky = !isSyntheticAircraftIdentifier(normalizedIcao24);
     const [latestRoute, aviationstackMatch] = await Promise.all([
@@ -623,7 +814,7 @@ export async function getFlightSelectionDetails(params: {
         : Promise.resolve(null),
     ]);
 
-    const route: TrackedFlightRoute = {
+    const route: TrackedFlightRoute = sanitizeRouteTimes({
       departureAirport: latestRoute.departureAirport
         ?? aviationstackMatch?.route.departureAirport
         ?? fallbackRoute.departureAirport,
@@ -632,12 +823,12 @@ export async function getFlightSelectionDetails(params: {
         ?? fallbackRoute.arrivalAirport,
       firstSeen: latestRoute.firstSeen ?? aviationstackMatch?.route.firstSeen ?? fallbackRoute.firstSeen,
       lastSeen: latestRoute.lastSeen ?? aviationstackMatch?.route.lastSeen ?? fallbackRoute.lastSeen,
-    };
+    }, referenceTime);
 
     let guessedDepartureAirport: AirportDetails | null = null;
     if (!route.departureAirport && shouldUseOpenSky) {
       const originPoint = await getTrackForAircraft(normalizedIcao24, referenceTime)
-        .then((track) => track[0] ?? null)
+        .then((history) => history.track[0] ?? null)
         .catch(() => null);
 
       guessedDepartureAirport = await guessDepartureAirportFromOriginPoint(originPoint);
@@ -794,10 +985,13 @@ async function fetchFreshFlights(query: string, requestedIdentifiers: string[]):
   const flights = await Promise.all(
     Array.from(matchesByAircraft.entries()).map(async ([icao24, { state, recentFlight, matchedBy }]) => {
       const referenceTime = state?.lastContact ?? recentFlight?.lastSeen ?? Math.floor(Date.now() / 1000);
-      const [track, routeResult] = await Promise.all([
-        getTrackForAircraft(icao24, referenceTime).catch(() => []),
+      const [trackHistory, routeResult] = await Promise.all([
+        getTrackForAircraft(icao24, referenceTime).catch(() => ({ track: [], rawTrack: [] } satisfies TrackHistory)),
         getRecentRoute(icao24, referenceTime).catch(() => createEmptyRoute()),
       ]);
+
+      const track = trackHistory.track;
+      const rawTrack = trackHistory.rawTrack;
 
       const current = state
         ? projectPoint({
@@ -834,6 +1028,7 @@ async function fetchFreshFlights(query: string, requestedIdentifiers: string[]):
         current,
         originPoint,
         track,
+        rawTrack,
         onGround: isOnGround,
         velocity: state?.velocity ?? null,
         heading: state?.trueTrack ?? current?.heading ?? null,
@@ -877,12 +1072,16 @@ export async function searchFlights(query: string): Promise<TrackerApiResponse> 
   const cacheKey = buildSearchCacheKey(requestedIdentifiers);
 
   const recentCachedResult = readRecentSearchResult(cacheKey);
-  if (recentCachedResult) {
+  if (recentCachedResult && payloadHasRawTrackData(recentCachedResult)) {
     return recentCachedResult;
   }
 
+  if (recentCachedResult && !payloadHasRawTrackData(recentCachedResult)) {
+    searchResultsCache.delete(cacheKey);
+  }
+
   const cachedResult = await readFlightSearchCache(cacheKey);
-  if (cachedResult) {
+  if (cachedResult && payloadHasRawTrackData(cachedResult)) {
     writeRecentSearchResult(cacheKey, cachedResult);
     return cachedResult;
   }
