@@ -229,6 +229,17 @@ function SelectedFlightDetails({
   const observedArrivalTime = details?.route?.lastSeen ?? flight.route.lastSeen;
   const observedStatusLabel = flight.onGround ? 'Arrival observed' : 'Last observed';
   const observedStatusTime = flight.onGround ? observedArrivalTime : flight.lastContact;
+  const airlineName = details?.airline?.name ?? flight.airline?.name ?? '—';
+  const aircraftModel = details?.aircraft?.model ?? flight.aircraft?.model ?? '—';
+  const aircraftRegistration = details?.aircraft?.registration ?? flight.aircraft?.registration ?? null;
+  const dataSourceLabel = (() => {
+    const dataSource = details?.dataSource ?? flight.dataSource ?? 'opensky';
+    if (dataSource === 'hybrid') {
+      return 'OpenSky + Aviationstack';
+    }
+
+    return dataSource === 'aviationstack' ? 'Aviationstack' : 'OpenSky';
+  })();
 
   return (
     <div className="rounded-2xl border border-cyan-400/30 bg-cyan-500/10 p-4 text-sm text-slate-200 shadow-lg shadow-cyan-950/20">
@@ -252,6 +263,10 @@ function SelectedFlightDetails({
           <dd>{flight.route.departureAirport ?? '—'} → {flight.route.arrivalAirport ?? '—'}</dd>
         </div>
         <div>
+          <dt className="text-slate-400">Airline</dt>
+          <dd>{airlineName}</dd>
+        </div>
+        <div>
           <dt className="text-slate-400">Speed</dt>
           <dd>{formatSpeed(flight.velocity)}</dd>
         </div>
@@ -268,12 +283,20 @@ function SelectedFlightDetails({
           <dd>{flight.verticalRate == null ? '—' : `${Math.round(flight.verticalRate)} m/s`}</dd>
         </div>
         <div>
+          <dt className="text-slate-400">Aircraft</dt>
+          <dd>{aircraftModel === '—' ? '—' : aircraftRegistration ? `${aircraftModel} • ${aircraftRegistration}` : aircraftModel}</dd>
+        </div>
+        <div>
           <dt className="text-slate-400">Status</dt>
           <dd>{flight.onGround ? 'On the ground' : 'In flight'}</dd>
         </div>
         <div>
           <dt className="text-slate-400">Last contact</dt>
           <dd>{formatRelativeSeconds(flight.lastContact)}</dd>
+        </div>
+        <div>
+          <dt className="text-slate-400">Source</dt>
+          <dd>{dataSourceLabel}</dd>
         </div>
       </dl>
 

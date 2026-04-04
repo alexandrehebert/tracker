@@ -16,6 +16,20 @@ export interface TrackedFlightRoute {
   lastSeen: number | null;
 }
 
+export interface FlightAirlineDetails {
+  name: string | null;
+  iata: string | null;
+  icao: string | null;
+}
+
+export interface FlightAircraftDetails {
+  registration: string | null;
+  iata: string | null;
+  icao: string | null;
+  icao24: string | null;
+  model: string | null;
+}
+
 export interface TrackedFlight {
   icao24: string;
   callsign: string;
@@ -34,6 +48,10 @@ export interface TrackedFlight {
   squawk: string | null;
   category: number | null;
   route: TrackedFlightRoute;
+  flightNumber?: string | null;
+  airline?: FlightAirlineDetails | null;
+  aircraft?: FlightAircraftDetails | null;
+  dataSource?: 'opensky' | 'aviationstack' | 'hybrid';
 }
 
 export interface AirportDetails {
@@ -67,6 +85,10 @@ export interface SelectedFlightDetails {
   route: TrackedFlightRoute;
   departureAirport: AirportDetails | null;
   arrivalAirport: AirportDetails | null;
+  flightNumber?: string | null;
+  airline?: FlightAirlineDetails | null;
+  aircraft?: FlightAircraftDetails | null;
+  dataSource?: 'opensky' | 'aviationstack' | 'hybrid';
 }
 
 export interface TrackerApiResponse {
