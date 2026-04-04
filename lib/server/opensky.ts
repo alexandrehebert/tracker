@@ -613,6 +613,7 @@ async function fetchFreshFlights(query: string, requestedIdentifiers: string[]):
         : track.at(-1) ?? null;
 
       const originPoint = track[0] ?? current;
+      const isOnGround = state?.onGround ?? current?.onGround ?? false;
       const guessedDepartureAirport = !routeResult.departureAirport && !recentFlight?.estDepartureAirport
         ? await guessDepartureAirportFromOriginPoint(track[0] ?? null)
         : null;
@@ -623,7 +624,7 @@ async function fetchFreshFlights(query: string, requestedIdentifiers: string[]):
           ?? getAirportLookupCode(guessedDepartureAirport),
         arrivalAirport: routeResult.arrivalAirport ?? recentFlight?.estArrivalAirport ?? null,
         firstSeen: routeResult.firstSeen ?? recentFlight?.firstSeen ?? null,
-        lastSeen: routeResult.lastSeen ?? recentFlight?.lastSeen ?? null,
+        lastSeen: isOnGround ? (routeResult.lastSeen ?? recentFlight?.lastSeen ?? null) : null,
       };
 
       return {
@@ -635,7 +636,7 @@ async function fetchFreshFlights(query: string, requestedIdentifiers: string[]):
         current,
         originPoint,
         track,
-        onGround: state?.onGround ?? current?.onGround ?? false,
+        onGround: isOnGround,
         velocity: state?.velocity ?? null,
         heading: state?.trueTrack ?? current?.heading ?? null,
         verticalRate: state?.verticalRate ?? null,

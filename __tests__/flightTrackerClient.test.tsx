@@ -45,7 +45,38 @@ const responsePayload = {
         onGround: false,
       },
       originPoint: null,
-      track: [],
+      track: [
+        {
+          time: Math.round(Date.now() / 1000) - 180,
+          latitude: 48.2,
+          longitude: 1.8,
+          x: 0,
+          y: 0,
+          altitude: 8200,
+          heading: 180,
+          onGround: false,
+        },
+        {
+          time: Math.round(Date.now() / 1000) - 120,
+          latitude: 48.4,
+          longitude: 1.95,
+          x: 0,
+          y: 0,
+          altitude: 9100,
+          heading: 180,
+          onGround: false,
+        },
+        {
+          time: Math.round(Date.now() / 1000) - 60,
+          latitude: 48.6,
+          longitude: 2.1,
+          x: 0,
+          y: 0,
+          altitude: 10000,
+          heading: 180,
+          onGround: false,
+        },
+      ],
       onGround: false,
       velocity: 230,
       heading: 180,
@@ -225,6 +256,31 @@ describe('FlightTrackerClient', () => {
       expect.stringMatching(/^\/api\/tracker\/details\?/),
       { cache: 'no-store' },
     );
+  });
+
+  it('shows last observed instead of an arrival time while the selected flight is airborne', async () => {
+    const user = userEvent.setup();
+
+    render(<FlightTrackerClient map={map} />);
+
+    await user.type(screen.getByLabelText(/flight identifiers/i), 'AFR12');
+    await user.click(screen.getByRole('button', { name: /track flights/i }));
+
+    expect(await screen.findByText('Paris Charles de Gaulle Airport')).toBeInTheDocument();
+    expect(screen.getByText(/^Last observed$/i)).toBeInTheDocument();
+    expect(screen.queryByText(/^Arrival observed$/i)).not.toBeInTheDocument();
+  });
+
+  it('renders a simple altitude trend chart for the selected flight', async () => {
+    const user = userEvent.setup();
+
+    render(<FlightTrackerClient map={map} />);
+
+    await user.type(screen.getByLabelText(/flight identifiers/i), 'AFR12');
+    await user.click(screen.getByRole('button', { name: /track flights/i }));
+
+    expect(await screen.findByText(/altitude trend/i)).toBeInTheDocument();
+    expect(screen.getByRole('img', { name: /altitude history for AFR12/i })).toBeInTheDocument();
   });
 
   it('reuses cached airport details after a refresh for the same selected flight', async () => {

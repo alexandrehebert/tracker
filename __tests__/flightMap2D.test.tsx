@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { WorldMapPayload } from '~/lib/server/worldMap';
 import { TrackerMapProvider } from '~/components/tracker/contexts/TrackerMapContext';
 import FlightMap2D from '~/components/tracker/flight/FlightMap2D';
-import type { TrackedFlight } from '~/components/tracker/flight/types';
+import type { SelectedFlightDetails, TrackedFlight } from '~/components/tracker/flight/types';
 
 const mockUseTrackerLayout = vi.fn();
 
@@ -110,6 +110,33 @@ const secondaryFlight: TrackedFlight = {
   ],
 };
 
+const selectedFlightDetails: SelectedFlightDetails = {
+  icao24: trackedFlight.icao24,
+  callsign: trackedFlight.callsign,
+  fetchedAt: Date.now(),
+  route: trackedFlight.route,
+  departureAirport: {
+    code: 'LFBO',
+    iata: 'TLS',
+    icao: 'LFBO',
+    name: 'Toulouse-Blagnac Airport',
+    city: 'Toulouse',
+    country: 'France',
+    latitude: 43.6293,
+    longitude: 1.363,
+  },
+  arrivalAirport: {
+    code: 'LFPG',
+    iata: 'CDG',
+    icao: 'LFPG',
+    name: 'Paris Charles de Gaulle Airport',
+    city: 'Paris',
+    country: 'France',
+    latitude: 49.0097,
+    longitude: 2.5479,
+  },
+};
+
 describe('FlightMap2D', () => {
   beforeEach(() => {
     mockUseTrackerLayout.mockReset();
@@ -120,11 +147,15 @@ describe('FlightMap2D', () => {
     {
       flights = [],
       selectedIcao24 = null,
+      selectedFlightDetails: selectionDetails = null,
       mapTransform = zoomIdentity,
+      focusBounds = vi.fn(),
     }: {
       flights?: TrackedFlight[];
       selectedIcao24?: string | null;
+      selectedFlightDetails?: SelectedFlightDetails | null;
       mapTransform?: typeof zoomIdentity;
+      focusBounds?: ReturnType<typeof vi.fn>;
     } = {},
   ) {
     mockUseTrackerLayout.mockReturnValue({
@@ -144,10 +175,15 @@ describe('FlightMap2D', () => {
           mapTransform,
           zoomBy: vi.fn(),
           resetZoom: vi.fn(),
-          focusBounds: vi.fn(),
+          focusBounds,
         }}
       >
-        <FlightMap2D map={map} flights={flights} selectedIcao24={selectedIcao24} />
+        <FlightMap2D
+          map={map}
+          flights={flights}
+          selectedIcao24={selectedIcao24}
+          selectedFlightDetails={selectionDetails}
+        />
       </TrackerMapProvider>,
     );
   }
@@ -182,6 +218,60 @@ describe('FlightMap2D', () => {
       'transform',
       `translate(${trackedFlight.current?.x} ${trackedFlight.current?.y}) scale(0.5)`,
     );
+  });
+
+  it('does not refocus the map when the same selected flight refreshes with new live data', () => {
+    const focusBounds = vi.fn();
+    const { rerender } = renderMap(false, {
+      flights: [trackedFlight],
+      selectedIcao24: trackedFlight.icao24,
+      focusBounds,
+    });
+
+    expect(focusBounds).toHaveBeenCalledTimes(1);
+
+    const refreshedFlight: TrackedFlight = {
+      ...trackedFlight,
+      lastContact: trackedFlight.lastContact + 60,
+      current: trackedFlight.current
+        ? {
+            ...trackedFlight.current,
+            time: (trackedFlight.current.time ?? trackedFlight.lastContact) + 60,
+            x: trackedFlight.current.x + 18,
+            y: trackedFlight.current.y + 12,
+          }
+        : null,
+      track: [
+        ...trackedFlight.track,
+        {
+          ...(trackedFlight.track.at(-1) ?? trackedFlight.current ?? trackedFlight.originPoint)!,
+          time: trackedFlight.lastContact + 45,
+          x: (trackedFlight.current?.x ?? 120) + 10,
+          y: (trackedFlight.current?.y ?? 140) + 8,
+        },
+      ],
+    };
+
+    rerender(
+      <TrackerMapProvider
+        value={{
+          svgRef: { current: null },
+          mapTransform: zoomIdentity,
+          zoomBy: vi.fn(),
+          resetZoom: vi.fn(),
+          focusBounds,
+        }}
+      >
+        <FlightMap2D
+          map={map}
+          flights={[refreshedFlight]}
+          selectedIcao24={refreshedFlight.icao24}
+          selectedFlightDetails={selectedFlightDetails}
+        />
+      </TrackerMapProvider>,
+    );
+
+    expect(focusBounds).toHaveBeenCalledTimes(1);
   });
 
   it('draws the route through the origin, sampled track, and current position', () => {
@@ -269,6 +359,86 @@ describe('FlightMap2D', () => {
     const labelContainer = labelText.closest('g');
 
     expect(labelContainer).toHaveAttribute('transform', expect.stringMatching(/translate\(-\d+(?:\.\d+)?\s+\d+(?:\.\d+)?\)/));
+  });
+
+  it('anchors the selected-flight connector on the label edge instead of a corner', () => {
+    const { container } = renderMap(false, {
+      flights: [trackedFlight],
+      selectedIcao24: trackedFlight.icao24,
+    });
+
+    const labelText = screen.getByText(trackedFlight.callsign);
+    const labelContainer = labelText.closest('g');
+    const connector = container.querySelector('line');
+    const labelRect = labelContainer?.querySelector('rect');
+
+    expect(labelContainer).not.toBeNull();
+    expect(connector).not.toBeNull();
+    expect(labelRect).not.toBeNull();
+
+    const transformMatch = labelContainer?.getAttribute('transform')?.match(/translate\(([-\d.]+)\s+([-\d.]+)\)/);
+    expect(transformMatch).not.toBeNull();
+
+    const offsetX = Number(transformMatch?.[1]);
+    const offsetY = Number(transformMatch?.[2]);
+    const width = Number(labelRect?.getAttribute('width'));
+    const height = Number(labelRect?.getAttribute('height'));
+    const x2 = Number(connector?.getAttribute('x2'));
+    const y2 = Number(connector?.getAttribute('y2'));
+    const epsilon = 0.001;
+
+    const onVerticalEdge = Math.abs(x2 - offsetX) < epsilon || Math.abs(x2 - (offsetX + width)) < epsilon;
+    const onHorizontalEdge = Math.abs(y2 - offsetY) < epsilon || Math.abs(y2 - (offsetY + height)) < epsilon;
+
+    expect(onVerticalEdge || onHorizontalEdge).toBe(true);
+    expect(onVerticalEdge && onHorizontalEdge).toBe(false);
+  });
+
+  it('gives longer callsigns enough label width for comfortable padding', () => {
+    const wideFlight: TrackedFlight = {
+      ...trackedFlight,
+      icao24: 'wide01',
+      callsign: 'MWW8888888',
+      matchedBy: ['MWW8888888'],
+    };
+
+    const { container } = renderMap(false, {
+      flights: [wideFlight],
+      selectedIcao24: wideFlight.icao24,
+    });
+
+    const labelRect = Array.from(container.querySelectorAll('rect')).find((rect) => rect.getAttribute('rx') === '12');
+
+    expect(labelRect).not.toBeNull();
+    expect(Number(labelRect?.getAttribute('width'))).toBeGreaterThanOrEqual(120);
+  });
+
+  it('draws a fading dashed forecast path for the selected flight toward its arrival airport', () => {
+    const { container } = renderMap(false, {
+      flights: [trackedFlight],
+      selectedIcao24: trackedFlight.icao24,
+      selectedFlightDetails,
+    });
+
+    const forecastPath = Array.from(container.querySelectorAll('path')).find(
+      (path) => path.getAttribute('stroke-dasharray') === '8 8',
+    );
+
+    expect(forecastPath).toBeTruthy();
+    expect(forecastPath).toHaveAttribute('stroke', expect.stringContaining('selected-flight-forecast-gradient'));
+  });
+
+  it('falls back to a heading-based forecast path when airport details are not available', () => {
+    const { container } = renderMap(false, {
+      flights: [trackedFlight],
+      selectedIcao24: trackedFlight.icao24,
+    });
+
+    const forecastPath = Array.from(container.querySelectorAll('path')).find(
+      (path) => path.getAttribute('stroke-dasharray') === '8 8',
+    );
+
+    expect(forecastPath).toBeTruthy();
   });
 
   it('centers the callsign text inside the selected label', () => {

@@ -1,17 +1,19 @@
 'use client';
 
-import { useEffect, useMemo } from 'react';
+import { geoNaturalEarth1 } from 'd3-geo';
+import { useEffect, useMemo, useRef } from 'react';
 import { buildSmoothRoutePath } from '~/lib/utils/routePath';
 import type { WorldMapPayload } from '~/lib/server/worldMap';
 import { useTrackerLayout } from '../contexts/TrackerLayoutContext';
 import { useTrackerMap } from '../contexts/TrackerMapContext';
 import { getFlightMapColor } from './colors';
-import type { FlightMapPoint, TrackedFlight } from './types';
+import type { FlightMapPoint, SelectedFlightDetails, TrackedFlight } from './types';
 
 interface FlightMap2DProps {
   map: WorldMapPayload;
   flights: TrackedFlight[];
   selectedIcao24: string | null;
+  selectedFlightDetails?: SelectedFlightDetails | null;
   onSelectFlight?: (icao24: string) => void;
 }
 
@@ -103,6 +105,181 @@ function getVisibleRoutePoints(flight: TrackedFlight): FlightMapPoint[] {
     });
 }
 
+function toDegrees(value: number): number {
+  return value * (180 / Math.PI);
+}
+
+function normalizeLongitude(value: number): number {
+  const normalized = ((value + 180) % 360 + 360) % 360 - 180;
+  return normalized === -180 ? 180 : normalized;
+}
+
+function getBearingBetweenPoints(start: FlightMapPoint, end: FlightMapPoint): number {
+  const startLatitude = (start.latitude * Math.PI) / 180;
+  const endLatitude = (end.latitude * Math.PI) / 180;
+  const longitudeDelta = ((end.longitude - start.longitude) * Math.PI) / 180;
+  const y = Math.sin(longitudeDelta) * Math.cos(endLatitude);
+  const x = Math.cos(startLatitude) * Math.sin(endLatitude)
+    - Math.sin(startLatitude) * Math.cos(endLatitude) * Math.cos(longitudeDelta);
+
+  return (toDegrees(Math.atan2(y, x)) + 360) % 360;
+}
+
+function getHeadingDeltaDegrees(first: number, second: number): number {
+  return Math.abs((((first - second) % 360) + 540) % 360 - 180);
+}
+
+function createFlightMapPointProjector(viewBox: { width: number; height: number }) {
+  const projection = geoNaturalEarth1();
+  projection.fitSize([viewBox.width, viewBox.height], { type: 'Sphere' } as never);
+
+  return ({
+    latitude,
+    longitude,
+    time = null,
+    altitude = null,
+    heading = null,
+    onGround = false,
+  }: {
+    latitude: number;
+    longitude: number;
+    time?: number | null;
+    altitude?: number | null;
+    heading?: number | null;
+    onGround?: boolean;
+  }): FlightMapPoint | null => {
+    if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+      return null;
+    }
+
+    const coordinates = projection([longitude, latitude]);
+    if (!coordinates) {
+      return null;
+    }
+
+    return {
+      time,
+      latitude,
+      longitude,
+      x: coordinates[0],
+      y: coordinates[1],
+      altitude,
+      heading,
+      onGround,
+    };
+  };
+}
+
+function projectForecastHeadingPoint({
+  start,
+  heading,
+  distanceKm,
+  projectPoint,
+}: {
+  start: FlightMapPoint;
+  heading: number;
+  distanceKm: number;
+  projectPoint: ReturnType<typeof createFlightMapPointProjector>;
+}): FlightMapPoint | null {
+  const earthRadiusKm = 6371;
+  const angularDistance = Math.max(distanceKm, 1) / earthRadiusKm;
+  const headingRadians = (heading * Math.PI) / 180;
+  const startLatitude = (start.latitude * Math.PI) / 180;
+  const startLongitude = (start.longitude * Math.PI) / 180;
+  const projectedLatitude = Math.asin(
+    Math.sin(startLatitude) * Math.cos(angularDistance)
+      + Math.cos(startLatitude) * Math.sin(angularDistance) * Math.cos(headingRadians),
+  );
+  const projectedLongitude = startLongitude + Math.atan2(
+    Math.sin(headingRadians) * Math.sin(angularDistance) * Math.cos(startLatitude),
+    Math.cos(angularDistance) - Math.sin(startLatitude) * Math.sin(projectedLatitude),
+  );
+
+  return projectPoint({
+    latitude: toDegrees(projectedLatitude),
+    longitude: normalizeLongitude(toDegrees(projectedLongitude)),
+    time: start.time,
+    altitude: start.altitude,
+    heading,
+    onGround: false,
+  });
+}
+
+function getForecastRoutePoints({
+  flight,
+  selectedFlightDetails,
+  projectPoint,
+}: {
+  flight: TrackedFlight;
+  selectedFlightDetails: SelectedFlightDetails | null | undefined;
+  projectPoint: ReturnType<typeof createFlightMapPointProjector>;
+}): FlightMapPoint[] {
+  const currentPoint = flight.current ?? flight.track.at(-1) ?? null;
+  if (!currentPoint || currentPoint.onGround) {
+    return [];
+  }
+
+  const arrivalAirport = selectedFlightDetails?.arrivalAirport;
+  const arrivalPoint = arrivalAirport?.latitude != null && arrivalAirport?.longitude != null
+    ? projectPoint({
+        latitude: arrivalAirport.latitude,
+        longitude: arrivalAirport.longitude,
+        time: flight.route.lastSeen,
+        altitude: 0,
+        onGround: true,
+      })
+    : null;
+
+  const bearingToArrival = arrivalPoint ? getBearingBetweenPoints(currentPoint, arrivalPoint) : null;
+  const liveHeading = flight.heading ?? currentPoint.heading ?? null;
+  const forecastHeading = liveHeading != null && bearingToArrival != null && getHeadingDeltaDegrees(liveHeading, bearingToArrival) > 105
+    ? bearingToArrival
+    : liveHeading ?? bearingToArrival;
+
+  if (forecastHeading == null) {
+    return arrivalPoint ? [currentPoint, arrivalPoint] : [];
+  }
+
+  const speedKmh = flight.velocity != null && Number.isFinite(flight.velocity) ? flight.velocity * 3.6 : 820;
+  const leadDistanceKm = clamp(speedKmh * 0.35, 180, 540);
+  const distanceToArrivalKm = arrivalPoint ? getPointDistanceKm(currentPoint, arrivalPoint) : null;
+  const guidedLeadDistanceKm = distanceToArrivalKm != null
+    ? clamp(Math.min(leadDistanceKm, distanceToArrivalKm * 0.55), 90, leadDistanceKm)
+    : leadDistanceKm;
+  const leadPoint = projectForecastHeadingPoint({
+    start: currentPoint,
+    heading: forecastHeading,
+    distanceKm: guidedLeadDistanceKm,
+    projectPoint,
+  });
+
+  const forecastPoints = [currentPoint, leadPoint];
+
+  if (arrivalPoint && (distanceToArrivalKm ?? 0) > 18) {
+    forecastPoints.push(arrivalPoint);
+  } else if (!arrivalPoint) {
+    forecastPoints.push(projectForecastHeadingPoint({
+      start: currentPoint,
+      heading: forecastHeading,
+      distanceKm: leadDistanceKm * 1.7,
+      projectPoint,
+    }));
+  }
+
+  const seen = new Set<string>();
+  return forecastPoints
+    .filter((point): point is FlightMapPoint => Boolean(point))
+    .filter((point) => {
+      const key = `${point.x.toFixed(2)}:${point.y.toFixed(2)}`;
+      if (seen.has(key)) {
+        return false;
+      }
+
+      seen.add(key);
+      return true;
+    });
+}
+
 function getFlightBounds(flight: TrackedFlight) {
   const points = getVisibleRoutePoints(flight);
 
@@ -129,6 +306,36 @@ function getFlightBounds(flight: TrackedFlight) {
 function getFixedSizeTransform(point: FlightMapPoint, zoomScale: number): string {
   const safeScale = zoomScale > 0 ? 1 / zoomScale : 1;
   return `translate(${point.x} ${point.y}) scale(${safeScale})`;
+}
+
+function getCallsignLabelWidth(callsign: string): number {
+  const normalizedCallsign = callsign.trim();
+
+  if (!normalizedCallsign) {
+    return 96;
+  }
+
+  const estimatedTextWidth = Array.from(normalizedCallsign).reduce((width, character) => {
+    if (/[MW@#%&]/.test(character)) {
+      return width + 11;
+    }
+
+    if (/[A-Z]/.test(character)) {
+      return width + 9.6;
+    }
+
+    if (/[0-9]/.test(character)) {
+      return width + 8.6;
+    }
+
+    if (/[\s/-]/.test(character)) {
+      return width + 5.2;
+    }
+
+    return width + 8.8;
+  }, 0);
+
+  return Math.max(96, Math.ceil(estimatedTextWidth + 27));
 }
 
 interface LabelObstacle {
@@ -222,17 +429,18 @@ function getRouteSegmentPenalty(
 }
 
 function getConnectorTarget(offsetX: number, offsetY: number, labelWidth: number, labelHeight: number) {
-  const connectorX = offsetX >= 0
-    ? offsetX
-    : offsetX + labelWidth <= 0
-      ? offsetX + labelWidth
-      : offsetX + labelWidth / 2;
+  const centerX = offsetX + labelWidth / 2;
+  const centerY = offsetY + labelHeight / 2;
+  const halfWidth = labelWidth / 2;
+  const halfHeight = labelHeight / 2;
+  const scale = Math.max(
+    Math.abs(centerX) > 0 ? Math.abs(centerX) / halfWidth : 0,
+    Math.abs(centerY) > 0 ? Math.abs(centerY) / halfHeight : 0,
+    1,
+  );
 
-  const connectorY = offsetY >= 0
-    ? offsetY
-    : offsetY + labelHeight <= 0
-      ? offsetY + labelHeight
-      : offsetY + labelHeight / 2;
+  const connectorX = centerX - centerX / scale;
+  const connectorY = centerY - centerY / scale;
 
   return { connectorX, connectorY };
 }
@@ -331,10 +539,22 @@ function getSelectedLabelPlacement({
   };
 }
 
-export default function FlightMap2D({ map, flights, selectedIcao24, onSelectFlight }: FlightMap2DProps) {
+export default function FlightMap2D({
+  map,
+  flights,
+  selectedIcao24,
+  selectedFlightDetails,
+  onSelectFlight,
+}: FlightMap2DProps) {
   const { isMobile } = useTrackerLayout();
   const { svgRef, mapTransform, focusBounds } = useTrackerMap();
   const preserveAspectRatio = isMobile ? 'xMidYMid slice' : 'xMidYMid meet';
+  const lastAutoFocusedFlightRef = useRef<string | null>(null);
+
+  const projectPoint = useMemo(
+    () => createFlightMapPointProjector(map.viewBox),
+    [map.viewBox.height, map.viewBox.width],
+  );
 
   const selectedFlight = useMemo(() => {
     return flights.find((flight) => flight.icao24 === selectedIcao24) ?? flights[0] ?? null;
@@ -377,13 +597,21 @@ export default function FlightMap2D({ map, flights, selectedIcao24, onSelectFlig
 
   useEffect(() => {
     if (!selectedFlight || !focusBounds) {
+      lastAutoFocusedFlightRef.current = null;
+      return;
+    }
+
+    if (lastAutoFocusedFlightRef.current === selectedFlight.icao24) {
       return;
     }
 
     const bounds = getFlightBounds(selectedFlight);
-    if (bounds) {
-      focusBounds(bounds);
+    if (!bounds) {
+      return;
     }
+
+    focusBounds(bounds);
+    lastAutoFocusedFlightRef.current = selectedFlight.icao24;
   }, [focusBounds, selectedFlight]);
 
   return (
@@ -426,12 +654,27 @@ export default function FlightMap2D({ map, flights, selectedIcao24, onSelectFlig
             const routeCurrentPoint = flight.current ?? routePoints.at(-1) ?? routeStartPoint;
             const colorIndex = flightColorIndexes.get(flight.icao24) ?? index;
             const strokeColor = getFlightMapColor(colorIndex, isSelected);
+            const activeSelectedFlightDetails = isSelected && selectedFlightDetails?.icao24 === flight.icao24
+              ? selectedFlightDetails
+              : null;
+            const forecastRoutePoints = isSelected
+              ? getForecastRoutePoints({
+                  flight,
+                  selectedFlightDetails: activeSelectedFlightDetails,
+                  projectPoint,
+                })
+              : [];
+            const forecastRoutePath = forecastRoutePoints.length > 1 ? buildSmoothRoutePath(forecastRoutePoints) : '';
+            const forecastGradientId = `selected-flight-forecast-gradient-${flight.icao24}`;
+            const forecastStartPoint = forecastRoutePoints[0] ?? null;
+            const forecastEndPoint = forecastRoutePoints.at(-1) ?? null;
             const labelPoint = routeCurrentPoint ?? routeStartPoint;
             const markerTransform = routeCurrentPoint ? getFixedSizeTransform(routeCurrentPoint, mapTransform.k) : null;
             const originTransform = routeStartPoint ? getFixedSizeTransform(routeStartPoint, mapTransform.k) : null;
             const labelTransform = labelPoint ? getFixedSizeTransform(labelPoint, mapTransform.k) : null;
-            const labelWidth = Math.max(92, Math.ceil(flight.callsign.length * 8.4) + 20);
-            const labelHeight = 24;
+            const displayCallsign = flight.callsign.trim() || flight.icao24.toUpperCase();
+            const labelWidth = getCallsignLabelWidth(displayCallsign);
+            const labelHeight = 26;
             const labelPlacement = isSelected && labelPoint
               ? getSelectedLabelPlacement({
                   point: labelPoint,
@@ -460,6 +703,38 @@ export default function FlightMap2D({ map, flights, selectedIcao24, onSelectFlig
                     className="cursor-pointer"
                     onClick={() => onSelectFlight?.(flight.icao24)}
                   />
+                ) : null}
+
+                {forecastRoutePath && forecastStartPoint && forecastEndPoint ? (
+                  <>
+                    <defs>
+                      <linearGradient
+                        id={forecastGradientId}
+                        gradientUnits="userSpaceOnUse"
+                        x1={forecastStartPoint.x}
+                        y1={forecastStartPoint.y}
+                        x2={forecastEndPoint.x}
+                        y2={forecastEndPoint.y}
+                      >
+                        <stop offset="0%" stopColor={strokeColor} stopOpacity="0.9" />
+                        <stop offset="55%" stopColor={strokeColor} stopOpacity="0.38" />
+                        <stop offset="100%" stopColor={strokeColor} stopOpacity="0" />
+                      </linearGradient>
+                    </defs>
+                    <path
+                      d={forecastRoutePath}
+                      fill="none"
+                      stroke={`url(#${forecastGradientId})`}
+                      strokeWidth={2.4}
+                      strokeDasharray="8 8"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      vectorEffect="non-scaling-stroke"
+                      filter="url(#tracker-map-glow)"
+                      className="cursor-pointer"
+                      onClick={() => onSelectFlight?.(flight.icao24)}
+                    />
+                  </>
                 ) : null}
 
                 {routeStartPoint && originTransform ? (
@@ -536,11 +811,11 @@ export default function FlightMap2D({ map, flights, selectedIcao24, onSelectFlig
                         fill="#e2e8f0"
                         fontSize="11"
                         fontWeight="700"
-                        fontFamily="sans-serif"
+                        fontFamily="ui-sans-serif, system-ui, sans-serif"
                         textAnchor="middle"
                         dominantBaseline="middle"
                       >
-                        {flight.callsign}
+                        {displayCallsign}
                       </text>
                     </g>
                   </g>

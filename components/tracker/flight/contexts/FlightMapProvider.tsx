@@ -16,7 +16,7 @@ import { useTrackerLayout } from '../../contexts/TrackerLayoutContext';
 import { TrackerMapProvider } from '../../contexts/TrackerMapContext';
 
 const MIN_FLAT_MAP_ZOOM = 1;
-const MAX_FLAT_MAP_ZOOM = 12;
+const MAX_FLAT_MAP_ZOOM = 24;
 const TRACKER_VIEWBOX = { width: 1000, height: 560 };
 
 interface BoundsRect {
