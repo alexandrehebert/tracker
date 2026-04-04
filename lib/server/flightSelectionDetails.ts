@@ -244,7 +244,7 @@ export async function getFlightSelectionDetails(
         .then((history) => history.track[0] ?? null)
         .catch((error) => {
           openSkyTrackError = error instanceof Error ? error.message : 'OpenSky track lookup failed.';
-          return null as FlightMapPoint | null;
+          return null;
         });
 
       guessedDepartureAirport = await guessDepartureAirportFromOriginPoint(originPoint);
