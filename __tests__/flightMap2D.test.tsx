@@ -351,6 +351,54 @@ describe('FlightMap2D', () => {
     expect(markerTransforms).not.toContain(`translate(${trackedFlight.originPoint?.x} ${trackedFlight.originPoint?.y}) scale(1)`);
   });
 
+  it('draws a route between the resolved airports when OpenSky live points are unavailable', () => {
+    const offlineFlight: TrackedFlight = {
+      ...trackedFlight,
+      icao24: 'offline01',
+      callsign: 'OFF123',
+      matchedBy: ['OFF123'],
+      current: null,
+      originPoint: null,
+      track: [],
+      rawTrack: [],
+      velocity: null,
+      heading: null,
+      geoAltitude: null,
+      baroAltitude: null,
+      onGround: false,
+    };
+
+    const { container } = renderMap(false, {
+      flights: [offlineFlight],
+      selectedIcao24: offlineFlight.icao24,
+      selectedFlightDetails: {
+        ...selectedFlightDetails,
+        icao24: offlineFlight.icao24,
+        callsign: offlineFlight.callsign,
+      },
+    });
+
+    const projection = geoNaturalEarth1();
+    projection.fitSize([map.viewBox.width, map.viewBox.height], { type: 'Sphere' } as never);
+    const departureCoordinates = projection([selectedFlightDetails.departureAirport!.longitude!, selectedFlightDetails.departureAirport!.latitude!]);
+    const arrivalCoordinates = projection([selectedFlightDetails.arrivalAirport!.longitude!, selectedFlightDetails.arrivalAirport!.latitude!]);
+
+    expect(departureCoordinates).not.toBeNull();
+    expect(arrivalCoordinates).not.toBeNull();
+
+    const routePath = Array.from(container.querySelectorAll('path.cursor-pointer')).find((path) => {
+      if (path.getAttribute('stroke-dasharray') === '8 8') {
+        return false;
+      }
+
+      const value = path.getAttribute('d') ?? '';
+      return value.includes(`${departureCoordinates?.[0].toFixed(2)} ${departureCoordinates?.[1].toFixed(2)}`)
+        && value.includes(`${arrivalCoordinates?.[0].toFixed(2)} ${arrivalCoordinates?.[1].toFixed(2)}`);
+    });
+
+    expect(routePath).not.toBeNull();
+  });
+
   it('only draws the route for the selected flight when several flights are tracked', () => {
     const { container } = renderMap(false, {
       flights: [trackedFlight, secondaryFlight],

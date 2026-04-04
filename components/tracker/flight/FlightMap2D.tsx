@@ -127,6 +127,30 @@ function getAirportRoutePoint({
   });
 }
 
+function dedupeRoutePoints(points: Array<FlightMapPoint | null>): FlightMapPoint[] {
+  const deduped: FlightMapPoint[] = [];
+
+  for (const point of points) {
+    if (!point) {
+      continue;
+    }
+
+    const previous = deduped.at(-1) ?? null;
+    if (
+      previous
+      && Math.abs(previous.x - point.x) <= 0.01
+      && Math.abs(previous.y - point.y) <= 0.01
+      && (previous.time ?? null) === (point.time ?? null)
+    ) {
+      continue;
+    }
+
+    deduped.push(point);
+  }
+
+  return deduped;
+}
+
 function getSelectedRoutePoints({
   flight,
   selectedFlightDetails,
@@ -139,24 +163,34 @@ function getSelectedRoutePoints({
   const visibleRoutePoints = getVisibleRoutePoints(flight);
   const matchedDetails = selectedFlightDetails?.icao24 === flight.icao24 ? selectedFlightDetails : null;
   const firstVisiblePoint = visibleRoutePoints[0] ?? null;
+  const lastVisiblePoint = visibleRoutePoints.at(-1) ?? null;
   const departureTime = flight.route.firstSeen ?? (firstVisiblePoint?.time != null ? firstVisiblePoint.time - 1 : null);
   const departurePoint = getAirportRoutePoint({
     airport: matchedDetails?.departureAirport,
     projectPoint,
     time: departureTime,
   });
+  const arrivalPoint = getAirportRoutePoint({
+    airport: matchedDetails?.arrivalAirport,
+    projectPoint,
+    time: flight.route.lastSeen ?? lastVisiblePoint?.time ?? firstVisiblePoint?.time ?? null,
+  });
+
+  if (!departurePoint && !arrivalPoint) {
+    return visibleRoutePoints;
+  }
+
+  if (!firstVisiblePoint) {
+    return dedupeRoutePoints([departurePoint, arrivalPoint]);
+  }
 
   if (!departurePoint) {
     return visibleRoutePoints;
   }
 
-  if (!firstVisiblePoint) {
-    return [departurePoint];
-  }
-
   return getPointDistanceKm(departurePoint, firstVisiblePoint) <= 80
-    ? [departurePoint, ...visibleRoutePoints.slice(1)]
-    : [departurePoint, ...visibleRoutePoints];
+    ? dedupeRoutePoints([departurePoint, ...visibleRoutePoints.slice(1)])
+    : dedupeRoutePoints([departurePoint, ...visibleRoutePoints]);
 }
 
 function toDegrees(value: number): number {
@@ -709,10 +743,14 @@ export default function FlightMap2D({
 
           {renderedFlights.map((flight, index) => {
             const isSelected = flight.icao24 === selectedFlight?.icao24;
-            const routePoints = isSelected ? selectedRoutePoints : getVisibleRoutePoints(flight);
+            const visibleRoutePoints = getVisibleRoutePoints(flight);
+            const routePoints = isSelected ? selectedRoutePoints : visibleRoutePoints;
             const routePath = isSelected ? buildRoutePath(routePoints) : '';
             const routeStartPoint = routePoints[0] ?? flight.originPoint;
-            const routeCurrentPoint = flight.current ?? routePoints.at(-1) ?? routeStartPoint;
+            const routeCurrentPoint = flight.current
+              ?? visibleRoutePoints.at(-1)
+              ?? (flight.onGround ? routePoints.at(-1) ?? null : null)
+              ?? routeStartPoint;
             const colorIndex = flightColorIndexes.get(flight.icao24) ?? index;
             const strokeColor = getFlightMapColor(colorIndex, isSelected);
             const activeSelectedFlightDetails = isSelected && selectedFlightDetails?.icao24 === flight.icao24
