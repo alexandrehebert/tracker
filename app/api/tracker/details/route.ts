@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getFlightSelectionDetails } from '~/lib/server/opensky'
+import { getFlightSelectionDetails } from '~/lib/server/flightSelectionDetails'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'

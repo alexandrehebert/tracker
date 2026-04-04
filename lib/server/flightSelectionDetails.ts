@@ -6,8 +6,11 @@ import type {
   SelectedFlightDetails,
   TrackedFlightRoute,
 } from '~/components/tracker/flight/types';
-import type { AviationstackFlightEnrichment } from './aviationstack';
-import type { FlightAwareFlightEnrichment } from './flightaware';
+import { lookupAirportDetails } from './airports';
+import { readFlightDetailsCache, writeFlightDetailsCache } from './flightCache';
+import { lookupAviationstackFlightWithReport } from './providers/aviationstack';
+import { lookupFlightAwareFlightWithReport } from './providers/flightaware';
+import { guessDepartureAirportFromOriginPoint, getRecentRoute, getTrackForAircraft } from './providers/opensky';
 
 export type FlightSelectionDetailsParams = {
   icao24: string;
@@ -22,77 +25,148 @@ export type FlightSelectionDetailsOptions = {
   forceRefresh?: boolean;
 };
 
-type LookupResult<TMatch> = Promise<{
-  match: TMatch | null;
-  report: FlightSourceDetail;
-}>;
+function normalizeIdentifier(value: string): string {
+  return value.replace(/\s+/g, '').trim().toUpperCase();
+}
 
-type FlightSelectionDetailsDependencies = {
-  normalizeIdentifier: (value: string) => string;
-  normalizeUnixSeconds: (value: number | null | undefined) => number | null;
-  createEmptyRoute: () => TrackedFlightRoute;
-  sanitizeRouteTimes: (route: TrackedFlightRoute, referenceTime?: number | null) => TrackedFlightRoute;
-  isSyntheticAircraftIdentifier: (value: string) => boolean;
-  getRecentRoute: (icao24: string, referenceTime: number) => Promise<TrackedFlightRoute>;
-  getTrackForAircraft: (icao24: string, referenceTime: number) => Promise<{
-    track: FlightMapPoint[];
-    rawTrack: FlightMapPoint[];
-  }>;
-  guessDepartureAirportFromOriginPoint: (originPoint: FlightMapPoint | null) => Promise<AirportDetails | null>;
-  getAirportLookupCode: (airport: AirportDetails | null) => string | null;
-  lookupAirportDetails: (code: string | null | undefined) => Promise<AirportDetails | null>;
-  mergeAirportDetails: (
-    airport: AirportDetails | null,
-    fallbackCode: string | null,
-    fallbackName: string | null,
-  ) => AirportDetails | null;
-  createSourceDetail: (
-    source: FlightSourceDetail['source'],
-    status: FlightSourceDetail['status'],
-    usedInResult: boolean,
-    reason: string,
-    raw?: Record<string, unknown> | null,
-  ) => FlightSourceDetail;
-  mergeSourceDetails: (
-    existing: FlightSourceDetail[] | undefined,
-    incoming: FlightSourceDetail[] | undefined,
-  ) => FlightSourceDetail[] | undefined;
-  lookupFlightAwareFlightWithReport: (identifier: string) => LookupResult<FlightAwareFlightEnrichment>;
-  lookupAviationstackFlightWithReport: (identifier: string) => LookupResult<AviationstackFlightEnrichment>;
-  readFlightDetailsCache: (cacheKey: string) => Promise<SelectedFlightDetails | null>;
-  writeFlightDetailsCache: (
-    cacheKey: string,
-    payload: SelectedFlightDetails,
-    trigger?: FlightFetchTrigger,
-  ) => Promise<SelectedFlightDetails>;
-};
+function normalizeUnixSeconds(value: number | null | undefined): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? Math.floor(value) : null;
+}
+
+function isSyntheticAircraftIdentifier(value: string): boolean {
+  return value.startsWith('as-') || value.startsWith('fa-');
+}
+
+function createEmptyRoute(): TrackedFlightRoute {
+  return {
+    departureAirport: null,
+    arrivalAirport: null,
+    firstSeen: null,
+    lastSeen: null,
+  };
+}
+
+const ROUTE_TIME_RECONCILIATION_GRACE_SECONDS = 15 * 60;
+
+function sanitizeRouteTimes(route: TrackedFlightRoute, referenceTime?: number | null): TrackedFlightRoute {
+  const normalizedReferenceTime = normalizeUnixSeconds(referenceTime);
+  const isTooFarInFuture = (timestamp: number | null) => normalizedReferenceTime != null
+    && timestamp != null
+    && timestamp > normalizedReferenceTime + ROUTE_TIME_RECONCILIATION_GRACE_SECONDS;
+
+  let firstSeen = normalizeUnixSeconds(route.firstSeen);
+  let lastSeen = normalizeUnixSeconds(route.lastSeen);
+
+  if (isTooFarInFuture(firstSeen)) {
+    firstSeen = null;
+  }
+
+  if (isTooFarInFuture(lastSeen)) {
+    lastSeen = null;
+  }
+
+  if (firstSeen != null && lastSeen != null && firstSeen > lastSeen) {
+    firstSeen = null;
+  }
+
+  return { ...route, firstSeen, lastSeen };
+}
+
+function getAirportLookupCode(airport: AirportDetails | null): string | null {
+  return airport?.icao ?? airport?.code ?? null;
+}
+
+function mergeAirportDetails(
+  airport: AirportDetails | null,
+  fallbackCode: string | null,
+  fallbackName: string | null,
+): AirportDetails | null {
+  if (airport) {
+    return !airport.name && fallbackName ? { ...airport, name: fallbackName } : airport;
+  }
+
+  if (!fallbackCode && !fallbackName) {
+    return null;
+  }
+
+  return {
+    code: fallbackCode ?? fallbackName ?? 'UNKNOWN',
+    iata: fallbackCode && fallbackCode.length === 3 ? fallbackCode : null,
+    icao: fallbackCode && fallbackCode.length === 4 ? fallbackCode : null,
+    name: fallbackName,
+    city: null,
+    country: null,
+    latitude: null,
+    longitude: null,
+    timezone: null,
+  };
+}
+
+function createSourceDetail(
+  source: FlightSourceDetail['source'],
+  status: FlightSourceDetail['status'],
+  usedInResult: boolean,
+  reason: string,
+  raw: Record<string, unknown> | null = null,
+): FlightSourceDetail {
+  return { source, status, usedInResult, reason, raw };
+}
+
+function mergeSourceDetails(
+  existing: FlightSourceDetail[] | undefined,
+  incoming: FlightSourceDetail[] | undefined,
+): FlightSourceDetail[] | undefined {
+  const nextEntries = [...(existing ?? [])];
+
+  for (const detail of incoming ?? []) {
+    const index = nextEntries.findIndex((entry) => entry.source === detail.source);
+    if (index < 0) {
+      nextEntries.push(detail);
+      continue;
+    }
+
+    const current = nextEntries[index]!;
+    const priority = { used: 4, error: 3, 'no-data': 2, skipped: 1 } as const;
+    const shouldUseIncomingStatus = priority[detail.status] >= priority[current.status];
+
+    nextEntries[index] = {
+      ...current,
+      ...detail,
+      status: shouldUseIncomingStatus ? detail.status : current.status,
+      usedInResult: current.usedInResult || detail.usedInResult,
+      reason: detail.reason || current.reason,
+      raw: detail.raw ?? current.raw ?? null,
+    };
+  }
+
+  return nextEntries.length > 0 ? nextEntries : undefined;
+}
 
 const inFlightSelectionDetails = new Map<string, Promise<SelectedFlightDetails>>();
 
 export async function getFlightSelectionDetails(
   params: FlightSelectionDetailsParams,
   options: FlightSelectionDetailsOptions = {},
-  deps: FlightSelectionDetailsDependencies,
 ): Promise<SelectedFlightDetails> {
-  const normalizedIcao24 = deps.normalizeIdentifier(params.icao24).toLowerCase();
+  const normalizedIcao24 = normalizeIdentifier(params.icao24).toLowerCase();
   if (!normalizedIcao24) {
     throw new Error('Missing aircraft identifier.');
   }
 
-  const referenceTime = deps.normalizeUnixSeconds(params.referenceTime)
-    ?? deps.normalizeUnixSeconds(params.lastSeen)
+  const referenceTime = normalizeUnixSeconds(params.referenceTime)
+    ?? normalizeUnixSeconds(params.lastSeen)
     ?? Math.floor(Date.now() / 1000);
 
   const cacheKey = [
-    deps.normalizeIdentifier(normalizedIcao24),
-    deps.normalizeIdentifier(params.departureAirport ?? ''),
-    deps.normalizeIdentifier(params.arrivalAirport ?? ''),
+    normalizeIdentifier(normalizedIcao24),
+    normalizeIdentifier(params.departureAirport ?? ''),
+    normalizeIdentifier(params.arrivalAirport ?? ''),
     String(referenceTime),
-    String(deps.normalizeUnixSeconds(params.lastSeen) ?? 0),
+    String(normalizeUnixSeconds(params.lastSeen) ?? 0),
   ].join(':');
 
   const inFlightKey = options.forceRefresh ? `${cacheKey}:force` : cacheKey;
-  const cachedResult = options.forceRefresh ? null : await deps.readFlightDetailsCache(cacheKey);
+  const cachedResult = options.forceRefresh ? null : await readFlightDetailsCache(cacheKey);
   if (cachedResult) {
     return cachedResult;
   }
@@ -103,26 +177,26 @@ export async function getFlightSelectionDetails(
   }
 
   const pendingLookup = (async () => {
-    const fallbackRoute = deps.createEmptyRoute();
+    const fallbackRoute = createEmptyRoute();
     fallbackRoute.departureAirport = params.departureAirport ?? null;
     fallbackRoute.arrivalAirport = params.arrivalAirport ?? null;
 
-    const shouldUseOpenSky = !deps.isSyntheticAircraftIdentifier(normalizedIcao24);
+    const shouldUseOpenSky = !isSyntheticAircraftIdentifier(normalizedIcao24);
     let openSkyRouteError: string | null = null;
     let openSkyTrackError: string | null = null;
 
     const [latestRoute, flightAwareLookup, aviationstackLookup] = await Promise.all([
       shouldUseOpenSky
-        ? deps.getRecentRoute(normalizedIcao24, referenceTime).catch((error) => {
+        ? getRecentRoute(normalizedIcao24, referenceTime).catch((error) => {
             openSkyRouteError = error instanceof Error ? error.message : 'OpenSky route lookup failed.';
             return fallbackRoute;
           })
         : Promise.resolve(fallbackRoute),
       params.callsign
-        ? deps.lookupFlightAwareFlightWithReport(params.callsign)
+        ? lookupFlightAwareFlightWithReport(params.callsign)
         : Promise.resolve({
             match: null,
-            report: deps.createSourceDetail(
+            report: createSourceDetail(
               'flightaware',
               'skipped',
               false,
@@ -130,10 +204,10 @@ export async function getFlightSelectionDetails(
             ),
           }),
       params.callsign
-        ? deps.lookupAviationstackFlightWithReport(params.callsign)
+        ? lookupAviationstackFlightWithReport(params.callsign)
         : Promise.resolve({
             match: null,
-            report: deps.createSourceDetail(
+            report: createSourceDetail(
               'aviationstack',
               'skipped',
               false,
@@ -145,7 +219,7 @@ export async function getFlightSelectionDetails(
     const flightAwareMatch = flightAwareLookup.match;
     const aviationstackMatch = aviationstackLookup.match;
 
-    const route = deps.sanitizeRouteTimes({
+    const route = sanitizeRouteTimes({
       departureAirport: latestRoute.departureAirport
         ?? flightAwareMatch?.route.departureAirport
         ?? aviationstackMatch?.route.departureAirport
@@ -166,28 +240,28 @@ export async function getFlightSelectionDetails(
 
     let guessedDepartureAirport: AirportDetails | null = null;
     if (!route.departureAirport && shouldUseOpenSky) {
-      const originPoint = await deps.getTrackForAircraft(normalizedIcao24, referenceTime)
+      const originPoint = await getTrackForAircraft(normalizedIcao24, referenceTime)
         .then((history) => history.track[0] ?? null)
         .catch((error) => {
           openSkyTrackError = error instanceof Error ? error.message : 'OpenSky track lookup failed.';
           return null;
         });
 
-      guessedDepartureAirport = await deps.guessDepartureAirportFromOriginPoint(originPoint);
-      route.departureAirport = deps.getAirportLookupCode(guessedDepartureAirport);
+      guessedDepartureAirport = await guessDepartureAirportFromOriginPoint(originPoint);
+      route.departureAirport = getAirportLookupCode(guessedDepartureAirport);
     }
 
     const [resolvedDepartureAirport, resolvedArrivalAirport] = await Promise.all([
-      guessedDepartureAirport ? Promise.resolve(guessedDepartureAirport) : deps.lookupAirportDetails(route.departureAirport),
-      deps.lookupAirportDetails(route.arrivalAirport),
+      guessedDepartureAirport ? Promise.resolve(guessedDepartureAirport) : lookupAirportDetails(route.departureAirport),
+      lookupAirportDetails(route.arrivalAirport),
     ]);
 
-    const departureAirport = deps.mergeAirportDetails(
+    const departureAirport = mergeAirportDetails(
       resolvedDepartureAirport,
       route.departureAirport,
       flightAwareMatch?.route.departureAirportName ?? aviationstackMatch?.route.departureAirportName ?? null,
     );
-    const arrivalAirport = deps.mergeAirportDetails(
+    const arrivalAirport = mergeAirportDetails(
       resolvedArrivalAirport,
       route.arrivalAirport,
       flightAwareMatch?.route.arrivalAirportName ?? aviationstackMatch?.route.arrivalAirportName ?? null,
@@ -195,7 +269,7 @@ export async function getFlightSelectionDetails(
 
     const openSkySourceDetail = (() => {
       if (!shouldUseOpenSky) {
-        return deps.createSourceDetail(
+        return createSourceDetail(
           'opensky',
           'skipped',
           false,
@@ -208,7 +282,7 @@ export async function getFlightSelectionDetails(
       const hasDerivedAirport = Boolean(guessedDepartureAirport);
 
       if ((openSkyRouteError || openSkyTrackError) && !hasOpenSkyRouteData && !hasDerivedAirport) {
-        return deps.createSourceDetail(
+        return createSourceDetail(
           'opensky',
           'error',
           false,
@@ -222,7 +296,7 @@ export async function getFlightSelectionDetails(
       }
 
       if (!hasOpenSkyRouteData && !hasDerivedAirport) {
-        return deps.createSourceDetail(
+        return createSourceDetail(
           'opensky',
           'no-data',
           false,
@@ -235,7 +309,7 @@ export async function getFlightSelectionDetails(
         );
       }
 
-      return deps.createSourceDetail(
+      return createSourceDetail(
         'opensky',
         'used',
         true,
@@ -270,14 +344,11 @@ export async function getFlightSelectionDetails(
               : aviationstackMatch
                 ? 'aviationstack'
                 : (normalizedIcao24.startsWith('fa-') ? 'flightaware' : 'aviationstack')),
-      sourceDetails: deps.mergeSourceDetails(undefined, [openSkySourceDetail, flightAwareLookup.report, aviationstackLookup.report]),
+      sourceDetails: mergeSourceDetails(undefined, [openSkySourceDetail, flightAwareLookup.report, aviationstackLookup.report]),
     };
 
-    return deps.writeFlightDetailsCache(
-      cacheKey,
-      payload,
-      options.forceRefresh ? 'manual-refresh' : 'search',
-    );
+    const trigger: FlightFetchTrigger = options.forceRefresh ? 'manual-refresh' : 'search';
+    return writeFlightDetailsCache(cacheKey, payload, trigger);
   })().finally(() => {
     inFlightSelectionDetails.delete(inFlightKey);
   });
