@@ -185,6 +185,116 @@ describe('FlightTrackerClient', () => {
     });
   });
 
+  it('forces a cache-busting refresh and shows the fetch history modal', async () => {
+    const user = userEvent.setup();
+    const initialPayload = {
+      ...responsePayload,
+      fetchedAt: 1_700_000_000_000,
+      flights: [
+        {
+          ...responsePayload.flights[0],
+          lastContact: 1_700_000_000,
+          velocity: 230,
+          geoAltitude: 10_000,
+          flightNumber: '12',
+          airline: {
+            name: 'Air France',
+            iata: 'AF',
+            icao: 'AFR',
+          },
+          aircraft: {
+            registration: 'F-GZNN',
+            iata: 'B77W',
+            icao: 'B77W',
+            icao24: '3C675A',
+            model: 'B77W',
+          },
+          dataSource: 'hybrid' as const,
+        },
+      ],
+    };
+    const refreshedPayload = {
+      ...initialPayload,
+      fetchedAt: 1_700_000_060_000,
+      flights: [
+        {
+          ...initialPayload.flights[0],
+          lastContact: 1_700_000_060,
+          velocity: 245,
+          geoAltitude: 10_850,
+          route: {
+            departureAirport: null,
+            arrivalAirport: 'JFK',
+            firstSeen: null,
+            lastSeen: null,
+          },
+          flightNumber: null,
+          airline: null,
+          aircraft: null,
+        },
+      ],
+    };
+    const refreshedDetailsPayload = {
+      ...detailsPayload,
+      fetchedAt: 1_700_000_060_000,
+      dataSource: 'hybrid' as const,
+      airline: {
+        name: 'Air France',
+        iata: 'AF',
+        icao: 'AFR',
+      },
+      aircraft: {
+        registration: 'F-GZNN',
+        iata: 'B77W',
+        icao: 'B77W',
+        icao24: '3C675A',
+        model: 'B77W',
+      },
+    };
+
+    const fetchMock = vi.spyOn(window, 'fetch').mockImplementation(async (input) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+
+      if (url.startsWith('/api/tracker/details')) {
+        return new Response(JSON.stringify(refreshedDetailsPayload), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      const payload = url.includes('refresh=1') ? refreshedPayload : initialPayload;
+      return new Response(JSON.stringify(payload), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    });
+
+    render(<FlightTrackerClient map={map} />);
+
+    await user.type(screen.getByLabelText(/flight identifiers/i), 'AFR12');
+    await user.click(screen.getByRole('button', { name: /track flights/i }));
+
+    expect(await screen.findByText('Air France')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: /refresh/i }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith('/api/tracker?q=AFR12&refresh=1', { cache: 'no-store' });
+    });
+
+    await waitFor(() => {
+      expect(screen.getAllByText('10,850 m').length).toBeGreaterThan(0);
+    });
+    expect(screen.getByText('Air France')).toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: /view fetch history/i }));
+
+    const dialog = await screen.findByRole('dialog', { name: /flight fetch history/i });
+    expect(within(dialog).getByText(/manual refresh/i)).toBeInTheDocument();
+    expect(within(dialog).getAllByText(/^Altitude$/i).length).toBeGreaterThan(0);
+    expect(within(dialog).getAllByText(/10,850 m/i).length).toBeGreaterThan(0);
+  });
+
   it('clears tracked flights when the search field is emptied', async () => {
     const user = userEvent.setup();
 
@@ -319,7 +429,22 @@ describe('FlightTrackerClient', () => {
     expect(screen.getByRole('img', { name: /altitude history for AFR12/i })).toBeInTheDocument();
   });
 
-  it('toggles the altitude chart between normalized and raw api data when clicked', async () => {
+  it('renders the altitude trend endpoint marker as a circular overlay', async () => {
+    const user = userEvent.setup();
+
+    render(<FlightTrackerClient map={map} />);
+
+    await user.type(screen.getByLabelText(/flight identifiers/i), 'AFR12');
+    await user.click(screen.getByRole('button', { name: /track flights/i }));
+
+    const chart = screen.getByRole('img', { name: /altitude history for AFR12/i });
+    const endpointMarker = chart.parentElement?.querySelector('span[aria-hidden="true"]');
+
+    expect(endpointMarker).not.toBeNull();
+    expect(endpointMarker).toHaveClass('rounded-full');
+  });
+
+  it('does not show a raw api data toggle for the altitude chart', async () => {
     const user = userEvent.setup();
     const togglePayload = {
       ...responsePayload,
@@ -409,12 +534,11 @@ describe('FlightTrackerClient', () => {
     await user.type(screen.getByLabelText(/flight identifiers/i), 'AFR12');
     await user.click(screen.getByRole('button', { name: /track flights/i }));
 
-    expect(await screen.findByText(/normalized track/i)).toBeInTheDocument();
-
-    await user.click(screen.getByRole('button', { name: /show raw altitude history for AFR12/i }));
-
-    expect(screen.getByText(/raw api data/i)).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /show normalized altitude history for AFR12/i })).toBeInTheDocument();
+    expect(await screen.findByRole('img', { name: /altitude history for AFR12/i })).toBeInTheDocument();
+    expect(screen.queryByText(/normalized track/i)).not.toBeInTheDocument();
+    expect(screen.queryByText(/raw api data/i)).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /show raw altitude history for AFR12/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /show normalized altitude history for AFR12/i })).not.toBeInTheDocument();
   });
 
   it('plots the altitude trend chronologically so a long cruise shows as a long flat segment', async () => {
@@ -897,7 +1021,7 @@ describe('FlightTrackerClient', () => {
     expect(Math.max(...yCoordinates) - Math.min(...yCoordinates)).toBeLessThan(20);
   });
 
-  it('reuses cached airport details after a refresh for the same selected flight', async () => {
+  it('forces a fresh airport-details request after a manual refresh for the same selected flight', async () => {
     const user = userEvent.setup();
     const fetchMock = vi.spyOn(window, 'fetch');
 
@@ -912,29 +1036,26 @@ describe('FlightTrackerClient', () => {
 
     await waitFor(() => {
       const detailCalls = fetchMock.mock.calls.filter(([url]) => typeof url === 'string' && url.startsWith('/api/tracker/details'));
-      expect(detailCalls).toHaveLength(1);
+      expect(detailCalls.length).toBeGreaterThan(1);
+      expect(detailCalls.some(([url]) => typeof url === 'string' && url.includes('refresh=1'))).toBe(true);
     });
   });
 
   it('keeps the last known flight visible when a refresh temporarily returns no live match', async () => {
     const user = userEvent.setup();
-    const fetchMock = vi.spyOn(window, 'fetch');
 
-    fetchMock
-      .mockResolvedValueOnce(
-        new Response(JSON.stringify(responsePayload), {
+    vi.spyOn(window, 'fetch').mockImplementation(async (input) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+
+      if (url.startsWith('/api/tracker/details')) {
+        return new Response(JSON.stringify(detailsPayload), {
           status: 200,
           headers: { 'Content-Type': 'application/json' },
-        }),
-      )
-      .mockResolvedValueOnce(
-        new Response(JSON.stringify(detailsPayload), {
-          status: 200,
-          headers: { 'Content-Type': 'application/json' },
-        }),
-      )
-      .mockResolvedValueOnce(
-        new Response(JSON.stringify({
+        });
+      }
+
+      if (url.includes('refresh=1')) {
+        return new Response(JSON.stringify({
           query: 'AFR12',
           requestedIdentifiers: ['AFR12'],
           matchedIdentifiers: [],
@@ -944,8 +1065,14 @@ describe('FlightTrackerClient', () => {
         }), {
           status: 200,
           headers: { 'Content-Type': 'application/json' },
-        }),
-      );
+        });
+      }
+
+      return new Response(JSON.stringify(responsePayload), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    });
 
     render(<FlightTrackerClient map={map} />);
 

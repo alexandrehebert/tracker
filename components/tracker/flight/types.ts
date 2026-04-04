@@ -30,6 +30,30 @@ export interface FlightAircraftDetails {
   model: string | null;
 }
 
+export type FlightDataSource = 'opensky' | 'aviationstack' | 'hybrid';
+export type FlightFetchTrigger = 'search' | 'auto-refresh' | 'manual-refresh';
+
+export interface FlightFetchSnapshot {
+  id: string;
+  capturedAt: number;
+  trigger: FlightFetchTrigger;
+  dataSource: FlightDataSource;
+  matchedBy: string[];
+  route: TrackedFlightRoute;
+  current: FlightMapPoint | null;
+  onGround: boolean;
+  lastContact: number | null;
+  velocity: number | null;
+  heading: number | null;
+  geoAltitude: number | null;
+  baroAltitude: number | null;
+  flightNumber?: string | null;
+  airline?: FlightAirlineDetails | null;
+  aircraft?: FlightAircraftDetails | null;
+  departureAirport?: AirportDetails | null;
+  arrivalAirport?: AirportDetails | null;
+}
+
 export interface TrackedFlight {
   icao24: string;
   callsign: string;
@@ -52,7 +76,8 @@ export interface TrackedFlight {
   flightNumber?: string | null;
   airline?: FlightAirlineDetails | null;
   aircraft?: FlightAircraftDetails | null;
-  dataSource?: 'opensky' | 'aviationstack' | 'hybrid';
+  dataSource?: FlightDataSource;
+  fetchHistory?: FlightFetchSnapshot[];
 }
 
 export interface AirportDetails {
@@ -89,7 +114,8 @@ export interface SelectedFlightDetails {
   flightNumber?: string | null;
   airline?: FlightAirlineDetails | null;
   aircraft?: FlightAircraftDetails | null;
-  dataSource?: 'opensky' | 'aviationstack' | 'hybrid';
+  dataSource?: FlightDataSource;
+  fetchHistory?: FlightFetchSnapshot[];
 }
 
 export interface TrackerApiResponse {

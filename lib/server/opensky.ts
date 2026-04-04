@@ -73,6 +73,14 @@ type TrackHistory = {
   rawTrack: FlightMapPoint[];
 };
 
+type SearchFlightsOptions = {
+  forceRefresh?: boolean;
+};
+
+type FlightSelectionDetailsOptions = {
+  forceRefresh?: boolean;
+};
+
 let credentialsCache: Credentials | null = null;
 let tokenCache: { accessToken: string; expiresAt: number } | null = null;
 let recentFlightsCache: { flights: OpenSkyRecentFlight[]; expiresAt: number } | null = null;
@@ -273,12 +281,13 @@ function mergeTrackedFlightWithAviationstack(
 }
 
 async function enrichSearchResultWithAviationstack(payload: TrackerApiResponse): Promise<TrackerApiResponse> {
-  if (!isAviationstackConfigured() || payload.notFoundIdentifiers.length === 0) {
+  if (!isAviationstackConfigured() || payload.requestedIdentifiers.length === 0) {
     return payload;
   }
 
   try {
-    const enrichments = await lookupAviationstackFlights(payload.notFoundIdentifiers);
+    const identifiersToEnrich = payload.requestedIdentifiers;
+    const enrichments = await lookupAviationstackFlights(identifiersToEnrich);
     if (enrichments.size === 0) {
       return payload;
     }
@@ -286,7 +295,7 @@ async function enrichSearchResultWithAviationstack(payload: TrackerApiResponse):
     const matchedIdentifiers = new Set(payload.matchedIdentifiers);
     const flights = [...payload.flights];
 
-    for (const identifier of payload.notFoundIdentifiers) {
+    for (const identifier of identifiersToEnrich) {
       const match = enrichments.get(identifier);
       if (!match) {
         continue;
@@ -771,7 +780,7 @@ export async function getFlightSelectionDetails(params: {
   arrivalAirport?: string | null;
   referenceTime?: number | null;
   lastSeen?: number | null;
-}): Promise<SelectedFlightDetails> {
+}, options: FlightSelectionDetailsOptions = {}): Promise<SelectedFlightDetails> {
   const normalizedIcao24 = normalizeIdentifier(params.icao24).toLowerCase();
   if (!normalizedIcao24) {
     throw new Error('Missing aircraft identifier.');
@@ -785,12 +794,13 @@ export async function getFlightSelectionDetails(params: {
     lastSeen: params.lastSeen,
   });
 
-  const cachedResult = await readFlightDetailsCache(cacheKey);
+  const inFlightKey = options.forceRefresh ? `${cacheKey}:force` : cacheKey;
+  const cachedResult = options.forceRefresh ? null : await readFlightDetailsCache(cacheKey);
   if (cachedResult) {
     return cachedResult;
   }
 
-  const existingLookup = inFlightSelectionDetails.get(cacheKey);
+  const existingLookup = inFlightSelectionDetails.get(inFlightKey);
   if (existingLookup) {
     return existingLookup;
   }
@@ -869,10 +879,10 @@ export async function getFlightSelectionDetails(params: {
     await writeFlightDetailsCache(cacheKey, payload);
     return payload;
   })().finally(() => {
-    inFlightSelectionDetails.delete(cacheKey);
+    inFlightSelectionDetails.delete(inFlightKey);
   });
 
-  inFlightSelectionDetails.set(cacheKey, pendingLookup);
+  inFlightSelectionDetails.set(inFlightKey, pendingLookup);
   return pendingLookup;
 }
 
@@ -1054,7 +1064,7 @@ async function fetchFreshFlights(query: string, requestedIdentifiers: string[]):
   };
 }
 
-export async function searchFlights(query: string): Promise<TrackerApiResponse> {
+export async function searchFlights(query: string, options: SearchFlightsOptions = {}): Promise<TrackerApiResponse> {
   const requestedIdentifiers = parseIdentifierQuery(query);
   const trimmedQuery = query.trim();
 
@@ -1071,7 +1081,8 @@ export async function searchFlights(query: string): Promise<TrackerApiResponse> 
 
   const cacheKey = buildSearchCacheKey(requestedIdentifiers);
 
-  const recentCachedResult = readRecentSearchResult(cacheKey);
+  const inFlightKey = options.forceRefresh ? `${cacheKey}:force` : cacheKey;
+  const recentCachedResult = options.forceRefresh ? null : readRecentSearchResult(cacheKey);
   if (recentCachedResult && payloadHasRawTrackData(recentCachedResult)) {
     return recentCachedResult;
   }
@@ -1080,13 +1091,13 @@ export async function searchFlights(query: string): Promise<TrackerApiResponse> 
     searchResultsCache.delete(cacheKey);
   }
 
-  const cachedResult = await readFlightSearchCache(cacheKey);
+  const cachedResult = options.forceRefresh ? null : await readFlightSearchCache(cacheKey);
   if (cachedResult && payloadHasRawTrackData(cachedResult)) {
     writeRecentSearchResult(cacheKey, cachedResult);
     return cachedResult;
   }
 
-  const existingSearch = inFlightSearches.get(cacheKey);
+  const existingSearch = inFlightSearches.get(inFlightKey);
   if (existingSearch) {
     return existingSearch;
   }
@@ -1113,9 +1124,9 @@ export async function searchFlights(query: string): Promise<TrackerApiResponse> 
       return fallbackResult;
     }
   })().finally(() => {
-    inFlightSearches.delete(cacheKey);
+    inFlightSearches.delete(inFlightKey);
   });
 
-  inFlightSearches.set(cacheKey, pendingSearch);
+  inFlightSearches.set(inFlightKey, pendingSearch);
   return pendingSearch;
 }

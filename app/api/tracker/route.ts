@@ -6,9 +6,10 @@ export const dynamic = 'force-dynamic';
 
 export async function GET(request: NextRequest) {
   const query = request.nextUrl.searchParams.get('q')?.trim() ?? '';
+  const forceRefresh = ['1', 'true', 'yes'].includes(request.nextUrl.searchParams.get('refresh')?.trim().toLowerCase() ?? '');
 
   try {
-    const payload = await searchFlights(query);
+    const payload = await searchFlights(query, { forceRefresh });
     return NextResponse.json(payload, {
       headers: {
         'Cache-Control': 'no-store, max-age=0',

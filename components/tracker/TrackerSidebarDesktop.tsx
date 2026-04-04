@@ -14,7 +14,7 @@ export default function TrackerSidebarDesktop({ children, footer }: TrackerSideb
   const [suppressCollapsedPreview, setSuppressCollapsedPreview] = useState(false);
 
   const desktopWrapperClass =
-    'z-40 absolute top-[5rem] right-3 flex w-[min(92vw,25rem)] flex-col gap-3 transition-all duration-300' +
+    'z-40 absolute top-[5rem] right-3 flex w-[min(92vw,25rem)] xl:w-[min(40vw,30rem)] 2xl:w-[min(36vw,34rem)] flex-col gap-3 transition-all duration-300' +
     (sidebarOpen
       ? ' translate-x-0 opacity-100'
       : ` translate-x-[calc(100%-1rem)] opacity-100 ${suppressCollapsedPreview ? '' : 'hover:translate-x-[calc(100%-1.5rem)] focus-visible:translate-x-[calc(100%-1.5rem)]'}`);

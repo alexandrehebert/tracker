@@ -30,6 +30,8 @@ export async function GET(request: NextRequest) {
       return Number.isFinite(parsed) ? parsed : null
     }
 
+    const forceRefresh = ['1', 'true', 'yes'].includes(request.nextUrl.searchParams.get('refresh')?.trim().toLowerCase() ?? '')
+
     const payload = await getFlightSelectionDetails({
       icao24,
       callsign: request.nextUrl.searchParams.get('callsign')?.trim() ?? null,
@@ -37,7 +39,7 @@ export async function GET(request: NextRequest) {
       arrivalAirport: request.nextUrl.searchParams.get('arrivalAirport')?.trim() ?? null,
       referenceTime: parseOptionalTimestamp('referenceTime'),
       lastSeen: parseOptionalTimestamp('lastSeen'),
-    })
+    }, { forceRefresh })
 
     return NextResponse.json(payload, {
       headers: {

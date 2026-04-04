@@ -127,6 +127,98 @@ describe('searchFlights', () => {
     expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
+  it('bypasses the cached search result when forceRefresh is requested', async () => {
+    process.env.OPENSKY_CLIENT_ID = 'client-from-env';
+    process.env.OPENSKY_CLIENT_SECRET = 'secret-from-env';
+    process.env.OPENSKY_CACHE_TTL_SECONDS = '300';
+    delete process.env.MONGODB_URI;
+
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ access_token: 'token-123', expires_in: 1800 }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        time: 1_700_000_600,
+        states: [[
+          '39bd24',
+          'AFR123',
+          'France',
+          1_700_000_580,
+          1_700_000_600,
+          -15.4,
+          49.5,
+          10_668,
+          false,
+          905,
+          281,
+          0,
+          null,
+          10_668,
+          '1234',
+          false,
+          0,
+          null,
+        ]],
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ path: [] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }))
+      .mockResolvedValueOnce(new Response(JSON.stringify([]), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        time: 1_700_000_900,
+        states: [[
+          '39bd24',
+          'AFR123',
+          'France',
+          1_700_000_880,
+          1_700_000_900,
+          -14.9,
+          49.8,
+          11_050,
+          false,
+          920,
+          284,
+          0,
+          null,
+          11_050,
+          '1234',
+          false,
+          0,
+          null,
+        ]],
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ path: [] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }))
+      .mockResolvedValueOnce(new Response(JSON.stringify([]), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }));
+
+    vi.stubGlobal('fetch', fetchMock);
+
+    const searchFlights = await loadSearchFlights();
+    const firstResult = await searchFlights('AFR123');
+    const refreshedResult = await searchFlights('AFR123', { forceRefresh: true });
+
+    expect(fetchMock).toHaveBeenCalledTimes(7);
+    expect(firstResult.flights[0]?.lastContact).toBe(1_700_000_600);
+    expect(refreshedResult.flights[0]?.lastContact).toBe(1_700_000_900);
+    expect(refreshedResult.flights[0]?.geoAltitude).toBe(11_050);
+  });
+
   it('sorts live track points chronologically before building the map route', async () => {
     process.env.OPENSKY_CLIENT_ID = 'client-from-env';
     process.env.OPENSKY_CLIENT_SECRET = 'secret-from-env';
@@ -468,6 +560,132 @@ describe('searchFlights', () => {
     expect(result.flights).toHaveLength(1);
     expect(result.flights[0]?.route.departureAirport).toBe('EGLL');
     expect(result.flights[0]?.route.arrivalAirport).toBeNull();
+  });
+
+  it('enriches live OpenSky matches with Aviationstack metadata when available', async () => {
+    process.env.OPENSKY_CLIENT_ID = 'client-from-env';
+    process.env.OPENSKY_CLIENT_SECRET = 'secret-from-env';
+    process.env.AVIATION_STACK_API_KEY = 'aviationstack-key';
+    delete process.env.MONGODB_URI;
+
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ access_token: 'token-123', expires_in: 1800 }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        time: 1_700_000_600,
+        states: [[
+          '39bd24',
+          'AFR123',
+          'France',
+          1_700_000_580,
+          1_700_000_600,
+          -15.4,
+          49.5,
+          10_668,
+          false,
+          905,
+          281,
+          0,
+          null,
+          10_668,
+          '1234',
+          false,
+          0,
+          null,
+        ]],
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        path: [
+          [1_700_000_300, 49.8, -12.0, 9_500, 270, false],
+          [1_700_000_480, 49.6, -13.5, 10_100, 276, false],
+        ],
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }))
+      .mockResolvedValueOnce(new Response(JSON.stringify([
+        {
+          estDepartureAirport: 'LFPG',
+          estArrivalAirport: 'KJFK',
+          firstSeen: 1_700_000_000,
+          lastSeen: 1_700_002_400,
+        },
+      ]), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        pagination: { count: 1, total: 1, offset: 0, limit: 100 },
+        data: [
+          {
+            flight_status: 'active',
+            departure: {
+              airport: 'Paris Charles de Gaulle Airport',
+              iata: 'CDG',
+              icao: 'LFPG',
+            },
+            arrival: {
+              airport: 'John F. Kennedy International Airport',
+              iata: 'JFK',
+              icao: 'KJFK',
+            },
+            airline: {
+              name: 'Air France',
+              iata: 'AF',
+              icao: 'AFR',
+            },
+            flight: {
+              number: '123',
+              iata: 'AF123',
+              icao: 'AFR123',
+            },
+            aircraft: {
+              registration: 'F-GZNN',
+              iata: 'B77W',
+              icao: 'B77W',
+              icao24: '39BD24',
+            },
+            live: {
+              updated: '2026-04-04T10:05:00+00:00',
+              latitude: 49.5,
+              longitude: -15.4,
+              altitude: 10668,
+              direction: 281,
+              speed_horizontal: 905,
+              is_ground: false,
+            },
+          },
+        ],
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }));
+
+    vi.stubGlobal('fetch', fetchMock);
+
+    const searchFlights = await loadSearchFlights();
+    const result = await searchFlights('AFR123');
+
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('aviationstack.com/v1/flights'))).toBe(true);
+    expect(result.flights).toHaveLength(1);
+    expect(result.notFoundIdentifiers).toEqual([]);
+    expect(result.flights[0]).toMatchObject({
+      callsign: 'AFR123',
+      flightNumber: '123',
+      airline: {
+        name: 'Air France',
+      },
+      aircraft: {
+        registration: 'F-GZNN',
+        icao24: '39BD24',
+      },
+      dataSource: 'hybrid',
+    });
   });
 
   it('falls back to Aviationstack when OpenSky has no live match', async () => {

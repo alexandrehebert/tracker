@@ -2,7 +2,7 @@ import { render, screen } from '@testing-library/react';
 import { zoomIdentity } from 'd3-zoom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { WorldMapPayload } from '~/lib/server/worldMap';
-import { TrackerMapProvider } from '~/components/tracker/contexts/TrackerMapContext';
+import { TrackerMapProvider, type TrackerMapContextValue } from '~/components/tracker/contexts/TrackerMapContext';
 import FlightMap2D from '~/components/tracker/flight/FlightMap2D';
 import type { SelectedFlightDetails, TrackedFlight } from '~/components/tracker/flight/types';
 
@@ -137,6 +137,8 @@ const selectedFlightDetails: SelectedFlightDetails = {
   },
 };
 
+type FocusBoundsHandler = NonNullable<TrackerMapContextValue['focusBounds']>;
+
 describe('FlightMap2D', () => {
   beforeEach(() => {
     mockUseTrackerLayout.mockReset();
@@ -149,13 +151,13 @@ describe('FlightMap2D', () => {
       selectedIcao24 = null,
       selectedFlightDetails: selectionDetails = null,
       mapTransform = zoomIdentity,
-      focusBounds = vi.fn(),
+      focusBounds = vi.fn() as FocusBoundsHandler,
     }: {
       flights?: TrackedFlight[];
       selectedIcao24?: string | null;
       selectedFlightDetails?: SelectedFlightDetails | null;
       mapTransform?: typeof zoomIdentity;
-      focusBounds?: ReturnType<typeof vi.fn>;
+      focusBounds?: FocusBoundsHandler;
     } = {},
   ) {
     mockUseTrackerLayout.mockReturnValue({
@@ -230,13 +232,16 @@ describe('FlightMap2D', () => {
 
     expect(focusBounds).toHaveBeenCalledTimes(1);
 
+    const baseLastContact = trackedFlight.lastContact ?? 0;
+    const baseCurrentTime = trackedFlight.current?.time ?? baseLastContact;
+
     const refreshedFlight: TrackedFlight = {
       ...trackedFlight,
-      lastContact: trackedFlight.lastContact + 60,
+      lastContact: baseLastContact + 60,
       current: trackedFlight.current
         ? {
             ...trackedFlight.current,
-            time: (trackedFlight.current.time ?? trackedFlight.lastContact) + 60,
+            time: baseCurrentTime + 60,
             x: trackedFlight.current.x + 18,
             y: trackedFlight.current.y + 12,
           }
@@ -245,7 +250,7 @@ describe('FlightMap2D', () => {
         ...trackedFlight.track,
         {
           ...(trackedFlight.track.at(-1) ?? trackedFlight.current ?? trackedFlight.originPoint)!,
-          time: trackedFlight.lastContact + 45,
+          time: baseLastContact + 45,
           x: (trackedFlight.current?.x ?? 120) + 10,
           y: (trackedFlight.current?.y ?? 140) + 8,
         },

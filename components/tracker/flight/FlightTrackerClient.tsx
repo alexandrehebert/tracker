@@ -1,5 +1,7 @@
 'use client';
 
+import { scaleLinear } from 'd3-scale';
+import { curveMonotoneX, line as d3Line } from 'd3-shape';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   Activity,
@@ -21,7 +23,17 @@ import { TrackerLayoutProvider, useTrackerLayout } from '../contexts/TrackerLayo
 import { FlightMapProvider } from './contexts/FlightMapProvider';
 import FlightMap2D from './FlightMap2D';
 import { getFlightMapColor } from './colors';
-import type { AirportDetails, SelectedFlightDetails as SelectedFlightDetailsPayload, TrackerApiResponse, TrackedFlight } from './types';
+import type {
+  AirportDetails,
+  FlightDataSource,
+  FlightFetchSnapshot,
+  FlightFetchTrigger,
+  FlightMapPoint,
+  SelectedFlightDetails as SelectedFlightDetailsPayload,
+  TrackerApiResponse,
+  TrackedFlight,
+  TrackedFlightRoute,
+} from './types';
 
 const AUTO_REFRESH_MS = 60_000;
 const STORAGE_KEY = 'tracker:last-query';
@@ -93,6 +105,390 @@ function formatSpeed(value: number | null): string {
   return value == null ? '—' : `${Math.round(value * 3.6).toLocaleString()} km/h`;
 }
 
+function formatDataSourceLabel(dataSource: FlightDataSource | undefined): string {
+  if (dataSource === 'hybrid') {
+    return 'OpenSky + Aviationstack';
+  }
+
+  return dataSource === 'aviationstack' ? 'Aviationstack' : 'OpenSky';
+}
+
+function formatDateTimeMillis(timestampMs: number | null): string {
+  if (!timestampMs) {
+    return '—';
+  }
+
+  return new Intl.DateTimeFormat(undefined, {
+    dateStyle: 'medium',
+    timeStyle: 'medium',
+  }).format(timestampMs);
+}
+
+function formatFetchTriggerLabel(trigger: FlightFetchTrigger): string {
+  switch (trigger) {
+    case 'manual-refresh':
+      return 'Manual refresh';
+    case 'auto-refresh':
+      return 'Auto refresh';
+    default:
+      return 'Search';
+  }
+}
+
+function normalizeHistoryIdentifier(value: string | null | undefined): string {
+  return typeof value === 'string' ? value.replace(/\s+/g, '').trim().toUpperCase() : '';
+}
+
+function mergeUniqueStrings(...lists: Array<string[] | undefined>): string[] {
+  return Array.from(
+    new Set(
+      lists.flatMap((list) => (list ?? []).map((value) => value.trim()).filter(Boolean)),
+    ),
+  );
+}
+
+function chooseMostRecentPoint(next: FlightMapPoint | null, previous: FlightMapPoint | null): FlightMapPoint | null {
+  if (!next) {
+    return previous;
+  }
+
+  if (!previous) {
+    return next;
+  }
+
+  if (next.time != null && previous.time != null) {
+    return next.time >= previous.time ? next : previous;
+  }
+
+  if (next.time != null) {
+    return next;
+  }
+
+  return previous.time != null ? previous : next;
+}
+
+function mergeTrackPoints(previous: FlightMapPoint[] = [], next: FlightMapPoint[] = []): FlightMapPoint[] {
+  const merged = new Map<string, FlightMapPoint>();
+
+  for (const point of [...previous, ...next]) {
+    const key = point.time != null
+      ? `t:${point.time}`
+      : `c:${point.latitude.toFixed(4)}:${point.longitude.toFixed(4)}:${point.altitude ?? 'na'}`;
+
+    merged.set(key, point);
+  }
+
+  return Array.from(merged.values())
+    .sort((first, second) => {
+      if (first.time == null && second.time == null) {
+        return 0;
+      }
+
+      if (first.time == null) {
+        return 1;
+      }
+
+      if (second.time == null) {
+        return -1;
+      }
+
+      return first.time - second.time;
+    })
+    .slice(-120);
+}
+
+function mergeRouteValues(
+  previous: TrackedFlightRoute | null | undefined,
+  next: TrackedFlightRoute | null | undefined,
+): TrackedFlightRoute {
+  return {
+    departureAirport: next?.departureAirport ?? previous?.departureAirport ?? null,
+    arrivalAirport: next?.arrivalAirport ?? previous?.arrivalAirport ?? null,
+    firstSeen: next?.firstSeen ?? previous?.firstSeen ?? null,
+    lastSeen: next?.lastSeen ?? previous?.lastSeen ?? null,
+  };
+}
+
+function mergeDataSource(
+  previous: FlightDataSource | undefined,
+  next: FlightDataSource | undefined,
+): FlightDataSource | undefined {
+  if (previous && next && previous !== next) {
+    return 'hybrid';
+  }
+
+  return next ?? previous;
+}
+
+function reconcileTrackedFlight(previous: TrackedFlight | undefined, next: TrackedFlight): TrackedFlight {
+  if (!previous) {
+    return next;
+  }
+
+  const mergedCurrent = chooseMostRecentPoint(next.current, previous.current);
+  const mergedTrack = mergeTrackPoints(previous.track, next.track);
+  const mergedRawTrack = mergeTrackPoints(previous.rawTrack ?? previous.track, next.rawTrack ?? next.track);
+  const previousLastContact = previous.lastContact ?? Number.NEGATIVE_INFINITY;
+  const nextLastContact = next.lastContact ?? Number.NEGATIVE_INFINITY;
+  const mergedLastContact = Number.isFinite(Math.max(previousLastContact, nextLastContact))
+    ? Math.max(previousLastContact, nextLastContact)
+    : (next.lastContact ?? previous.lastContact ?? null);
+
+  return {
+    ...previous,
+    ...next,
+    callsign: next.callsign || previous.callsign,
+    originCountry: next.originCountry !== 'Unknown' ? next.originCountry : previous.originCountry,
+    matchedBy: mergeUniqueStrings(previous.matchedBy, next.matchedBy),
+    lastContact: mergedLastContact,
+    current: mergedCurrent,
+    originPoint: mergedTrack[0] ?? next.originPoint ?? previous.originPoint ?? mergedCurrent,
+    track: mergedTrack.length ? mergedTrack : (next.track.length ? next.track : previous.track),
+    rawTrack: mergedRawTrack.length ? mergedRawTrack : (next.rawTrack ?? previous.rawTrack ?? []),
+    onGround: nextLastContact >= previousLastContact ? next.onGround : previous.onGround,
+    velocity: next.velocity ?? previous.velocity,
+    heading: next.heading ?? previous.heading ?? mergedCurrent?.heading ?? null,
+    verticalRate: next.verticalRate ?? previous.verticalRate,
+    geoAltitude: next.geoAltitude ?? next.current?.altitude ?? previous.geoAltitude ?? previous.current?.altitude ?? null,
+    baroAltitude: next.baroAltitude ?? previous.baroAltitude,
+    squawk: next.squawk ?? previous.squawk,
+    category: next.category ?? previous.category,
+    route: mergeRouteValues(previous.route, next.route),
+    flightNumber: next.flightNumber ?? previous.flightNumber,
+    airline: next.airline ?? previous.airline,
+    aircraft: next.aircraft ?? previous.aircraft,
+    dataSource: mergeDataSource(previous.dataSource, next.dataSource),
+    fetchHistory: next.fetchHistory ?? previous.fetchHistory,
+  };
+}
+
+function reconcileSelectedFlightDetails(
+  previous: SelectedFlightDetailsPayload | null,
+  next: SelectedFlightDetailsPayload,
+): SelectedFlightDetailsPayload {
+  if (!previous || previous.icao24 !== next.icao24) {
+    return next;
+  }
+
+  return {
+    ...previous,
+    ...next,
+    fetchedAt: Math.max(previous.fetchedAt, next.fetchedAt),
+    route: mergeRouteValues(previous.route, next.route),
+    departureAirport: next.departureAirport ?? previous.departureAirport,
+    arrivalAirport: next.arrivalAirport ?? previous.arrivalAirport,
+    flightNumber: next.flightNumber ?? previous.flightNumber,
+    airline: next.airline ?? previous.airline,
+    aircraft: next.aircraft ?? previous.aircraft,
+    dataSource: mergeDataSource(previous.dataSource, next.dataSource),
+    fetchHistory: next.fetchHistory ?? previous.fetchHistory,
+  };
+}
+
+function buildFlightFetchSnapshot(
+  flight: TrackedFlight,
+  capturedAt: number,
+  trigger: FlightFetchTrigger,
+  details?: SelectedFlightDetailsPayload | null,
+): FlightFetchSnapshot {
+  return {
+    id: `${flight.icao24}:${trigger}:${capturedAt}`,
+    capturedAt,
+    trigger,
+    dataSource: details?.dataSource ?? flight.dataSource ?? 'opensky',
+    matchedBy: mergeUniqueStrings(flight.matchedBy),
+    route: details?.route ?? flight.route,
+    current: flight.current,
+    onGround: flight.onGround,
+    lastContact: flight.lastContact,
+    velocity: flight.velocity,
+    heading: flight.heading,
+    geoAltitude: flight.geoAltitude ?? flight.current?.altitude ?? null,
+    baroAltitude: flight.baroAltitude,
+    flightNumber: details?.flightNumber ?? flight.flightNumber ?? null,
+    airline: details?.airline ?? flight.airline ?? null,
+    aircraft: details?.aircraft ?? flight.aircraft ?? null,
+    departureAirport: details?.departureAirport ?? null,
+    arrivalAirport: details?.arrivalAirport ?? null,
+  };
+}
+
+function mergeFlightFetchHistory(
+  history: FlightFetchSnapshot[] | undefined,
+  snapshot: FlightFetchSnapshot,
+): FlightFetchSnapshot[] {
+  const nextHistory = [...(history ?? [])];
+  const existingIndex = nextHistory.findIndex((entry) => entry.id === snapshot.id);
+
+  if (existingIndex >= 0) {
+    const current = nextHistory[existingIndex]!;
+    const currentLastContact = current.lastContact ?? Number.NEGATIVE_INFINITY;
+    const snapshotLastContact = snapshot.lastContact ?? Number.NEGATIVE_INFINITY;
+    const preferIncomingTelemetry = snapshotLastContact >= currentLastContact;
+
+    nextHistory[existingIndex] = {
+      ...current,
+      ...snapshot,
+      matchedBy: mergeUniqueStrings(current.matchedBy, snapshot.matchedBy),
+      route: mergeRouteValues(current.route, snapshot.route),
+      current: preferIncomingTelemetry
+        ? chooseMostRecentPoint(snapshot.current, current.current)
+        : chooseMostRecentPoint(current.current, snapshot.current),
+      onGround: preferIncomingTelemetry ? snapshot.onGround : current.onGround,
+      lastContact: Number.isFinite(Math.max(currentLastContact, snapshotLastContact))
+        ? Math.max(currentLastContact, snapshotLastContact)
+        : (snapshot.lastContact ?? current.lastContact),
+      velocity: preferIncomingTelemetry ? (snapshot.velocity ?? current.velocity) : (current.velocity ?? snapshot.velocity),
+      heading: preferIncomingTelemetry ? (snapshot.heading ?? current.heading) : (current.heading ?? snapshot.heading),
+      geoAltitude: preferIncomingTelemetry ? (snapshot.geoAltitude ?? current.geoAltitude) : (current.geoAltitude ?? snapshot.geoAltitude),
+      baroAltitude: preferIncomingTelemetry ? (snapshot.baroAltitude ?? current.baroAltitude) : (current.baroAltitude ?? snapshot.baroAltitude),
+      flightNumber: snapshot.flightNumber ?? current.flightNumber,
+      airline: snapshot.airline ?? current.airline,
+      aircraft: snapshot.aircraft ?? current.aircraft,
+      departureAirport: snapshot.departureAirport ?? current.departureAirport,
+      arrivalAirport: snapshot.arrivalAirport ?? current.arrivalAirport,
+      dataSource: mergeDataSource(current.dataSource, snapshot.dataSource) ?? 'opensky',
+    };
+
+    return nextHistory;
+  }
+
+  const lastEntry = nextHistory.at(-1);
+  const previousComparable = lastEntry ? JSON.stringify({
+    dataSource: lastEntry.dataSource,
+    matchedBy: lastEntry.matchedBy,
+    route: lastEntry.route,
+    onGround: lastEntry.onGround,
+    lastContact: lastEntry.lastContact,
+    velocity: lastEntry.velocity,
+    heading: lastEntry.heading,
+    geoAltitude: lastEntry.geoAltitude,
+    baroAltitude: lastEntry.baroAltitude,
+    flightNumber: lastEntry.flightNumber,
+    airline: lastEntry.airline,
+    aircraft: lastEntry.aircraft,
+  }) : null;
+  const snapshotComparable = JSON.stringify({
+    dataSource: snapshot.dataSource,
+    matchedBy: snapshot.matchedBy,
+    route: snapshot.route,
+    onGround: snapshot.onGround,
+    lastContact: snapshot.lastContact,
+    velocity: snapshot.velocity,
+    heading: snapshot.heading,
+    geoAltitude: snapshot.geoAltitude,
+    baroAltitude: snapshot.baroAltitude,
+    flightNumber: snapshot.flightNumber,
+    airline: snapshot.airline,
+    aircraft: snapshot.aircraft,
+  });
+
+  if (previousComparable === snapshotComparable) {
+    return nextHistory;
+  }
+
+  nextHistory.push(snapshot);
+  return nextHistory.slice(-8);
+}
+
+function reconcileTrackerPayload(
+  previous: TrackerApiResponse | null,
+  incoming: TrackerApiResponse,
+  trigger: FlightFetchTrigger,
+  historyByFlight: Map<string, FlightFetchSnapshot[]>,
+  background: boolean,
+): TrackerApiResponse {
+  const previousByIcao24 = new Map((previous?.flights ?? []).map((flight) => [flight.icao24, flight]));
+  const mergedFlights = incoming.flights.map((flight) => reconcileTrackedFlight(previousByIcao24.get(flight.icao24), flight));
+
+  if (background && previous && normalizeHistoryIdentifier(previous.query) === normalizeHistoryIdentifier(incoming.query)) {
+    const unresolvedIdentifiers = new Set(incoming.notFoundIdentifiers.map((identifier) => normalizeHistoryIdentifier(identifier)));
+
+    for (const previousFlight of previous.flights) {
+      if (mergedFlights.some((flight) => flight.icao24 === previousFlight.icao24)) {
+        continue;
+      }
+
+      const shouldPreserve = previousFlight.matchedBy.some((value) => unresolvedIdentifiers.has(normalizeHistoryIdentifier(value)))
+        || unresolvedIdentifiers.has(normalizeHistoryIdentifier(previousFlight.callsign))
+        || unresolvedIdentifiers.has(normalizeHistoryIdentifier(previousFlight.icao24));
+      if (shouldPreserve) {
+        mergedFlights.push(previousFlight);
+      }
+    }
+  }
+
+  mergedFlights.sort((first, second) => first.callsign.localeCompare(second.callsign));
+
+  return {
+    ...incoming,
+    flights: mergedFlights.map((flight) => {
+      const snapshot = buildFlightFetchSnapshot(flight, incoming.fetchedAt, trigger);
+      const fetchHistory = mergeFlightFetchHistory(historyByFlight.get(flight.icao24), snapshot);
+      historyByFlight.set(flight.icao24, fetchHistory);
+
+      return {
+        ...flight,
+        fetchHistory,
+      };
+    }),
+  };
+}
+
+function summarizeSnapshotChanges(
+  snapshot: FlightFetchSnapshot,
+  previousSnapshot: FlightFetchSnapshot | null,
+): Array<{ label: string; value: string }> {
+  if (!previousSnapshot) {
+    return [{ label: 'Diff', value: 'Initial capture' }];
+  }
+
+  const changes: Array<{ label: string; value: string }> = [];
+  const currentRoute = `${snapshot.route.departureAirport ?? '—'} → ${snapshot.route.arrivalAirport ?? '—'}`;
+  const previousRoute = `${previousSnapshot.route.departureAirport ?? '—'} → ${previousSnapshot.route.arrivalAirport ?? '—'}`;
+
+  if (snapshot.dataSource !== previousSnapshot.dataSource) {
+    changes.push({
+      label: 'Source',
+      value: `${formatDataSourceLabel(previousSnapshot.dataSource)} → ${formatDataSourceLabel(snapshot.dataSource)}`,
+    });
+  }
+
+  if (currentRoute !== previousRoute) {
+    changes.push({ label: 'Route', value: `${previousRoute} → ${currentRoute}` });
+  }
+
+  if ((snapshot.geoAltitude ?? null) !== (previousSnapshot.geoAltitude ?? null)) {
+    changes.push({
+      label: 'Altitude',
+      value: `${formatAltitude(previousSnapshot.geoAltitude)} → ${formatAltitude(snapshot.geoAltitude)}`,
+    });
+  }
+
+  if ((snapshot.velocity ?? null) !== (previousSnapshot.velocity ?? null)) {
+    changes.push({
+      label: 'Speed',
+      value: `${formatSpeed(previousSnapshot.velocity)} → ${formatSpeed(snapshot.velocity)}`,
+    });
+  }
+
+  if (snapshot.onGround !== previousSnapshot.onGround) {
+    changes.push({
+      label: 'Status',
+      value: `${previousSnapshot.onGround ? 'On the ground' : 'In flight'} → ${snapshot.onGround ? 'On the ground' : 'In flight'}`,
+    });
+  }
+
+  if ((snapshot.airline?.name ?? null) !== (previousSnapshot.airline?.name ?? null)) {
+    changes.push({
+      label: 'Airline',
+      value: `${previousSnapshot.airline?.name ?? '—'} → ${snapshot.airline?.name ?? '—'}`,
+    });
+  }
+
+  return changes.length > 0 ? changes : [{ label: 'Diff', value: 'No material change detected' }];
+}
+
 type AltitudeTrendChartPoint = {
   altitude: number;
   time: number | null;
@@ -100,72 +496,19 @@ type AltitudeTrendChartPoint = {
   y: number;
 };
 
-function projectTrendValue(
-  value: number,
-  domainStart: number,
-  domainEnd: number,
-  rangeStart: number,
-  rangeEnd: number,
-): number {
-  if (domainStart === domainEnd) {
-    return (rangeStart + rangeEnd) / 2;
-  }
-
-  const ratio = (value - domainStart) / (domainEnd - domainStart);
-  return rangeStart + (ratio * (rangeEnd - rangeStart));
-}
-
 function buildAltitudeTrendPath(points: AltitudeTrendChartPoint[]): string {
-  if (points.length === 0) {
-    return '';
-  }
-
-  if (points.length === 1) {
-    return `M ${points[0]!.x} ${points[0]!.y}`;
-  }
-
-  if (points.length === 2) {
-    return `M ${points[0]!.x} ${points[0]!.y} L ${points[1]!.x} ${points[1]!.y}`;
-  }
-
-  const smoothing = 0.35;
-  let path = `M ${points[0]!.x} ${points[0]!.y}`;
-
-  for (let index = 0; index < points.length - 1; index += 1) {
-    const current = points[index]!;
-    const next = points[index + 1]!;
-    const controlOffset = (next.x - current.x) * smoothing;
-
-    path += ` C ${current.x + controlOffset} ${current.y}, ${next.x - controlOffset} ${next.y}, ${next.x} ${next.y}`;
-  }
-
-  return path;
+  return d3Line<AltitudeTrendChartPoint>()
+    .x((point) => point.x)
+    .y((point) => point.y)
+    .curve(curveMonotoneX)(points) ?? '';
 }
 
 function AltitudeTrendChart({ flight }: { flight: TrackedFlight }) {
-  const [showRawTrack, setShowRawTrack] = useState(false);
-
-  useEffect(() => {
-    setShowRawTrack(false);
-  }, [flight.icao24]);
-
-  const hasDistinctRawTrack = useMemo(() => {
-    if (!flight.rawTrack?.length || flight.rawTrack.length !== flight.track.length) {
-      return Boolean(flight.rawTrack?.length);
-    }
-
-    return flight.rawTrack.some((point, index) => {
-      const normalizedPoint = flight.track[index];
-      return point.time !== normalizedPoint?.time || point.altitude !== normalizedPoint?.altitude;
-    });
-  }, [flight.rawTrack, flight.track]);
-
-  const displayTrack = showRawTrack && flight.rawTrack?.length ? flight.rawTrack : flight.track;
   const samples = useMemo(() => (
-    displayTrack
+    flight.track
       .filter((point) => point.altitude != null && Number.isFinite(point.altitude))
       .slice(-24)
-  ), [displayTrack]);
+  ), [flight.track]);
 
   if (samples.length < 2) {
     return (
@@ -194,20 +537,29 @@ function AltitudeTrendChart({ flight }: { flight: TrackedFlight }) {
   const altitudeDomainEnd = maxAltitude + altitudePadding;
   const timeDomainStart = minTime ?? 0;
   const timeDomainEnd = maxTime ?? Math.max(samples.length - 1, 1);
+  const xScale = scaleLinear()
+    .domain(hasTimeScale ? [timeDomainStart, timeDomainEnd] : [0, Math.max(samples.length - 1, 1)])
+    .range([padding, width - padding]);
+  const yScale = scaleLinear()
+    .domain([altitudeDomainStart, altitudeDomainEnd])
+    .range([height - padding, padding]);
 
   const plottedPoints = samples.map((sample, index) => ({
     altitude: sample.altitude as number,
     time: sample.time,
-    x: hasTimeScale && sample.time != null
-      ? projectTrendValue(sample.time, timeDomainStart, timeDomainEnd, padding, width - padding)
-      : projectTrendValue(index, 0, Math.max(samples.length - 1, 1), padding, width - padding),
-    y: projectTrendValue(sample.altitude as number, altitudeDomainStart, altitudeDomainEnd, height - padding, padding),
+    x: xScale(hasTimeScale && sample.time != null ? sample.time : index),
+    y: yScale(sample.altitude as number),
   } satisfies AltitudeTrendChartPoint));
   const linePath = buildAltitudeTrendPath(plottedPoints);
   const lastPoint = plottedPoints.at(-1) ?? plottedPoints[plottedPoints.length - 1];
+  const lastPointPosition = lastPoint
+    ? {
+        left: `${(lastPoint.x / width) * 100}%`,
+        top: `${(lastPoint.y / height) * 100}%`,
+      }
+    : null;
   const currentAltitude = flight.current?.altitude ?? flight.geoAltitude ?? flight.baroAltitude ?? lastPoint?.altitude ?? null;
   const chartLabel = flight.callsign || flight.icao24.toUpperCase();
-  const chartModeLabel = showRawTrack ? 'Raw API data' : 'Normalized track';
 
   return (
     <div className="mt-4 rounded-2xl border border-white/10 bg-slate-950/45 p-3">
@@ -215,7 +567,6 @@ function AltitudeTrendChart({ flight }: { flight: TrackedFlight }) {
         <div>
           <div className="text-xs uppercase tracking-[0.2em] text-cyan-200/80">Altitude trend</div>
           <div className="text-[11px] text-slate-400">Recent track history</div>
-          <div className="text-[11px] text-slate-500">{hasDistinctRawTrack ? `${chartModeLabel} • click chart to toggle` : chartModeLabel}</div>
         </div>
         <div className="text-right">
           <div className="text-sm font-semibold text-white">{formatAltitude(currentAltitude)}</div>
@@ -223,17 +574,7 @@ function AltitudeTrendChart({ flight }: { flight: TrackedFlight }) {
         </div>
       </div>
 
-      <button
-        type="button"
-        onClick={() => {
-          if (hasDistinctRawTrack) {
-            setShowRawTrack((current) => !current);
-          }
-        }}
-        aria-label={`${showRawTrack ? 'Show normalized' : 'Show raw'} altitude history for ${chartLabel}`}
-        aria-pressed={showRawTrack}
-        className={`block w-full rounded-lg text-left ${hasDistinctRawTrack ? 'cursor-pointer focus:outline-none focus:ring-2 focus:ring-cyan-300/70' : 'cursor-default'}`}
-      >
+      <div className="relative block w-full rounded-lg text-left">
         <svg
           viewBox={`0 0 ${width} ${height}`}
           role="img"
@@ -249,9 +590,15 @@ function AltitudeTrendChart({ flight }: { flight: TrackedFlight }) {
             strokeLinecap="round"
             strokeLinejoin="round"
           />
-          {lastPoint ? <circle cx={lastPoint.x} cy={lastPoint.y} r="3" fill="rgb(255 255 255)" /> : null}
         </svg>
-      </button>
+        {lastPointPosition ? (
+          <span
+            aria-hidden="true"
+            className="pointer-events-none absolute h-2.5 w-2.5 -translate-x-1/2 -translate-y-1/2 rounded-full border border-white/80 bg-white shadow-[0_0_0_2px_rgba(34,211,238,0.28)]"
+            style={lastPointPosition}
+          />
+        ) : null}
+      </div>
 
       <div className="mt-2 flex items-center justify-between text-[11px] text-slate-400">
         <span>{samples[0]?.time ? formatTimestamp(samples[0].time * 1000) : 'Start'}</span>
@@ -304,11 +651,15 @@ function SelectedFlightDetails({
   details,
   isLoadingDetails,
   detailsError,
+  fetchHistory = [],
+  onOpenFetchHistory,
 }: {
   flight: TrackedFlight;
   details: SelectedFlightDetailsPayload | null;
   isLoadingDetails: boolean;
   detailsError: string | null;
+  fetchHistory?: FlightFetchSnapshot[];
+  onOpenFetchHistory: () => void;
 }) {
   const observedArrivalTime = sanitizeObservedTimestamp(details?.route?.lastSeen ?? flight.route.lastSeen, flight.lastContact);
   const observedStatusLabel = flight.onGround ? 'Arrival observed' : 'Last observed';
@@ -320,14 +671,7 @@ function SelectedFlightDetails({
   const airlineName = details?.airline?.name ?? flight.airline?.name ?? '—';
   const aircraftModel = details?.aircraft?.model ?? flight.aircraft?.model ?? '—';
   const aircraftRegistration = details?.aircraft?.registration ?? flight.aircraft?.registration ?? null;
-  const dataSourceLabel = (() => {
-    const dataSource = details?.dataSource ?? flight.dataSource ?? 'opensky';
-    if (dataSource === 'hybrid') {
-      return 'OpenSky + Aviationstack';
-    }
-
-    return dataSource === 'aviationstack' ? 'Aviationstack' : 'OpenSky';
-  })();
+  const dataSourceLabel = formatDataSourceLabel(details?.dataSource ?? flight.dataSource ?? 'opensky');
 
   return (
     <div className="rounded-2xl border border-cyan-400/30 bg-cyan-500/10 p-4 text-sm text-slate-200 shadow-lg shadow-cyan-950/20">
@@ -341,7 +685,7 @@ function SelectedFlightDetails({
         </span>
       </div>
 
-      <dl className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+      <dl className="grid grid-cols-2 gap-x-3 gap-y-2 [&>div]:min-w-0 [&_dd]:break-words">
         <div>
           <dt className="text-slate-400">Origin country</dt>
           <dd>{flight.originCountry}</dd>
@@ -388,6 +732,20 @@ function SelectedFlightDetails({
         </div>
       </dl>
 
+      <div className="mt-4 flex items-center justify-between gap-3 rounded-2xl border border-white/10 bg-slate-950/35 px-3 py-2 text-xs text-slate-300">
+        <p>
+          {fetchHistory.length} snapshot{fetchHistory.length === 1 ? '' : 's'} reconciled during this session.
+        </p>
+        <button
+          type="button"
+          onClick={onOpenFetchHistory}
+          className="rounded-full border border-cyan-300/30 bg-cyan-500/10 px-3 py-1 font-semibold text-cyan-100 transition hover:border-cyan-200/50 hover:bg-cyan-500/15"
+          aria-label={`View fetch history for ${flight.callsign}`}
+        >
+          View fetch history
+        </button>
+      </div>
+
       <AltitudeTrendChart flight={flight} />
 
       {isLoadingDetails ? (
@@ -430,7 +788,7 @@ function SelectedFlightDetails({
             </div>
           </div>
 
-          <dl className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+          <dl className="grid grid-cols-2 gap-2 [&>div]:min-w-0 [&_dd]:break-words">
             <div>
               <dt className="text-slate-400">Departure observed</dt>
               <dd>{formatDateTimeSeconds(departureObservedTime)}</dd>
@@ -442,6 +800,118 @@ function SelectedFlightDetails({
           </dl>
         </div>
       ) : null}
+    </div>
+  );
+}
+
+function FlightFetchHistoryModal({
+  flight,
+  history = [],
+  onClose,
+}: {
+  flight: TrackedFlight;
+  history?: FlightFetchSnapshot[];
+  onClose: () => void;
+}) {
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        onClose();
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+    };
+  }, [onClose]);
+
+  const orderedHistory = [...history].reverse();
+
+  return (
+    <div
+      className="fixed inset-0 z-[120] flex items-center justify-center bg-slate-950/80 p-4 backdrop-blur-sm"
+      onClick={onClose}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="Flight fetch history"
+        className="max-h-[85vh] w-full max-w-3xl overflow-hidden rounded-3xl border border-cyan-400/30 bg-slate-950/95 shadow-2xl shadow-cyan-950/30"
+        onClick={(event) => event.stopPropagation()}
+      >
+        <div className="flex items-start justify-between gap-3 border-b border-white/10 px-4 py-3">
+          <div>
+            <p className="text-xs uppercase tracking-[0.24em] text-cyan-200/80">Fetch history</p>
+            <h3 className="text-lg font-semibold text-white">{flight.callsign} • {history.length} snapshots</h3>
+            <p className="text-xs text-slate-400">Reconciled provider payloads with quick diffs and raw snapshot data.</p>
+          </div>
+          <button
+            type="button"
+            onClick={onClose}
+            className="rounded-full border border-white/10 bg-slate-900/80 p-2 text-slate-200 transition hover:border-white/20 hover:bg-slate-800"
+            aria-label="Close flight fetch history"
+          >
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+
+        <div className="max-h-[calc(85vh-5rem)] space-y-3 overflow-y-auto p-4">
+          {orderedHistory.map((snapshot, index) => {
+            const previousSnapshot = orderedHistory[index + 1] ?? null;
+            const changes = summarizeSnapshotChanges(snapshot, previousSnapshot);
+
+            return (
+              <section key={snapshot.id} className="rounded-2xl border border-white/10 bg-slate-900/70 p-4 text-sm text-slate-200">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <div className="text-xs uppercase tracking-[0.2em] text-cyan-200/80">{formatFetchTriggerLabel(snapshot.trigger)}</div>
+                    <div className="mt-1 text-sm text-slate-300">{formatDateTimeMillis(snapshot.capturedAt)}</div>
+                  </div>
+                  <span className="rounded-full border border-cyan-300/30 bg-cyan-500/10 px-2.5 py-1 text-[11px] font-semibold text-cyan-100">
+                    {formatDataSourceLabel(snapshot.dataSource)}
+                  </span>
+                </div>
+
+                <dl className="mt-3 grid grid-cols-2 gap-2 text-xs [&>div]:min-w-0 [&_dd]:break-words">
+                  <div>
+                    <dt className="text-slate-400">Route</dt>
+                    <dd>{snapshot.route.departureAirport ?? '—'} → {snapshot.route.arrivalAirport ?? '—'}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-slate-400">Status</dt>
+                    <dd>{snapshot.onGround ? 'On the ground' : 'In flight'}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-slate-400">Altitude</dt>
+                    <dd>{formatAltitude(snapshot.geoAltitude ?? snapshot.current?.altitude ?? null)}</dd>
+                  </div>
+                  <div>
+                    <dt className="text-slate-400">Speed</dt>
+                    <dd>{formatSpeed(snapshot.velocity)}</dd>
+                  </div>
+                </dl>
+
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {changes.map((change) => (
+                    <span
+                      key={`${snapshot.id}-${change.label}`}
+                      className="rounded-full border border-white/10 bg-slate-950/70 px-2.5 py-1 text-[11px] text-slate-200"
+                    >
+                      <span className="font-semibold text-cyan-100">{change.label}:</span> {change.value}
+                    </span>
+                  ))}
+                </div>
+
+                <details className="mt-3 rounded-2xl border border-white/10 bg-slate-950/55 px-3 py-2 text-xs text-slate-300">
+                  <summary className="cursor-pointer font-semibold text-cyan-100">View raw snapshot</summary>
+                  <pre className="mt-2 overflow-x-auto whitespace-pre-wrap break-words text-[11px] text-slate-200">{JSON.stringify(snapshot, null, 2)}</pre>
+                </details>
+              </section>
+            );
+          })}
+        </div>
+      </div>
     </div>
   );
 }
@@ -498,10 +968,13 @@ function FlightTrackerDashboard({ map }: FlightTrackerClientProps) {
   const [isLoadingSelectedFlightDetails, setIsLoadingSelectedFlightDetails] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [isFetchHistoryOpen, setIsFetchHistoryOpen] = useState(false);
+  const [forceDetailsRefreshAt, setForceDetailsRefreshAt] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [staleMatchNotice, setStaleMatchNotice] = useState<string | null>(null);
   const dataRef = useRef<TrackerApiResponse | null>(null);
   const selectedFlightDetailsCacheRef = useRef<Map<string, SelectedFlightDetailsPayload>>(new Map());
+  const flightFetchHistoryRef = useRef<Map<string, FlightFetchSnapshot[]>>(new Map());
 
   const resetTracking = useCallback((nextQuery = '') => {
     const trimmedQuery = nextQuery.trim();
@@ -516,8 +989,12 @@ function FlightTrackerDashboard({ map }: FlightTrackerClientProps) {
     setIsLoadingSelectedFlightDetails(false);
     setIsLoading(false);
     setIsRefreshing(false);
+    setIsFetchHistoryOpen(false);
+    setForceDetailsRefreshAt(null);
     setError(null);
     setStaleMatchNotice(null);
+    selectedFlightDetailsCacheRef.current.clear();
+    flightFetchHistoryRef.current.clear();
 
     if (typeof window !== 'undefined') {
       if (trimmedQuery) {
@@ -538,9 +1015,23 @@ function FlightTrackerDashboard({ map }: FlightTrackerClientProps) {
     return selectedFlight ? buildSelectedFlightDetailsCacheKey(selectedFlight) : null;
   }, [selectedFlight]);
 
+  const selectedFlightHistory = useMemo(() => {
+    if (!selectedFlight) {
+      return [];
+    }
+
+    return selectedFlight.fetchHistory ?? flightFetchHistoryRef.current.get(selectedFlight.icao24) ?? [];
+  }, [selectedFlight]);
+
   useEffect(() => {
     dataRef.current = data;
   }, [data]);
+
+  useEffect(() => {
+    if (!selectedFlight) {
+      setIsFetchHistoryOpen(false);
+    }
+  }, [selectedFlight]);
 
   useEffect(() => {
     if (!selectedFlight || !selectedFlightDetailsCacheKey) {
@@ -550,9 +1041,13 @@ function FlightTrackerDashboard({ map }: FlightTrackerClientProps) {
       return;
     }
 
-    const cachedDetails = selectedFlightDetailsCacheRef.current.get(selectedFlightDetailsCacheKey);
+    const shouldForceRefresh = forceDetailsRefreshAt != null;
+    const cachedDetails = shouldForceRefresh ? null : selectedFlightDetailsCacheRef.current.get(selectedFlightDetailsCacheKey);
     if (cachedDetails) {
-      setSelectedFlightDetails(cachedDetails);
+      setSelectedFlightDetails({
+        ...cachedDetails,
+        fetchHistory: selectedFlight.fetchHistory ?? cachedDetails.fetchHistory,
+      });
       setSelectedFlightDetailsError(null);
       setIsLoadingSelectedFlightDetails(false);
       return;
@@ -580,8 +1075,12 @@ function FlightTrackerDashboard({ map }: FlightTrackerClientProps) {
       searchParams.set('lastSeen', String(selectedFlight.route.lastSeen));
     }
 
+    if (shouldForceRefresh) {
+      searchParams.set('refresh', '1');
+    }
+
     let isCancelled = false;
-    setSelectedFlightDetails(null);
+    setSelectedFlightDetails((current) => (current?.icao24 === selectedFlight.icao24 ? current : null));
     setSelectedFlightDetailsError(null);
     setIsLoadingSelectedFlightDetails(true);
 
@@ -600,8 +1099,49 @@ function FlightTrackerDashboard({ map }: FlightTrackerClientProps) {
           return;
         }
 
-        selectedFlightDetailsCacheRef.current.set(selectedFlightDetailsCacheKey, payload);
-        setSelectedFlightDetails(payload);
+        const previousDetails = (selectedFlightDetails?.icao24 === selectedFlight.icao24 ? selectedFlightDetails : null)
+          ?? selectedFlightDetailsCacheRef.current.get(selectedFlightDetailsCacheKey)
+          ?? null;
+        const reconciledDetails = reconcileSelectedFlightDetails(previousDetails, payload);
+        const snapshot = buildFlightFetchSnapshot(selectedFlight, reconciledDetails.fetchedAt, shouldForceRefresh ? 'manual-refresh' : 'search', reconciledDetails);
+        const fetchHistory = mergeFlightFetchHistory(flightFetchHistoryRef.current.get(selectedFlight.icao24), snapshot);
+        flightFetchHistoryRef.current.set(selectedFlight.icao24, fetchHistory);
+
+        const nextDetails = {
+          ...reconciledDetails,
+          fetchHistory,
+        } satisfies SelectedFlightDetailsPayload;
+
+        selectedFlightDetailsCacheRef.current.set(selectedFlightDetailsCacheKey, nextDetails);
+        setSelectedFlightDetails(nextDetails);
+        setData((currentData) => {
+          if (!currentData) {
+            return currentData;
+          }
+
+          const nextFlights = currentData.flights.map((flight) => {
+            if (flight.icao24 !== selectedFlight.icao24) {
+              return flight;
+            }
+
+            return {
+              ...flight,
+              route: mergeRouteValues(flight.route, nextDetails.route),
+              flightNumber: flight.flightNumber ?? nextDetails.flightNumber,
+              airline: flight.airline ?? nextDetails.airline,
+              aircraft: flight.aircraft ?? nextDetails.aircraft,
+              fetchHistory,
+            };
+          });
+
+          const nextData = {
+            ...currentData,
+            flights: nextFlights,
+          } satisfies TrackerApiResponse;
+
+          dataRef.current = nextData;
+          return nextData;
+        });
       } catch (caughtError) {
         if (isCancelled) {
           return;
@@ -613,6 +1153,9 @@ function FlightTrackerDashboard({ map }: FlightTrackerClientProps) {
       } finally {
         if (!isCancelled) {
           setIsLoadingSelectedFlightDetails(false);
+          if (shouldForceRefresh) {
+            setForceDetailsRefreshAt(null);
+          }
         }
       }
     })();
@@ -620,10 +1163,22 @@ function FlightTrackerDashboard({ map }: FlightTrackerClientProps) {
     return () => {
       isCancelled = true;
     };
-  }, [selectedFlight, selectedFlightDetailsCacheKey]);
+  }, [forceDetailsRefreshAt, selectedFlight, selectedFlightDetailsCacheKey]);
 
-  const runSearch = useCallback(async (rawQuery: string, background = false) => {
+  const runSearch = useCallback(async (
+    rawQuery: string,
+    options: {
+      background?: boolean;
+      forceRefresh?: boolean;
+      trigger?: FlightFetchTrigger;
+    } = {},
+  ) => {
     const trimmedQuery = rawQuery.trim();
+    const {
+      background = false,
+      forceRefresh = false,
+      trigger = background ? 'auto-refresh' : 'search',
+    } = options;
 
     if (!trimmedQuery) {
       resetTracking();
@@ -634,6 +1189,12 @@ function FlightTrackerDashboard({ map }: FlightTrackerClientProps) {
     if (!background) {
       setStaleMatchNotice(null);
     }
+
+    if (forceRefresh) {
+      selectedFlightDetailsCacheRef.current.clear();
+      setForceDetailsRefreshAt(Date.now());
+    }
+
     syncTrackedFlightsUrl(trimmedQuery);
     if (background) {
       setIsRefreshing(true);
@@ -642,7 +1203,12 @@ function FlightTrackerDashboard({ map }: FlightTrackerClientProps) {
     }
 
     try {
-      const response = await fetch(`/api/tracker?q=${encodeURIComponent(trimmedQuery)}`, {
+      const searchParams = new URLSearchParams({ q: trimmedQuery });
+      if (forceRefresh) {
+        searchParams.set('refresh', '1');
+      }
+
+      const response = await fetch(`/api/tracker?${searchParams.toString()}`, {
         cache: 'no-store',
       });
       const payload = await response.json() as TrackerApiResponse & { error?: string };
@@ -652,27 +1218,33 @@ function FlightTrackerDashboard({ map }: FlightTrackerClientProps) {
       }
 
       const currentData = dataRef.current;
-      const shouldKeepLastKnownFlights = background
-        && payload.flights.length === 0
+      const nextData = reconcileTrackerPayload(currentData, payload, trigger, flightFetchHistoryRef.current, background);
+      const shouldShowStaleNotice = background
+        && payload.notFoundIdentifiers.length > 0
         && trimmedQuery === currentData?.query
-        && (currentData?.flights.length ?? 0) > 0;
-
-      const nextData = shouldKeepLastKnownFlights && currentData
-        ? {
-            ...currentData,
-            query: payload.query,
-            requestedIdentifiers: payload.requestedIdentifiers,
-            notFoundIdentifiers: payload.notFoundIdentifiers,
-            fetchedAt: payload.fetchedAt,
-          }
-        : payload;
+        && nextData.flights.length > 0;
 
       setQuery(trimmedQuery);
       setSubmittedQuery(trimmedQuery);
       setData(nextData);
       dataRef.current = nextData;
+      setSelectedFlightDetails((current) => {
+        if (!current) {
+          return current;
+        }
+
+        const matchingFlight = nextData.flights.find((flight) => flight.icao24 === current.icao24);
+        if (!matchingFlight) {
+          return null;
+        }
+
+        return {
+          ...current,
+          fetchHistory: matchingFlight.fetchHistory ?? current.fetchHistory,
+        };
+      });
       setStaleMatchNotice(
-        shouldKeepLastKnownFlights
+        shouldShowStaleNotice
           ? `No fresh live position for ${payload.notFoundIdentifiers.join(', ')}. Showing the last known route.`
           : null,
       );
@@ -683,7 +1255,10 @@ function FlightTrackerDashboard({ map }: FlightTrackerClientProps) {
 
         return nextData.flights[0]?.icao24 ?? null;
       });
-      window.localStorage.setItem(STORAGE_KEY, trimmedQuery);
+
+      if (typeof window !== 'undefined') {
+        window.localStorage.setItem(STORAGE_KEY, trimmedQuery);
+      }
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : 'Unable to fetch live flight data.');
     } finally {
@@ -707,7 +1282,7 @@ function FlightTrackerDashboard({ map }: FlightTrackerClientProps) {
     if (!urlQuery) {
       syncTrackedFlightsUrl(initialQuery);
     }
-    void runSearch(initialQuery, true);
+    void runSearch(initialQuery, { background: true, trigger: 'search' });
   }, [runSearch]);
 
   useEffect(() => {
@@ -716,7 +1291,7 @@ function FlightTrackerDashboard({ map }: FlightTrackerClientProps) {
     }
 
     const intervalId = window.setInterval(() => {
-      void runSearch(submittedQuery, true);
+      void runSearch(submittedQuery, { background: true, trigger: 'auto-refresh' });
     }, AUTO_REFRESH_MS);
 
     return () => {
@@ -726,7 +1301,7 @@ function FlightTrackerDashboard({ map }: FlightTrackerClientProps) {
 
   const clearTrackedFlights = useCallback(() => {
     setQuery('');
-    void runSearch('', false);
+    void runSearch('', { background: false, trigger: 'search' });
   }, [runSearch]);
 
   const sidebarContent = (
@@ -744,7 +1319,7 @@ function FlightTrackerDashboard({ map }: FlightTrackerClientProps) {
           className="space-y-3"
           onSubmit={(event) => {
             event.preventDefault();
-            void runSearch(query, false);
+            void runSearch(query, { background: false, trigger: 'search' });
           }}
         >
           <label className="block text-xs font-medium uppercase tracking-[0.2em] text-slate-400" htmlFor="tracker-query">
@@ -830,6 +1405,8 @@ function FlightTrackerDashboard({ map }: FlightTrackerClientProps) {
           details={selectedFlightDetails}
           isLoadingDetails={isLoadingSelectedFlightDetails}
           detailsError={selectedFlightDetailsError}
+          fetchHistory={selectedFlightHistory}
+          onOpenFetchHistory={() => setIsFetchHistoryOpen(true)}
         />
       ) : null}
 
@@ -868,17 +1445,17 @@ function FlightTrackerDashboard({ map }: FlightTrackerClientProps) {
                 </span>
               </div>
 
-              <div className="mt-3 grid grid-cols-1 gap-2 text-sm text-slate-300 sm:grid-cols-2">
+              <div className="mt-3 grid grid-cols-2 gap-2 text-sm text-slate-300 [&>div]:min-w-0 [&_span]:break-words">
                 <div className="flex items-center gap-2">
-                  <Gauge className="h-4 w-4 text-slate-500" />
+                  <Gauge className="h-4 w-4 shrink-0 text-slate-500" />
                   <span>{formatSpeed(flight.velocity)}</span>
                 </div>
                 <div className="flex items-center gap-2">
-                  <Clock3 className="h-4 w-4 text-slate-500" />
+                  <Clock3 className="h-4 w-4 shrink-0 text-slate-500" />
                   <span>{formatRelativeSeconds(flight.lastContact)}</span>
                 </div>
-                <div className="flex items-center gap-2 sm:col-span-2">
-                  <Route className="h-4 w-4 text-slate-500" />
+                <div className="col-span-2 flex items-center gap-2">
+                  <Route className="h-4 w-4 shrink-0 text-slate-500" />
                   <span>{flight.route.departureAirport ?? '—'} → {flight.route.arrivalAirport ?? '—'}</span>
                 </div>
               </div>
@@ -894,31 +1471,45 @@ function FlightTrackerDashboard({ map }: FlightTrackerClientProps) {
   );
 
   return (
-    <TrackerShell
-      topBar={
-        <TrackerTopBar
-          trackedCount={data?.flights.length ?? 0}
-          isRefreshing={isRefreshing}
-          onRefresh={() => {
-            void runSearch(submittedQuery || query, true);
-          }}
-          lastUpdated={data?.fetchedAt ?? null}
+    <>
+      {isFetchHistoryOpen && selectedFlight ? (
+        <FlightFetchHistoryModal
+          flight={selectedFlight}
+          history={selectedFlightHistory}
+          onClose={() => setIsFetchHistoryOpen(false)}
         />
-      }
-      showBackgroundGrid
-      mapContent={
-        <div className="relative h-[100dvh] w-full">
-          <FlightMap2D
-            map={map}
-            flights={data?.flights ?? []}
-            selectedIcao24={selectedFlight?.icao24 ?? null}
-            selectedFlightDetails={selectedFlightDetails}
-            onSelectFlight={setSelectedIcao24}
+      ) : null}
+
+      <TrackerShell
+        topBar={
+          <TrackerTopBar
+            trackedCount={data?.flights.length ?? 0}
+            isRefreshing={isRefreshing}
+            onRefresh={() => {
+              void runSearch(submittedQuery || query, {
+                background: true,
+                forceRefresh: true,
+                trigger: 'manual-refresh',
+              });
+            }}
+            lastUpdated={data?.fetchedAt ?? null}
           />
-        </div>
-      }
-      sidebarContent={sidebarContent}
-    />
+        }
+        showBackgroundGrid
+        mapContent={
+          <div className="relative h-[100dvh] w-full">
+            <FlightMap2D
+              map={map}
+              flights={data?.flights ?? []}
+              selectedIcao24={selectedFlight?.icao24 ?? null}
+              selectedFlightDetails={selectedFlightDetails}
+              onSelectFlight={setSelectedIcao24}
+            />
+          </div>
+        }
+        sidebarContent={sidebarContent}
+      />
+    </>
   );
 }
 
