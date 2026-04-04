@@ -43,8 +43,171 @@ projection.fitSize([TRACKER_MAP_VIEWBOX.width, TRACKER_MAP_VIEWBOX.height], { ty
 let credentialsCache: Credentials | null = null;
 let tokenCache: { accessToken: string; expiresAt: number } | null = null;
 
+type OpenSkyDiagnosticsCarrier = Error & {
+  cause?: unknown;
+  code?: string | number;
+  errno?: string | number;
+  syscall?: string;
+  address?: string;
+  host?: string;
+  hostname?: string;
+  port?: number;
+  diagnostics?: Record<string, unknown>;
+};
+
+const OPENSKY_REQUEST_TIMEOUT_MS = 15_000;
+
 function toNumber(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
+}
+
+function compactRecord(record: Record<string, unknown>): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(record).filter(([, value]) => value != null && value !== ''));
+}
+
+function truncateText(value: string, maxLength = 240): string {
+  if (value.length <= maxLength) {
+    return value;
+  }
+
+  return `${value.slice(0, maxLength - 1)}…`;
+}
+
+function getOpenSkyRequestSignal(): AbortSignal | undefined {
+  return typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function'
+    ? AbortSignal.timeout(OPENSKY_REQUEST_TIMEOUT_MS)
+    : undefined;
+}
+
+function extractErrorMetadata(error: unknown): Record<string, unknown> {
+  const candidate = typeof error === 'object' && error ? error as OpenSkyDiagnosticsCarrier : null;
+
+  return compactRecord({
+    errorName: error instanceof Error ? error.name : null,
+    message: error instanceof Error ? error.message : (error != null ? String(error) : null),
+    code: candidate?.code,
+    errno: candidate?.errno,
+    syscall: candidate?.syscall,
+    address: candidate?.address,
+    host: candidate?.host ?? candidate?.hostname,
+    port: candidate?.port,
+  });
+}
+
+function getOpenSkyNetworkHint(code: string | number | undefined, message: string | null): string | null {
+  switch (String(code ?? '').toUpperCase()) {
+    case 'ETIMEDOUT':
+    case 'UND_ERR_CONNECT_TIMEOUT':
+      return 'Connection to OpenSky timed out before a response was received.';
+    case 'ENOTFOUND':
+      return 'DNS resolution for the OpenSky host failed.';
+    case 'ECONNREFUSED':
+      return 'The OpenSky host refused the TCP connection.';
+    case 'ECONNRESET':
+      return 'The connection to OpenSky was reset mid-request.';
+    default:
+      break;
+  }
+
+  if (message && /certificate|tls|ssl/i.test(message)) {
+    return 'TLS negotiation with OpenSky failed.';
+  }
+
+  return null;
+}
+
+function buildOpenSkyTransportDiagnostics(stage: 'auth' | 'request', target: string, error: unknown): {
+  message: string;
+  diagnostics: Record<string, unknown>;
+} {
+  const topLevel = extractErrorMetadata(error);
+  const cause = typeof error === 'object' && error && 'cause' in error
+    ? (error as OpenSkyDiagnosticsCarrier).cause
+    : null;
+  const causeMetadata = extractErrorMetadata(cause);
+
+  const code = causeMetadata.code ?? topLevel.code;
+  const causeMessage = typeof causeMetadata.message === 'string' ? causeMetadata.message : null;
+  const fetchMessage = typeof topLevel.message === 'string' ? topLevel.message : null;
+  const hint = getOpenSkyNetworkHint(code as string | number | undefined, causeMessage ?? fetchMessage);
+
+  const detailParts = [
+    code != null ? String(code) : null,
+    causeMessage,
+    fetchMessage && fetchMessage !== 'fetch failed' && fetchMessage !== causeMessage ? fetchMessage : null,
+  ].filter((part): part is string => Boolean(part));
+
+  const baseMessage = stage === 'auth'
+    ? 'OpenSky authentication request failed'
+    : `OpenSky request failed for ${target}`;
+  const message = detailParts.length > 0
+    ? `${baseMessage} (${detailParts.join(' • ')})`
+    : baseMessage;
+
+  return {
+    message,
+    diagnostics: compactRecord({
+      stage,
+      url: target,
+      errorName: topLevel.errorName,
+      fetchMessage,
+      causeName: causeMetadata.errorName,
+      causeMessage,
+      code,
+      errno: causeMetadata.errno ?? topLevel.errno,
+      syscall: causeMetadata.syscall ?? topLevel.syscall,
+      host: causeMetadata.host ?? topLevel.host,
+      address: causeMetadata.address ?? topLevel.address,
+      port: causeMetadata.port ?? topLevel.port,
+      hint,
+    }),
+  };
+}
+
+function createOpenSkyError(message: string, diagnostics: Record<string, unknown>, cause?: unknown): Error {
+  const wrapped = new Error(message) as OpenSkyDiagnosticsCarrier;
+  wrapped.name = 'OpenSkyRequestError';
+  wrapped.diagnostics = diagnostics;
+
+  if (cause !== undefined) {
+    wrapped.cause = cause;
+  }
+
+  return wrapped;
+}
+
+async function readResponsePreview(response: Response): Promise<string | null> {
+  try {
+    const body = (await response.text()).trim();
+    return body ? truncateText(body.replace(/\s+/g, ' ')) : null;
+  } catch {
+    return null;
+  }
+}
+
+export function getOpenSkyErrorDiagnostics(error: unknown): Record<string, unknown> | null {
+  const candidate = typeof error === 'object' && error ? error as OpenSkyDiagnosticsCarrier : null;
+  if (candidate?.diagnostics && typeof candidate.diagnostics === 'object') {
+    return candidate.diagnostics;
+  }
+
+  const topLevel = extractErrorMetadata(error);
+  const cause = candidate?.cause;
+  const causeMetadata = extractErrorMetadata(cause);
+  const merged = compactRecord({
+    errorName: topLevel.errorName,
+    fetchMessage: topLevel.message,
+    causeName: causeMetadata.errorName,
+    causeMessage: causeMetadata.message,
+    code: causeMetadata.code ?? topLevel.code,
+    errno: causeMetadata.errno ?? topLevel.errno,
+    syscall: causeMetadata.syscall ?? topLevel.syscall,
+    host: causeMetadata.host ?? topLevel.host,
+    address: causeMetadata.address ?? topLevel.address,
+    port: causeMetadata.port ?? topLevel.port,
+  });
+
+  return Object.keys(merged).length > 0 ? merged : null;
 }
 
 function projectPoint(params: {
@@ -234,26 +397,49 @@ async function getAccessToken(forceRefresh = false): Promise<string> {
   }
 
   const credentials = await readCredentialsFromEnv();
-  const response = await fetch(OPENSKY_TOKEN_URL, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/x-www-form-urlencoded',
-    },
-    body: new URLSearchParams({
-      grant_type: 'client_credentials',
-      client_id: credentials.clientId,
-      client_secret: credentials.clientSecret,
-    }),
-    cache: 'no-store',
-  });
+
+  let response: Response;
+  try {
+    response = await fetch(OPENSKY_TOKEN_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/x-www-form-urlencoded',
+      },
+      body: new URLSearchParams({
+        grant_type: 'client_credentials',
+        client_id: credentials.clientId,
+        client_secret: credentials.clientSecret,
+      }),
+      cache: 'no-store',
+      signal: getOpenSkyRequestSignal(),
+    });
+  } catch (error) {
+    const { message, diagnostics } = buildOpenSkyTransportDiagnostics('auth', OPENSKY_TOKEN_URL, error);
+    throw createOpenSkyError(message, diagnostics, error);
+  }
 
   if (!response.ok) {
-    throw new Error(`OpenSky auth failed with status ${response.status}`);
+    const bodyPreview = await readResponsePreview(response);
+    const statusSummary = [response.status, response.statusText].filter(Boolean).join(' ');
+    const message = bodyPreview
+      ? `OpenSky auth failed with status ${statusSummary}: ${bodyPreview}`
+      : `OpenSky auth failed with status ${statusSummary}`;
+
+    throw createOpenSkyError(message, compactRecord({
+      stage: 'auth',
+      url: OPENSKY_TOKEN_URL,
+      status: response.status,
+      statusText: response.statusText,
+      bodyPreview,
+    }));
   }
 
   const payload = await response.json() as { access_token?: string; expires_in?: number };
   if (!payload.access_token) {
-    throw new Error('OpenSky auth response did not include an access token');
+    throw createOpenSkyError(
+      'OpenSky auth response did not include an access token.',
+      { stage: 'auth', url: OPENSKY_TOKEN_URL },
+    );
   }
 
   tokenCache = {
@@ -276,12 +462,20 @@ export async function fetchOpenSky<T>(pathname: string, searchParams?: Record<st
 
   const execute = async (forceRefresh = false) => {
     const token = await getAccessToken(forceRefresh);
-    return fetch(makeUrl(), {
-      headers: {
-        Authorization: `Bearer ${token}`,
-      },
-      cache: 'no-store',
-    });
+    const url = makeUrl();
+
+    try {
+      return await fetch(url, {
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+        cache: 'no-store',
+        signal: getOpenSkyRequestSignal(),
+      });
+    } catch (error) {
+      const { message, diagnostics } = buildOpenSkyTransportDiagnostics('request', url.toString(), error);
+      throw createOpenSkyError(message, diagnostics, error);
+    }
   };
 
   let response = await execute(false);
@@ -295,7 +489,21 @@ export async function fetchOpenSky<T>(pathname: string, searchParams?: Record<st
   }
 
   if (!response.ok) {
-    throw new Error(`OpenSky request failed for ${pathname} with status ${response.status}`);
+    const bodyPreview = await readResponsePreview(response);
+    const statusSummary = [response.status, response.statusText].filter(Boolean).join(' ');
+    const message = bodyPreview
+      ? `OpenSky request failed for ${pathname} with status ${statusSummary}: ${bodyPreview}`
+      : `OpenSky request failed for ${pathname} with status ${statusSummary}`;
+
+    throw createOpenSkyError(message, compactRecord({
+      stage: 'request',
+      pathname,
+      url: response.url || makeUrl().toString(),
+      status: response.status,
+      statusText: response.statusText,
+      bodyPreview,
+      searchParams,
+    }));
   }
 
   return response.json() as Promise<T>;

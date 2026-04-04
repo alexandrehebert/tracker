@@ -19,6 +19,7 @@ import {
 } from './providers/flightaware';
 import {
   fetchOpenSky,
+  getOpenSkyErrorDiagnostics,
   getTrackForAircraft,
   getRecentRoute,
   guessDepartureAirportFromOriginPoint,
@@ -959,6 +960,15 @@ export async function searchFlights(query: string, options: SearchFlightsOptions
       }
 
       const openSkyErrorReason = error instanceof Error ? error.message : 'OpenSky search failed unexpectedly.';
+      const openSkyDiagnostics = getOpenSkyErrorDiagnostics(error);
+
+      console.error('[opensky] search failed, using external fallback', {
+        query: trimmedQuery,
+        requestedIdentifiers,
+        reason: openSkyErrorReason,
+        diagnostics: openSkyDiagnostics,
+      });
+
       const fallbackWithDiagnostics = {
         ...fallbackResult,
         flights: fallbackResult.flights.map((flight) => ({
@@ -967,6 +977,7 @@ export async function searchFlights(query: string, options: SearchFlightsOptions
             createSourceDetail('opensky', 'error', false, openSkyErrorReason, {
               query: trimmedQuery,
               requestedIdentifiers,
+              ...(openSkyDiagnostics ?? {}),
             }),
           ]),
         })),

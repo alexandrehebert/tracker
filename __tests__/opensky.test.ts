@@ -1444,6 +1444,89 @@ describe('searchFlights', () => {
     });
   });
 
+  it('includes the underlying network diagnostics when OpenSky fetch fails and Aviationstack takes over', async () => {
+    process.env.OPENSKY_CLIENT_ID = 'client-from-env';
+    process.env.OPENSKY_CLIENT_SECRET = 'secret-from-env';
+    process.env.AVIATION_STACK_API_KEY = 'aviationstack-key';
+    delete process.env.MONGODB_URI;
+
+    const networkCause = Object.assign(new Error('connect timeout reached'), {
+      code: 'ETIMEDOUT',
+      errno: 'ETIMEDOUT',
+      syscall: 'connect',
+      host: 'auth.opensky-network.org',
+    });
+    const fetchError = Object.assign(new TypeError('fetch failed'), { cause: networkCause });
+
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(fetchError)
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        pagination: { count: 1, total: 1, offset: 0, limit: 100 },
+        data: [
+          {
+            flight_status: 'active',
+            departure: {
+              airport: 'Paris Charles de Gaulle Airport',
+              iata: 'CDG',
+              icao: 'LFPG',
+            },
+            arrival: {
+              airport: 'John F. Kennedy International Airport',
+              iata: 'JFK',
+              icao: 'KJFK',
+            },
+            airline: {
+              name: 'Air France',
+              iata: 'AF',
+              icao: 'AFR',
+            },
+            flight: {
+              number: '123',
+              iata: 'AF123',
+              icao: 'AFR123',
+            },
+            aircraft: {
+              registration: 'F-GZNN',
+              iata: 'B77W',
+              icao: 'B77W',
+              icao24: '39BD24',
+            },
+            live: {
+              updated: '2026-04-04T10:05:00+00:00',
+              latitude: 49.5,
+              longitude: -15.4,
+              altitude: 10668,
+              direction: 281,
+              speed_horizontal: 905,
+              is_ground: false,
+            },
+          },
+        ],
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }));
+
+    vi.stubGlobal('fetch', fetchMock);
+
+    const searchFlights = await loadSearchFlights();
+    const result = await searchFlights('AF123');
+    const openSkyDetail = result.flights[0]?.sourceDetails?.find((detail) => detail.source === 'opensky');
+
+    expect(openSkyDetail).toMatchObject({
+      source: 'opensky',
+      status: 'error',
+      usedInResult: false,
+      raw: expect.objectContaining({
+        query: 'AF123',
+        requestedIdentifiers: ['AF123'],
+        code: 'ETIMEDOUT',
+        causeMessage: 'connect timeout reached',
+      }),
+    });
+    expect(openSkyDetail?.reason).toContain('ETIMEDOUT');
+  });
+
   it('enriches selected-flight details with Aviationstack aircraft metadata when available', async () => {
     process.env.OPENSKY_CLIENT_ID = 'client-from-env';
     process.env.OPENSKY_CLIENT_SECRET = 'secret-from-env';
