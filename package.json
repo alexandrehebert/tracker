@@ -7,6 +7,7 @@
     "build": "next build",
     "typecheck": "tsc --noEmit",
     "start": "next start -p 4109",
+    "start:opensky-proxy": "node docker/opensky-proxy-server.mjs",
     "lint": "eslint",
     "test": "vitest run"
   },

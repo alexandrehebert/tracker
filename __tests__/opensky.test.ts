@@ -100,12 +100,16 @@ describe('searchFlights', () => {
   const originalAviationstackDisabled = process.env.AVIATIONSTACK_DISABLED;
   const originalMongoDbUri = process.env.MONGODB_URI;
   const originalCacheTtl = process.env.OPENSKY_CACHE_TTL_SECONDS;
+  const originalOpenSkyProxyUrl = process.env.OPENSKY_PROXY_URL;
+  const originalOpenSkyProxySecret = process.env.OPENSKY_PROXY_SECRET;
 
   beforeEach(() => {
     vi.restoreAllMocks();
     mockMongoCollections.clear();
     delete process.env.OPENSKY_CLIENT_ID;
     delete process.env.OPENSKY_CLIENT_SECRET;
+    delete process.env.OPENSKY_PROXY_URL;
+    delete process.env.OPENSKY_PROXY_SECRET;
   });
 
   afterEach(() => {
@@ -149,6 +153,18 @@ describe('searchFlights', () => {
       delete process.env.OPENSKY_CACHE_TTL_SECONDS;
     } else {
       process.env.OPENSKY_CACHE_TTL_SECONDS = originalCacheTtl;
+    }
+
+    if (originalOpenSkyProxyUrl === undefined) {
+      delete process.env.OPENSKY_PROXY_URL;
+    } else {
+      process.env.OPENSKY_PROXY_URL = originalOpenSkyProxyUrl;
+    }
+
+    if (originalOpenSkyProxySecret === undefined) {
+      delete process.env.OPENSKY_PROXY_SECRET;
+    } else {
+      process.env.OPENSKY_PROXY_SECRET = originalOpenSkyProxySecret;
     }
 
     if (originalEnabledApiProviders === undefined) {
@@ -214,6 +230,40 @@ describe('searchFlights', () => {
     const params = authInit.body as URLSearchParams;
     expect(params.get('client_id')).toBe('client-from-env');
     expect(params.get('client_secret')).toBe('secret-from-env');
+  });
+
+  it('supports routing OpenSky traffic through an external proxy without direct credentials on Vercel', async () => {
+    process.env.OPENSKY_PROXY_URL = 'https://proxy.example.test';
+    process.env.OPENSKY_PROXY_SECRET = 'proxy-shared-secret';
+
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ access_token: 'proxy-token', expires_in: 1800 }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ time: 123, states: [] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }));
+
+    vi.stubGlobal('fetch', fetchMock);
+
+    const searchFlights = await loadSearchFlights();
+    const result = await searchFlights('AF123');
+
+    expect(result.requestedIdentifiers).toEqual(['AF123']);
+    expect(result.flights).toEqual([]);
+
+    const [authUrl, authInit] = fetchMock.mock.calls[0] as [string, RequestInit & { headers?: HeadersInit }];
+    const authHeaders = new Headers(authInit.headers);
+    expect(authUrl).toBe('https://proxy.example.test/auth/realms/opensky-network/protocol/openid-connect/token');
+    expect(authHeaders.get('x-opensky-proxy-secret')).toBe('proxy-shared-secret');
+
+    const [apiUrl, apiInit] = fetchMock.mock.calls[1] as [string, RequestInit & { headers?: HeadersInit }];
+    const apiHeaders = new Headers(apiInit.headers);
+    expect(String(apiUrl)).toContain('https://proxy.example.test/api/states/all');
+    expect(apiHeaders.get('x-opensky-proxy-secret')).toBe('proxy-shared-secret');
+    expect(apiHeaders.get('authorization')).toBe('Bearer proxy-token');
   });
 
   it('reuses a Mongo-backed OpenSky access token across module reloads until expiry', async () => {
@@ -340,7 +390,7 @@ describe('searchFlights', () => {
     const searchFlights = await loadSearchFlights();
 
     await expect(searchFlights('AF123')).rejects.toThrow(
-      'Missing OpenSky client credentials. Set OPENSKY_CLIENT_ID and OPENSKY_CLIENT_SECRET in your environment.',
+      'Missing OpenSky client credentials. Set OPENSKY_CLIENT_ID and OPENSKY_CLIENT_SECRET in your environment, or configure OPENSKY_PROXY_URL for an external proxy.',
     );
 
     expect(fetchMock).not.toHaveBeenCalled();

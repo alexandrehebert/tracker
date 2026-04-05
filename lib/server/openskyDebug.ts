@@ -2,14 +2,15 @@ import dns from 'node:dns';
 import { promises as dnsPromises } from 'node:dns';
 import { Agent } from 'undici';
 import {
+  getOpenSkyConnectionConfig,
   getOpenSkyErrorDiagnostics,
   getOpenSkyTokenStatus,
   isOpenSkyConfigured,
 } from './providers/opensky';
 
-const OPENSKY_AUTH_METADATA_URL = 'https://auth.opensky-network.org/auth/realms/opensky-network/.well-known/openid-configuration';
-const OPENSKY_TOKEN_URL = 'https://auth.opensky-network.org/auth/realms/opensky-network/protocol/openid-connect/token';
-const OPENSKY_API_STATES_URL = 'https://opensky-network.org/api/states/all?lamin=48.80&lomin=2.20&lamax=49.00&lomax=2.50';
+const DEFAULT_OPENSKY_AUTH_METADATA_URL = 'https://auth.opensky-network.org/auth/realms/opensky-network/.well-known/openid-configuration';
+const DEFAULT_OPENSKY_TOKEN_URL = 'https://auth.opensky-network.org/auth/realms/opensky-network/protocol/openid-connect/token';
+const DEFAULT_OPENSKY_API_STATES_PATH = '/states/all?lamin=48.80&lomin=2.20&lamax=49.00&lomax=2.50';
 const DEFAULT_OPENSKY_REQUEST_TIMEOUT_MS = process.env.VERCEL ? 25_000 : 15_000;
 const DEFAULT_OPENSKY_CONNECT_TIMEOUT_MS = process.env.VERCEL ? 30_000 : 15_000;
 const DEFAULT_OPENSKY_DEBUG_REQUEST_TIMEOUT_MS = 12_000;
@@ -111,6 +112,11 @@ export type OpenSkyDebugReport = {
   };
   configuration: {
     providerConfigured: boolean;
+    proxyEnabled: boolean;
+    proxyBaseUrl: string | null;
+    proxySecretConfigured: boolean;
+    effectiveTokenUrl: string;
+    effectiveApiBaseUrl: string;
     clientIdPreview: string | null;
     clientSecretPresent: boolean;
     mongoConfigured: boolean;
@@ -504,26 +510,42 @@ export async function runOpenSkyDebugReport(request: Request): Promise<OpenSkyDe
   const requestUrl = new URL(request.url);
   const cachedToken = await getOpenSkyTokenStatus();
   const providerConfigured = isOpenSkyConfigured();
+  const connectionConfig = getOpenSkyConnectionConfig();
+  const authMetadataUrl = connectionConfig.proxyEnabled && connectionConfig.proxyBaseUrl
+    ? `${connectionConfig.proxyBaseUrl}/health`
+    : DEFAULT_OPENSKY_AUTH_METADATA_URL;
+  const apiPreflightUrl = `${connectionConfig.apiBaseUrl}${DEFAULT_OPENSKY_API_STATES_PATH}`;
+  const authDnsHost = new URL(connectionConfig.tokenUrl || DEFAULT_OPENSKY_TOKEN_URL).hostname;
+  const apiDnsHost = new URL(connectionConfig.apiBaseUrl).hostname;
+  const proxyHeaders: Record<string, string> = connectionConfig.proxyEnabled && process.env.OPENSKY_PROXY_SECRET?.trim()
+    ? { 'x-opensky-proxy-secret': process.env.OPENSKY_PROXY_SECRET.trim() }
+    : {};
 
   const [authDns, apiDns, authMetadataCheck, apiPreflightCheck] = await Promise.all([
-    runDnsCheck('auth.opensky-network.org'),
-    runDnsCheck('opensky-network.org'),
+    runDnsCheck(authDnsHost),
+    runDnsCheck(apiDnsHost),
     runHttpCheck({
       name: 'auth-metadata',
-      description: 'Fetch the OpenSky OIDC metadata endpoint to verify DNS/TLS/connectivity to the auth host.',
-      url: OPENSKY_AUTH_METADATA_URL,
+      description: connectionConfig.proxyEnabled
+        ? 'Fetch the external OpenSky proxy health endpoint to verify Vercel can reach the relay.'
+        : 'Fetch the OpenSky OIDC metadata endpoint to verify DNS/TLS/connectivity to the auth host.',
+      url: authMetadataUrl,
       acceptedStatuses: [200],
       headers: {
         Accept: 'application/json',
+        ...proxyHeaders,
       },
     }),
     runHttpCheck({
       name: 'api-preflight',
-      description: 'Call a small OpenSky API route without auth to verify the API host is reachable from this Vercel function.',
-      url: OPENSKY_API_STATES_URL,
+      description: connectionConfig.proxyEnabled
+        ? 'Call the configured proxy API route without auth to verify the relay is reachable from this runtime.'
+        : 'Call a small OpenSky API route without auth to verify the API host is reachable from this Vercel function.',
+      url: apiPreflightUrl,
       acceptedStatuses: [200, 401, 403],
       headers: {
         Accept: 'application/json',
+        ...proxyHeaders,
       },
     }),
   ]);
@@ -547,11 +569,12 @@ export async function runOpenSkyDebugReport(request: Request): Promise<OpenSkyDe
     const authTokenResult = await runHttpCheck({
       name: 'auth-token',
       description: 'Request a real OAuth token using the configured OpenSky client credentials.',
-      url: OPENSKY_TOKEN_URL,
+      url: connectionConfig.tokenUrl,
       method: 'POST',
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
         Accept: 'application/json',
+        ...proxyHeaders,
       },
       body: credentials,
       bodyPreviewOverride: `grant_type=client_credentials&client_id=${maskValue(process.env.OPENSKY_CLIENT_ID) ?? '[missing]'}&client_secret=[redacted]`,
@@ -574,9 +597,10 @@ export async function runOpenSkyDebugReport(request: Request): Promise<OpenSkyDe
     ? await runHttpCheck({
       name: 'api-authenticated',
       description: 'Call the OpenSky states endpoint with a Bearer token from the same runtime to verify authenticated API access.',
-      url: OPENSKY_API_STATES_URL,
+      url: apiPreflightUrl,
       headers: {
         Accept: 'application/json',
+        ...proxyHeaders,
         Authorization: `Bearer ${accessToken}`,
       },
       acceptedStatuses: [200],
@@ -630,6 +654,11 @@ export async function runOpenSkyDebugReport(request: Request): Promise<OpenSkyDe
     },
     configuration: {
       providerConfigured,
+      proxyEnabled: connectionConfig.proxyEnabled,
+      proxyBaseUrl: connectionConfig.proxyBaseUrl,
+      proxySecretConfigured: connectionConfig.proxySecretConfigured,
+      effectiveTokenUrl: connectionConfig.tokenUrl,
+      effectiveApiBaseUrl: connectionConfig.apiBaseUrl,
       clientIdPreview: maskValue(process.env.OPENSKY_CLIENT_ID),
       clientSecretPresent: Boolean(process.env.OPENSKY_CLIENT_SECRET?.trim()),
       mongoConfigured: Boolean(process.env.MONGODB_URI?.trim()),

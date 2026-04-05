@@ -73,3 +73,46 @@ This runs the development server with source mounted for hot reload.
 ## Deploy
 
 This project is self-contained and can be deployed independently as a standard Next.js app.
+
+### External OpenSky proxy for Vercel
+
+If direct calls from Vercel to OpenSky time out in production, the app now supports routing those requests through a small external relay.
+
+#### 1) Run the relay outside Vercel
+
+You can deploy the included proxy on any small Node/Docker host close to Europe:
+
+```bash
+docker build -f docker/Dockerfile.opensky-proxy -t opensky-proxy .
+docker run --rm -p 8787:8787 \
+  -e OPENSKY_CLIENT_ID=your-opensky-client-id \
+  -e OPENSKY_CLIENT_SECRET=your-opensky-client-secret \
+  -e OPENSKY_PROXY_SECRET=choose-a-long-random-secret \
+  opensky-proxy
+```
+
+Or run it directly with:
+
+```bash
+OPENSKY_CLIENT_ID=... \
+OPENSKY_CLIENT_SECRET=... \
+OPENSKY_PROXY_SECRET=... \
+npm run start:opensky-proxy
+```
+
+Health check:
+
+```bash
+curl http://localhost:8787/health
+```
+
+#### 2) Point the Vercel app at the relay
+
+Set these environment variables on Vercel:
+
+```bash
+OPENSKY_PROXY_URL=https://your-proxy-host.example.com
+OPENSKY_PROXY_SECRET=choose-a-long-random-secret
+```
+
+Once `OPENSKY_PROXY_URL` is set, the app sends OpenSky auth and API traffic through that relay instead of calling OpenSky directly from the Vercel function.

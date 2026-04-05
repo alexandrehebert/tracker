@@ -8,8 +8,9 @@ import { getProviderDisabledReason, isProviderEnabled } from './index';
 const DEFAULT_DB_NAME = 'tracker';
 const OPENSKY_TOKEN_COLLECTION_NAME = 'opensky_token_cache';
 const OPENSKY_TOKEN_DOCUMENT_ID = 'shared';
-const OPENSKY_TOKEN_URL = 'https://auth.opensky-network.org/auth/realms/opensky-network/protocol/openid-connect/token';
-const OPENSKY_API_BASE = 'https://opensky-network.org/api';
+const DEFAULT_OPENSKY_TOKEN_URL = 'https://auth.opensky-network.org/auth/realms/opensky-network/protocol/openid-connect/token';
+const DEFAULT_OPENSKY_API_BASE = 'https://opensky-network.org/api';
+const OPENSKY_PROXY_SECRET_HEADER_NAME = 'x-opensky-proxy-secret';
 const TRACKER_MAP_VIEWBOX = { width: 1000, height: 560 };
 const TOKEN_REFRESH_MARGIN_MS = 30_000;
 const TRACK_ALTITUDE_NOISE_MAX_NEIGHBOR_DELTA_METERS = 140;
@@ -133,6 +134,56 @@ const OPENSKY_RETRYABLE_ERROR_CODES = new Set([
 const openSkyDispatcher = new Agent({
   connectTimeout: OPENSKY_CONNECT_TIMEOUT_MS,
 });
+
+function getOpenSkyProxyBaseUrl(): string | null {
+  const value = process.env.OPENSKY_PROXY_URL?.trim();
+  return value ? value.replace(/\/+$/, '') : null;
+}
+
+function getOpenSkyProxySecret(): string | null {
+  const value = process.env.OPENSKY_PROXY_SECRET?.trim();
+  return value || null;
+}
+
+function buildOpenSkyProxyHeaders(): Record<string, string> {
+  const proxySecret = getOpenSkyProxySecret();
+  return proxySecret ? { [OPENSKY_PROXY_SECRET_HEADER_NAME]: proxySecret } : {};
+}
+
+function getOpenSkyTokenUrl(): string {
+  const proxyBaseUrl = getOpenSkyProxyBaseUrl();
+  return proxyBaseUrl
+    ? `${proxyBaseUrl}/auth/realms/opensky-network/protocol/openid-connect/token`
+    : DEFAULT_OPENSKY_TOKEN_URL;
+}
+
+function getOpenSkyApiBase(): string {
+  const proxyBaseUrl = getOpenSkyProxyBaseUrl();
+  return proxyBaseUrl ? `${proxyBaseUrl}/api` : DEFAULT_OPENSKY_API_BASE;
+}
+
+function hasLocalOpenSkyCredentials(): boolean {
+  return Boolean(process.env.OPENSKY_CLIENT_ID?.trim())
+    && Boolean(process.env.OPENSKY_CLIENT_SECRET?.trim());
+}
+
+export function getOpenSkyConnectionConfig(): {
+  proxyEnabled: boolean;
+  proxyBaseUrl: string | null;
+  proxySecretConfigured: boolean;
+  tokenUrl: string;
+  apiBaseUrl: string;
+} {
+  const proxyBaseUrl = getOpenSkyProxyBaseUrl();
+
+  return {
+    proxyEnabled: Boolean(proxyBaseUrl),
+    proxyBaseUrl,
+    proxySecretConfigured: Boolean(getOpenSkyProxySecret()),
+    tokenUrl: getOpenSkyTokenUrl(),
+    apiBaseUrl: getOpenSkyApiBase(),
+  };
+}
 
 function isMongoConfigured(): boolean {
   return Boolean(process.env.MONGODB_URI?.trim());
@@ -547,6 +598,8 @@ function buildOpenSkyTransportDiagnostics(stage: 'auth' | 'request', target: str
       runtimeEnvironment: process.env.VERCEL ? 'vercel' : 'node',
       vercelRegion: process.env.VERCEL_REGION,
       vercelEnvironment: process.env.VERCEL_ENV,
+      viaProxy: Boolean(getOpenSkyProxyBaseUrl()),
+      proxyBaseUrl: getOpenSkyProxyBaseUrl(),
     }),
   };
 }
@@ -772,11 +825,11 @@ async function readCredentialsFromEnv(): Promise<Credentials> {
     return credentialsCache;
   }
 
-  const clientId = process.env.OPENSKY_CLIENT_ID?.trim();
-  const clientSecret = process.env.OPENSKY_CLIENT_SECRET?.trim();
+  const clientId = process.env.OPENSKY_CLIENT_ID?.trim() ?? '';
+  const clientSecret = process.env.OPENSKY_CLIENT_SECRET?.trim() ?? '';
 
-  if (!clientId || !clientSecret) {
-    throw new Error('Missing OpenSky client credentials. Set OPENSKY_CLIENT_ID and OPENSKY_CLIENT_SECRET in your environment.');
+  if ((!clientId || !clientSecret) && !getOpenSkyProxyBaseUrl()) {
+    throw new Error('Missing OpenSky client credentials. Set OPENSKY_CLIENT_ID and OPENSKY_CLIENT_SECRET in your environment, or configure OPENSKY_PROXY_URL for an external proxy.');
   }
 
   credentialsCache = { clientId, clientSecret };
@@ -803,24 +856,33 @@ async function getAccessToken(forceRefresh = false): Promise<string> {
   if (!tokenFetchPromise) {
     tokenFetchPromise = (async () => {
       const credentials = await readCredentialsFromEnv();
+      const tokenUrl = getOpenSkyTokenUrl();
+      const tokenRequestBody = new URLSearchParams({
+        grant_type: 'client_credentials',
+      });
+
+      if (credentials.clientId) {
+        tokenRequestBody.set('client_id', credentials.clientId);
+      }
+
+      if (credentials.clientSecret) {
+        tokenRequestBody.set('client_secret', credentials.clientSecret);
+      }
 
       const response = await fetchWithOpenSkyTransportRetry(
-        OPENSKY_TOKEN_URL,
+        tokenUrl,
         {
           method: 'POST',
           headers: {
             'Content-Type': 'application/x-www-form-urlencoded',
             Accept: 'application/json',
+            ...buildOpenSkyProxyHeaders(),
           },
-          body: new URLSearchParams({
-            grant_type: 'client_credentials',
-            client_id: credentials.clientId,
-            client_secret: credentials.clientSecret,
-          }),
+          body: tokenRequestBody,
           cache: 'no-store',
         },
         'auth',
-        OPENSKY_TOKEN_URL,
+        tokenUrl,
       );
 
       if (!response.ok) {
@@ -832,7 +894,7 @@ async function getAccessToken(forceRefresh = false): Promise<string> {
 
         throw createOpenSkyError(message, compactRecord({
           stage: 'auth',
-          url: OPENSKY_TOKEN_URL,
+          url: tokenUrl,
           status: response.status,
           statusText: response.statusText,
           bodyPreview,
@@ -843,7 +905,7 @@ async function getAccessToken(forceRefresh = false): Promise<string> {
       if (!payload.access_token) {
         throw createOpenSkyError(
           'OpenSky auth response did not include an access token.',
-          { stage: 'auth', url: OPENSKY_TOKEN_URL },
+          { stage: 'auth', url: tokenUrl },
         );
       }
 
@@ -885,7 +947,7 @@ export async function refreshOpenSkyAccessToken(): Promise<OpenSkyTokenStatus> {
 
 export async function fetchOpenSky<T>(pathname: string, searchParams?: Record<string, string | number | undefined>): Promise<T> {
   const makeUrl = () => {
-    const url = new URL(`${OPENSKY_API_BASE}${pathname}`);
+    const url = new URL(`${getOpenSkyApiBase()}${pathname}`);
     for (const [key, value] of Object.entries(searchParams ?? {})) {
       if (value === undefined || value === '') continue;
       url.searchParams.set(key, String(value));
@@ -902,6 +964,7 @@ export async function fetchOpenSky<T>(pathname: string, searchParams?: Record<st
       {
         headers: {
           Accept: 'application/json',
+          ...buildOpenSkyProxyHeaders(),
           Authorization: `Bearer ${token}`,
         },
         cache: 'no-store',
@@ -943,8 +1006,7 @@ export async function fetchOpenSky<T>(pathname: string, searchParams?: Record<st
 }
 
 export function isOpenSkyConfigured(): boolean {
-  return Boolean(process.env.OPENSKY_CLIENT_ID?.trim())
-    && Boolean(process.env.OPENSKY_CLIENT_SECRET?.trim())
+  return (hasLocalOpenSkyCredentials() || Boolean(getOpenSkyProxyBaseUrl()))
     && isProviderEnabled('opensky');
 }
 
