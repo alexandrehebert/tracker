@@ -88,7 +88,10 @@ vi.mock('mongodb', () => {
   return { MongoClient };
 });
 
-const searchFlightsMock = vi.fn<[string, { forceRefresh?: boolean }?], Promise<TrackerApiResponse>>();
+const searchFlightsMock = vi.fn<(
+  query: string,
+  options?: { forceRefresh?: boolean },
+) => Promise<TrackerApiResponse>>();
 const ensureOpenSkyAccessTokenMock = vi.fn().mockResolvedValue({
   providerConfigured: true,
   mongoConfigured: true,
