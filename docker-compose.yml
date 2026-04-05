@@ -30,12 +30,35 @@ services:
       OPENSKY_DISABLED: ${OPENSKY_DISABLED:-}
       FLIGHTAWARE_DISABLED: ${FLIGHTAWARE_DISABLED:-}
       AVIATIONSTACK_DISABLED: ${AVIATIONSTACK_DISABLED:-}
+      CRON_SECRET: ${CRON_SECRET:-}
       MONGODB_URI: ${MONGODB_URI:-mongodb://mongodb:27017/tracker}
       MONGODB_DB_NAME: ${MONGODB_DB_NAME:-tracker}
       OPENSKY_CACHE_TTL_SECONDS: ${OPENSKY_CACHE_TTL_SECONDS:-300}
     volumes:
       - .:/app
       - /app/node_modules
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1:4109/api/tracker/cron/config || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
+    restart: unless-stopped
+
+  tracker-cron:
+    image: curlimages/curl:8.12.1
+    container_name: tracker-cron
+    depends_on:
+      tracker:
+        condition: service_healthy
+    environment:
+      TRACKER_CRON_URL: ${TRACKER_CRON_URL:-http://tracker:4109/api/tracker/cron}
+      TRACKER_CRON_INTERVAL_SECONDS: ${TRACKER_CRON_INTERVAL_SECONDS:-900}
+      TRACKER_CRON_STARTUP_DELAY_SECONDS: ${TRACKER_CRON_STARTUP_DELAY_SECONDS:-20}
+      CRON_SECRET: ${CRON_SECRET:-}
+    volumes:
+      - ./docker:/scripts:ro
+    command: ["/bin/sh", "/scripts/tracker-cron.sh"]
     restart: unless-stopped
 
 volumes:

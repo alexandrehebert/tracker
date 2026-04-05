@@ -19,6 +19,7 @@ docker compose up --build
 Open `http://localhost:4109`.
 
 This starts the app locally with Docker Compose in development mode (`next dev`) with auto-reload.
+It also starts a small `tracker-cron` sidecar that calls `/api/tracker/cron` automatically every 15 minutes so the Mongo-backed flight cache stays warm locally too.
 
 If you explicitly need a non-Docker workflow for local development:
 
@@ -62,6 +63,12 @@ docker compose up --build
 Then open `http://localhost:4109`.
 
 This runs the development server with source mounted for hot reload.
+
+### Local cron automation
+
+- The `tracker-cron` service waits for the app to become healthy, then triggers `http://tracker:4109/api/tracker/cron` every `900` seconds by default.
+- Override the cadence with `TRACKER_CRON_INTERVAL_SECONDS` in your `.env`.
+- If you set `CRON_SECRET`, the cron sidecar automatically sends `Authorization: Bearer $CRON_SECRET`.
 
 ## Deploy
 
