@@ -121,6 +121,29 @@ const preDepartureFlight: TrackedFlight = {
   },
 };
 
+const untimedOriginFlight: TrackedFlight = {
+  ...airborneFlight,
+  icao24: 'untimed1',
+  callsign: 'UNT123',
+  originPoint: {
+    ...airborneFlight.originPoint!,
+    time: null,
+    latitude: 43.6293,
+    longitude: 1.363,
+    altitude: 0,
+    onGround: true,
+  },
+  track: [],
+  current: {
+    ...airborneFlight.current!,
+    time: 1_700_000_060,
+    latitude: 48.8566,
+    longitude: 2.3522,
+    altitude: 11_000,
+    onGround: false,
+  },
+};
+
 const secondaryFlight: TrackedFlight = {
   ...trackedFlight,
   icao24: 'other02',
@@ -437,6 +460,43 @@ describe('FlightMap3D', () => {
     expect(forecastPath).toBeDefined();
     expect(forecastPath.points.length).toBeGreaterThan(5);
     expect(forecastPath.points[1].lat).not.toBe(forecastPath.points.at(-1)?.lat);
+  });
+
+  it('keeps the main route ending at the live plane position when the origin point has no timestamp', async () => {
+    const { globe } = createGlobeMock();
+    globeFactory.mockReturnValue(() => globe);
+
+    render(
+      <TrackerMapProvider
+        value={{
+          globeRef: { current: null },
+          setGlobeRef: vi.fn(),
+          svgRef: { current: null },
+          mapTransform: { x: 0, y: 0, k: 1, apply: vi.fn(), applyX: vi.fn(), applyY: vi.fn(), invert: vi.fn(), invertX: vi.fn(), invertY: vi.fn(), rescaleX: vi.fn(), rescaleY: vi.fn(), scale: vi.fn(), translate: vi.fn(), toString: vi.fn(() => 'translate(0,0) scale(1)') },
+          zoomBy: vi.fn(),
+          resetZoom: vi.fn(),
+        }}
+      >
+        <FlightMap3D
+          flights={[untimedOriginFlight]}
+          selectedIcao24={untimedOriginFlight.icao24}
+          selectedFlightDetails={{ ...selectedFlightDetails, icao24: untimedOriginFlight.icao24, callsign: untimedOriginFlight.callsign }}
+        />
+      </TrackerMapProvider>,
+    );
+
+    await waitFor(() => {
+      expect(globe.pathsData).toHaveBeenCalled();
+    });
+
+    const renderedPaths = globe.pathsData.mock.calls.at(-1)?.[0] ?? [];
+    const mainPath = renderedPaths.find((path: { variant?: string }) => path.variant === 'main');
+
+    expect(mainPath).toBeDefined();
+    expect(mainPath.points.at(-1)).toMatchObject({
+      lat: untimedOriginFlight.current?.latitude,
+      lng: untimedOriginFlight.current?.longitude,
+    });
   });
 
   it('keeps the other plane location dots visible when a flight is selected', async () => {

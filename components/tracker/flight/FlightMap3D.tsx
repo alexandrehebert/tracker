@@ -416,35 +416,27 @@ function getForecastPathPoints({
 }
 
 function dedupeFlightPoints(points: Array<FlightMapPoint | null>): FlightMapPoint[] {
-  const deduped = points.filter((point): point is FlightMapPoint => Boolean(point));
+  const deduped: FlightMapPoint[] = [];
 
-  deduped.sort((first, second) => {
-    if (first.time == null && second.time == null) {
-      return 0;
+  for (const point of points) {
+    if (!point) {
+      continue;
     }
 
-    if (first.time == null) {
-      return 1;
+    const previous = deduped.at(-1) ?? null;
+    if (
+      previous
+      && Math.abs(previous.latitude - point.latitude) <= 0.00001
+      && Math.abs(previous.longitude - point.longitude) <= 0.00001
+      && (previous.time ?? null) === (point.time ?? null)
+    ) {
+      continue;
     }
 
-    if (second.time == null) {
-      return -1;
-    }
+    deduped.push(point);
+  }
 
-    return first.time - second.time;
-  });
-
-  const seen = new Set<string>();
-
-  return deduped.filter((point) => {
-    const key = `${point.time ?? 'na'}:${point.latitude.toFixed(4)}:${point.longitude.toFixed(4)}`;
-    if (seen.has(key)) {
-      return false;
-    }
-
-    seen.add(key);
-    return true;
-  });
+  return deduped;
 }
 
 function createAirportPoint(
@@ -472,14 +464,33 @@ function buildFlightPathData(
   color: string,
 ): GlobePathDatum[] {
   const matchingDetails = details?.icao24 === flight.icao24 ? details : null;
-  const departurePoint = createAirportPoint(matchingDetails?.departureAirport, flight.route.firstSeen ?? null);
+  const observedPoints = selected
+    ? dedupeFlightPoints([flight.originPoint, ...flight.track, flight.current])
+    : dedupeFlightPoints([flight.current ?? flight.track.at(-1) ?? flight.originPoint]);
+  const firstObservedPoint = observedPoints[0] ?? null;
+  const departurePoint = createAirportPoint(
+    matchingDetails?.departureAirport,
+    flight.route.firstSeen ?? (firstObservedPoint?.time != null ? firstObservedPoint.time - 1 : null),
+  );
   const arrivalPoint = createAirportPoint(matchingDetails?.arrivalAirport, flight.route.lastSeen ?? flight.lastContact ?? null);
 
-  const historyPoints = selected
-    ? dedupeFlightPoints([departurePoint, flight.originPoint, ...flight.track, flight.current])
-    : dedupeFlightPoints([departurePoint ?? flight.originPoint, flight.current]);
+  let historyPoints = observedPoints;
 
-  const lastObservedPoint = historyPoints.at(-1) ?? departurePoint ?? flight.current ?? flight.originPoint ?? null;
+  if (departurePoint) {
+    if (!firstObservedPoint) {
+      historyPoints = dedupeFlightPoints([departurePoint, arrivalPoint]);
+    } else if (isPointNear(departurePoint, firstObservedPoint, 90)) {
+      historyPoints = dedupeFlightPoints([departurePoint, ...observedPoints.slice(1)]);
+    } else {
+      historyPoints = dedupeFlightPoints([departurePoint, ...observedPoints]);
+    }
+  }
+
+  if (!selected) {
+    historyPoints = dedupeFlightPoints([departurePoint ?? flight.originPoint, flight.current ?? observedPoints.at(-1) ?? null]);
+  }
+
+  const lastObservedPoint = observedPoints.at(-1) ?? departurePoint ?? flight.current ?? flight.originPoint ?? null;
   const nearDeparture = isPointNear(lastObservedPoint, departurePoint, 90);
   const nearArrival = isPointNear(lastObservedPoint, arrivalPoint, 90);
   const showForecastPreview = Boolean(selected && lastObservedPoint && (!flight.onGround || nearDeparture));

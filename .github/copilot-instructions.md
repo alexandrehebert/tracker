@@ -1,5 +1,6 @@
 # Copilot Instructions
 
+- To build, test and run this project inside Github Copilot Agent env, packages needs to be installed with `npm install` before running any command. This is required to populate the `node_modules` folder with the necessary dependencies for the project to function correctly.
 - This project runs locally with Docker. When you need the app running, use `docker compose up --build` and assume the app is served on `http://localhost:4109`.
 - Do not start the app directly with `npm run dev` or `npm run start` unless the user explicitly asks for a non-Docker workflow.
 - Keep terminal output bounded to avoid freezing VS Code.
@@ -15,3 +16,4 @@
 - Default verification is `npm run typecheck`.
 - Run `npm run build` instead when the change affects production/runtime behavior, Next.js config, routing, PWA/service worker behavior, or deployment-facing code.
 - If relevant tests exist for the changed area, run them in addition to the verification step.
+- When you're testing or debugging, you should use the existing test flights (TEST1, TEST2 or TEST3). These flights have various data sources and histories that can be useful for testing different scenarios.
