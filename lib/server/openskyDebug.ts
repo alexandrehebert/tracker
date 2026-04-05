@@ -194,7 +194,7 @@ function maskIpAddress(value: string | null): string | null {
 }
 
 function shouldRedactKey(key: string): boolean {
-  return /authorization|cookie|secret|token|password|api[-_]?key|set-cookie/i.test(key);
+  return /authorization|cookie|secret|token|password|api[-_]?key|set-cookie|signature|sc-headers|jwt/i.test(key);
 }
 
 function sanitizeHeaderValue(name: string, value: string): string {
@@ -203,7 +203,7 @@ function sanitizeHeaderValue(name: string, value: string): string {
     return bearerMatch ? `Bearer ${maskValue(bearerMatch[1]) ?? '[redacted]'}` : '[redacted]';
   }
 
-  if (/^x-forwarded-for$/i.test(name)) {
+  if (/^(x-forwarded-for|x-real-ip|x-vercel-forwarded-for|x-vercel-proxied-for)$/i.test(name)) {
     return maskIpAddress(value) ?? '[masked]';
   }
 
