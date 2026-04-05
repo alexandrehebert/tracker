@@ -332,8 +332,6 @@ function getRecordMatchScore(record: AviationstackFlightRecord, identifier: stri
   if (normalizedIdentifier === combinedIata) return 110;
   if (normalizedIdentifier === combinedIcao) return 105;
   if (normalizedIdentifier === normalizedFlightNumber) return 90;
-  if (normalizedFlightIata.includes(normalizedIdentifier) || normalizedFlightIcao.includes(normalizedIdentifier)) return 60;
-  if (combinedIata.includes(normalizedIdentifier) || combinedIcao.includes(normalizedIdentifier)) return 55;
   return 0;
 }
 

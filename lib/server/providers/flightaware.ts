@@ -349,8 +349,6 @@ function getRecordMatchScore(record: FlightAwareFlightRecord, identifier: string
   if (normalizedIdentifier === combinedIata) return 108;
   if (normalizedIdentifier === flightNumber) return 92;
   if (normalizedIdentifier === registration) return 90;
-  if (identIcao.includes(normalizedIdentifier) || identIata.includes(normalizedIdentifier) || ident.includes(normalizedIdentifier)) return 60;
-  if (combinedIcao.includes(normalizedIdentifier) || combinedIata.includes(normalizedIdentifier)) return 55;
   return 0;
 }
 

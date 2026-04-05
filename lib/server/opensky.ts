@@ -694,9 +694,7 @@ function matchesFlightIdentifier(params: {
   const normalizedCallsign = normalizeIdentifier(params.callsign ?? '');
   const normalizedIcao24 = normalizeIdentifier(params.icao24 ?? '');
 
-  return normalized === normalizedIcao24
-    || normalized === normalizedCallsign
-    || (normalized.length >= 4 && normalizedCallsign.includes(normalized));
+  return normalized === normalizedIcao24 || normalized === normalizedCallsign;
 }
 
 function matchesIdentifier(state: ParsedState, identifier: string): boolean {
