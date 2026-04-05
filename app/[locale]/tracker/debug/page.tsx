@@ -1,23 +1,20 @@
 import { notFound } from 'next/navigation';
-import { TrackerCronAdminClient } from '~/components/tracker/cron/TrackerCronAdminClient';
+import { OpenSkyDebugClient } from '~/components/tracker/debug/OpenSkyDebugClient';
 import { Link } from '~/i18n/navigation';
 import { isValidLocale } from '~/i18n/routing';
-import { getTrackerCronDashboard } from '~/lib/server/trackerCron';
 
 export const dynamic = 'force-dynamic';
 
-interface TrackerCronPageProps {
+interface TrackerDebugPageProps {
   params: Promise<{ locale: string }>;
 }
 
-export default async function TrackerCronPage({ params }: TrackerCronPageProps) {
+export default async function TrackerDebugPage({ params }: TrackerDebugPageProps) {
   const { locale } = await params;
 
   if (!isValidLocale(locale)) {
     notFound();
   }
-
-  const dashboard = await getTrackerCronDashboard(100);
 
   return (
     <div className="min-h-[100dvh] bg-slate-950 text-slate-100">
@@ -30,24 +27,24 @@ export default async function TrackerCronPage({ params }: TrackerCronPageProps) 
             ← Back to tracker
           </Link>
           <Link
-            href="/tracker/debug"
-            className="inline-flex items-center rounded-full border border-sky-400/40 bg-sky-500/10 px-3 py-1.5 text-sm text-sky-100 transition hover:bg-sky-500/20"
+            href="/tracker/cron"
+            className="inline-flex items-center rounded-full border border-white/10 bg-white/5 px-3 py-1.5 text-sm text-slate-200 transition hover:border-sky-300/50 hover:bg-sky-500/10"
           >
-            OpenSky debug page
+            Open cron admin
           </Link>
         </div>
 
         <div className="mt-5">
-          <p className="text-xs uppercase tracking-[0.24em] text-sky-300">Tracker admin</p>
-          <h1 className="mt-2 text-3xl font-semibold text-white">Cron flight prefetch</h1>
+          <p className="text-xs uppercase tracking-[0.24em] text-sky-300">Tracker debug</p>
+          <h1 className="mt-2 text-3xl font-semibold text-white">OpenSky network diagnostics</h1>
           <p className="mt-2 max-w-3xl text-sm text-slate-300">
-            Manage the list of flights that Vercel refreshes every 15 minutes, keep the config in MongoDB,
-            and review the full execution history for each cron run.
+            Use this page on Vercel to capture the runtime environment, routing headers, DNS results,
+            and real auth/API checks against OpenSky. It is meant to be copied and shared back for troubleshooting.
           </p>
         </div>
 
         <div className="mt-6">
-          <TrackerCronAdminClient initialDashboard={dashboard} />
+          <OpenSkyDebugClient />
         </div>
       </div>
     </div>
