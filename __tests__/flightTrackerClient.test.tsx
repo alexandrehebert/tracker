@@ -532,6 +532,59 @@ describe('FlightTrackerClient', () => {
     expect(within(dialog).queryByText(/Skipped → Skipped/i)).not.toBeInTheDocument();
   });
 
+  it('does not add a second search snapshot when details only refine metadata', async () => {
+    const user = userEvent.setup();
+    const searchFetchedAt = 1_700_000_000_000;
+    const detailsFetchedAt = searchFetchedAt + 3_000;
+    const searchPayload = {
+      ...responsePayload,
+      fetchedAt: searchFetchedAt,
+      flights: [
+        {
+          ...responsePayload.flights[0],
+          lastContact: Math.round(searchFetchedAt / 1000) - 30,
+          route: {
+            departureAirport: 'CDG',
+            arrivalAirport: 'JFK',
+            firstSeen: null,
+            lastSeen: null,
+          },
+        },
+      ],
+    };
+    const refinedDetailsPayload = {
+      ...detailsPayload,
+      fetchedAt: detailsFetchedAt,
+      route: {
+        departureAirport: 'CDG',
+        arrivalAirport: 'JFK',
+        firstSeen: 1_700_000_000,
+        lastSeen: 1_700_002_400,
+      },
+    };
+    const fetchMock = vi.spyOn(window, 'fetch').mockImplementation(async (input) => {
+      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+      const payload = url.startsWith('/api/tracker/details') ? refinedDetailsPayload : searchPayload;
+
+      return new Response(JSON.stringify(payload), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    });
+
+    render(<FlightTrackerClient map={map} />);
+
+    await user.type(screen.getByLabelText(/flight identifiers/i), 'AFR12');
+    await user.click(screen.getByRole('button', { name: /track flights/i }));
+
+    expect(await screen.findByText(/selected flight/i)).toBeInTheDocument();
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+    });
+
+    expect(screen.getByText(/1 cached snapshot shared across refreshes/i)).toBeInTheDocument();
+  });
+
   it('keeps shared cached fetch history returned by the API', async () => {
     const user = userEvent.setup();
     const cachedFetchedAt = 1_700_000_000_000;

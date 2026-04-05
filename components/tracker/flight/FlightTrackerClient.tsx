@@ -446,6 +446,34 @@ function buildFlightFetchSnapshot(
   };
 }
 
+function buildSnapshotMaterialKey(snapshot: FlightFetchSnapshot): string {
+  const sourceStates = (snapshot.sourceDetails ?? [])
+    .map((detail) => `${detail.source}:${detail.status}:${detail.usedInResult ? 'used' : 'unused'}`)
+    .sort();
+
+  return JSON.stringify({
+    dataSource: snapshot.dataSource,
+    route: {
+      departureAirport: snapshot.route.departureAirport ?? null,
+      arrivalAirport: snapshot.route.arrivalAirport ?? null,
+    },
+    onGround: snapshot.onGround,
+    velocity: snapshot.velocity ?? null,
+    geoAltitude: snapshot.geoAltitude ?? null,
+    flightNumber: snapshot.flightNumber ?? null,
+    airline: snapshot.airline?.name ?? null,
+    aircraft: snapshot.aircraft
+      ? {
+          registration: snapshot.aircraft.registration ?? null,
+          icao: snapshot.aircraft.icao ?? null,
+          iata: snapshot.aircraft.iata ?? null,
+          model: snapshot.aircraft.model ?? null,
+        }
+      : null,
+    sourceStates,
+  });
+}
+
 function mergeFlightFetchHistory(
   history: FlightFetchSnapshot[] | undefined,
   snapshot: FlightFetchSnapshot,
@@ -488,38 +516,10 @@ function mergeFlightFetchHistory(
   }
 
   const lastEntry = nextHistory.at(-1);
-  const previousComparable = lastEntry ? JSON.stringify({
-    dataSource: lastEntry.dataSource,
-    matchedBy: lastEntry.matchedBy,
-    route: lastEntry.route,
-    onGround: lastEntry.onGround,
-    lastContact: lastEntry.lastContact,
-    velocity: lastEntry.velocity,
-    heading: lastEntry.heading,
-    geoAltitude: lastEntry.geoAltitude,
-    baroAltitude: lastEntry.baroAltitude,
-    flightNumber: lastEntry.flightNumber,
-    airline: lastEntry.airline,
-    aircraft: lastEntry.aircraft,
-    sourceDetails: lastEntry.sourceDetails,
-  }) : null;
-  const snapshotComparable = JSON.stringify({
-    dataSource: snapshot.dataSource,
-    matchedBy: snapshot.matchedBy,
-    route: snapshot.route,
-    onGround: snapshot.onGround,
-    lastContact: snapshot.lastContact,
-    velocity: snapshot.velocity,
-    heading: snapshot.heading,
-    geoAltitude: snapshot.geoAltitude,
-    baroAltitude: snapshot.baroAltitude,
-    flightNumber: snapshot.flightNumber,
-    airline: snapshot.airline,
-    aircraft: snapshot.aircraft,
-    sourceDetails: snapshot.sourceDetails,
-  });
+  const previousComparable = lastEntry ? buildSnapshotMaterialKey(lastEntry) : null;
+  const snapshotComparable = buildSnapshotMaterialKey(snapshot);
 
-  if (previousComparable === snapshotComparable) {
+  if (lastEntry?.trigger === snapshot.trigger && previousComparable === snapshotComparable) {
     return nextHistory;
   }
 
@@ -652,6 +652,22 @@ function summarizeSnapshotChanges(
     changes.push({
       label: 'Airline',
       value: `${previousSnapshot.airline?.name ?? '—'} → ${snapshot.airline?.name ?? '—'}`,
+    });
+  }
+
+  if ((snapshot.flightNumber ?? null) !== (previousSnapshot.flightNumber ?? null)) {
+    changes.push({
+      label: 'Flight',
+      value: `${previousSnapshot.flightNumber ?? '—'} → ${snapshot.flightNumber ?? '—'}`,
+    });
+  }
+
+  const currentAircraft = snapshot.aircraft?.model ?? snapshot.aircraft?.registration ?? snapshot.aircraft?.icao ?? snapshot.aircraft?.iata ?? null;
+  const previousAircraft = previousSnapshot.aircraft?.model ?? previousSnapshot.aircraft?.registration ?? previousSnapshot.aircraft?.icao ?? previousSnapshot.aircraft?.iata ?? null;
+  if (currentAircraft !== previousAircraft) {
+    changes.push({
+      label: 'Aircraft',
+      value: `${previousAircraft ?? '—'} → ${currentAircraft ?? '—'}`,
     });
   }
 
@@ -830,9 +846,7 @@ function syncTrackedFlightsUrl(query: string) {
 function buildSelectedFlightDetailsCacheKey(flight: TrackedFlight): string {
   return [
     flight.icao24,
-    flight.route.departureAirport ?? '',
-    flight.route.arrivalAirport ?? '',
-    String(flight.route.lastSeen ?? flight.lastContact ?? 0),
+    normalizeHistoryIdentifier(flight.callsign),
   ].join(':');
 }
 

@@ -3,6 +3,7 @@ import { getFlightSelectionDetails } from '~/lib/server/flightSelectionDetails'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
+export const preferredRegion = 'fra1'
 
 export async function GET(request: NextRequest) {
   const icao24 = request.nextUrl.searchParams.get('icao24')?.trim() ?? ''

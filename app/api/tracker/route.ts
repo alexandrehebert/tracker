@@ -3,6 +3,7 @@ import { searchFlights } from '~/lib/server/opensky';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
+export const preferredRegion = 'fra1';
 
 export async function GET(request: NextRequest) {
   const query = request.nextUrl.searchParams.get('q')?.trim() ?? '';

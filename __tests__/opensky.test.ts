@@ -215,6 +215,41 @@ describe('searchFlights', () => {
     expect(params.get('client_secret')).toBe('secret-from-env');
   });
 
+  it('retries OpenSky auth once after a transient connect timeout', async () => {
+    process.env.OPENSKY_CLIENT_ID = 'client-from-env';
+    process.env.OPENSKY_CLIENT_SECRET = 'secret-from-env';
+
+    const networkCause = Object.assign(new Error('connect timeout reached'), {
+      code: 'UND_ERR_CONNECT_TIMEOUT',
+      errno: 'ETIMEDOUT',
+      syscall: 'connect',
+      host: 'auth.opensky-network.org',
+    });
+    const fetchError = Object.assign(new TypeError('fetch failed'), { cause: networkCause });
+
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(fetchError)
+      .mockResolvedValueOnce(new Response(JSON.stringify({ access_token: 'token-123', expires_in: 1800 }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ time: 123, states: [] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }));
+
+    vi.stubGlobal('fetch', fetchMock);
+
+    const searchFlights = await loadSearchFlights();
+    const result = await searchFlights('AF123');
+
+    expect(result.requestedIdentifiers).toEqual(['AF123']);
+    expect(result.flights).toEqual([]);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('https://auth.opensky-network.org/auth/realms/opensky-network/protocol/openid-connect/token');
+    expect(fetchMock.mock.calls[1]?.[0]).toBe('https://auth.opensky-network.org/auth/realms/opensky-network/protocol/openid-connect/token');
+  });
+
   it('fails fast when the OpenSky env vars are missing', async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal('fetch', fetchMock);
@@ -1664,6 +1699,7 @@ describe('searchFlights', () => {
     const fetchError = Object.assign(new TypeError('fetch failed'), { cause: networkCause });
 
     const fetchMock = vi.fn()
+      .mockRejectedValueOnce(fetchError)
       .mockRejectedValueOnce(fetchError)
       .mockResolvedValueOnce(new Response(JSON.stringify({
         pagination: { count: 1, total: 1, offset: 0, limit: 100 },

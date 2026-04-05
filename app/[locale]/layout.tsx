@@ -5,7 +5,7 @@ import { GeistMono } from 'geist/font/mono';
 import { NextIntlClientProvider } from 'next-intl';
 import { getMessages } from 'next-intl/server';
 import { notFound } from 'next/navigation';
-import { isValidLocale, routing } from '~/i18n/routing';
+import { routing } from '~/i18n/routing';
 import { PwaInit } from '~/components/PwaInit';
 import { GlobalRouteLoadingProvider } from '~/components/GlobalRouteLoadingProvider';
 
@@ -28,7 +28,7 @@ export default async function LocaleLayout({
   const { locale } = await params;
   const RTL_LOCALES = ['ar', 'fa', 'he', 'ur'];
 
-  if (!isValidLocale(locale)) {
+  if (!routing.locales.includes(locale as (typeof routing.locales)[number])) {
     notFound();
   }
 

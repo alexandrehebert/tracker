@@ -56,6 +56,23 @@ type OpenSkyDiagnosticsCarrier = Error & {
 };
 
 const OPENSKY_REQUEST_TIMEOUT_MS = 15_000;
+const OPENSKY_RETRY_DELAY_MS = 250;
+const OPENSKY_RETRY_ATTEMPTS = 2;
+const OPENSKY_RETRYABLE_ERROR_CODES = new Set([
+  'ECONNABORTED',
+  'ECONNREFUSED',
+  'ECONNRESET',
+  'EHOSTUNREACH',
+  'EPIPE',
+  'ETIMEDOUT',
+  'ENETDOWN',
+  'ENETRESET',
+  'ENETUNREACH',
+  'EAI_AGAIN',
+  'UND_ERR_CONNECT_TIMEOUT',
+  'UND_ERR_HEADERS_TIMEOUT',
+  'UND_ERR_SOCKET',
+]);
 
 function toNumber(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
@@ -116,6 +133,68 @@ function getOpenSkyNetworkHint(code: string | number | undefined, message: strin
   return null;
 }
 
+function getOpenSkyErrorCode(error: unknown): string | null {
+  const candidate = typeof error === 'object' && error ? error as OpenSkyDiagnosticsCarrier : null;
+  const cause = typeof candidate?.cause === 'object' && candidate.cause ? candidate.cause as OpenSkyDiagnosticsCarrier : null;
+  const code = cause?.code ?? candidate?.code;
+  return code == null ? null : String(code).toUpperCase();
+}
+
+function shouldRetryOpenSkyTransportError(error: unknown): boolean {
+  const code = getOpenSkyErrorCode(error);
+  if (code && OPENSKY_RETRYABLE_ERROR_CODES.has(code)) {
+    return true;
+  }
+
+  const message = error instanceof Error ? error.message : (error != null ? String(error) : '');
+  return /connect timeout|timed out|socket hang up|fetch failed/i.test(message);
+}
+
+function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+async function fetchWithOpenSkyTransportRetry(
+  input: URL | string,
+  init: RequestInit,
+  stage: 'auth' | 'request',
+  target: string,
+): Promise<Response> {
+  let attempt = 0;
+
+  while (attempt < OPENSKY_RETRY_ATTEMPTS) {
+    attempt += 1;
+
+    try {
+      return await fetch(input, init);
+    } catch (error) {
+      const shouldRetry = attempt < OPENSKY_RETRY_ATTEMPTS && shouldRetryOpenSkyTransportError(error);
+      if (shouldRetry) {
+        await wait(OPENSKY_RETRY_DELAY_MS);
+        continue;
+      }
+
+      const { message, diagnostics } = buildOpenSkyTransportDiagnostics(stage, target, error);
+      throw createOpenSkyError(message, {
+        ...diagnostics,
+        attempts: attempt,
+      }, error);
+    }
+  }
+
+  const unreachableMessage = stage === 'auth'
+    ? 'OpenSky authentication request failed'
+    : `OpenSky request failed for ${target}`;
+
+  throw createOpenSkyError(unreachableMessage, {
+    stage,
+    url: target,
+    attempts: attempt,
+  });
+}
+
 function buildOpenSkyTransportDiagnostics(stage: 'auth' | 'request', target: string, error: unknown): {
   message: string;
   diagnostics: Record<string, unknown>;
@@ -160,6 +239,9 @@ function buildOpenSkyTransportDiagnostics(stage: 'auth' | 'request', target: str
       address: causeMetadata.address ?? topLevel.address,
       port: causeMetadata.port ?? topLevel.port,
       hint,
+      runtimeEnvironment: process.env.VERCEL ? 'vercel' : 'node',
+      vercelRegion: process.env.VERCEL_REGION,
+      vercelEnvironment: process.env.VERCEL_ENV,
     }),
   };
 }
@@ -403,9 +485,9 @@ async function getAccessToken(forceRefresh = false): Promise<string> {
 
   const credentials = await readCredentialsFromEnv();
 
-  let response: Response;
-  try {
-    response = await fetch(OPENSKY_TOKEN_URL, {
+  const response = await fetchWithOpenSkyTransportRetry(
+    OPENSKY_TOKEN_URL,
+    {
       method: 'POST',
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
@@ -417,11 +499,10 @@ async function getAccessToken(forceRefresh = false): Promise<string> {
       }),
       cache: 'no-store',
       signal: getOpenSkyRequestSignal(),
-    });
-  } catch (error) {
-    const { message, diagnostics } = buildOpenSkyTransportDiagnostics('auth', OPENSKY_TOKEN_URL, error);
-    throw createOpenSkyError(message, diagnostics, error);
-  }
+    },
+    'auth',
+    OPENSKY_TOKEN_URL,
+  );
 
   if (!response.ok) {
     const bodyPreview = await readResponsePreview(response);
@@ -469,18 +550,18 @@ export async function fetchOpenSky<T>(pathname: string, searchParams?: Record<st
     const token = await getAccessToken(forceRefresh);
     const url = makeUrl();
 
-    try {
-      return await fetch(url, {
+    return fetchWithOpenSkyTransportRetry(
+      url,
+      {
         headers: {
           Authorization: `Bearer ${token}`,
         },
         cache: 'no-store',
         signal: getOpenSkyRequestSignal(),
-      });
-    } catch (error) {
-      const { message, diagnostics } = buildOpenSkyTransportDiagnostics('request', url.toString(), error);
-      throw createOpenSkyError(message, diagnostics, error);
-    }
+      },
+      'request',
+      url.toString(),
+    );
   };
 
   let response = await execute(false);

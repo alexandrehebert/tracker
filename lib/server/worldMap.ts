@@ -3,7 +3,6 @@ import { join } from 'node:path';
 import { geoNaturalEarth1, geoPath } from 'd3-geo';
 import { City } from 'country-state-city';
 import countries, { type Country } from 'world-countries';
-import { getSafeLocale } from '~/i18n/routing';
 
 const MAP_VIEWBOX = { width: 1000, height: 560 };
 const MIN_CLICKABLE_COUNTRY_SIZE = 5;
@@ -29,29 +28,11 @@ export interface WorldMapPayload {
 type GeoFeature = GeoJSON.Feature<GeoJSON.Geometry>;
 type FeatureProperties = Record<string, unknown>;
 type Coordinates = { latitude: number; longitude: number };
+type ProjectedMapPoint = { x: number; y: number };
 
 const capitalCoordinatesCache = new Map<string, Coordinates | null>();
 const cityLookupCache = new Map<string, Map<string, Coordinates>>();
-let cachedProjectionPromise: Promise<ReturnType<typeof geoNaturalEarth1>> | null = null;
-
-function createWorldProjection(geoData: GeoJSON.FeatureCollection) {
-  const projection = geoNaturalEarth1();
-
-  projection.fitExtent(
-    [[24, 24], [MAP_VIEWBOX.width - 24, MAP_VIEWBOX.height - 24]],
-    geoData as never,
-  );
-
-  return projection;
-}
-
-async function getWorldProjection() {
-  if (!cachedProjectionPromise) {
-    cachedProjectionPromise = loadGeoJson().then((geoData) => createWorldProjection(geoData));
-  }
-
-  return cachedProjectionPromise;
-}
+let mapProjectionPromise: Promise<ReturnType<typeof geoNaturalEarth1>> | null = null;
 
 function getFeatureFocusGeometry(feature: GeoFeature, generator: ReturnType<typeof geoPath>): GeoFeature {
   if (feature.geometry.type !== 'MultiPolygon') {
@@ -339,11 +320,40 @@ async function loadGeoJson(): Promise<GeoJSON.FeatureCollection> {
   return JSON.parse(rawGeoData) as GeoJSON.FeatureCollection;
 }
 
+async function getMapProjection() {
+  if (!mapProjectionPromise) {
+    mapProjectionPromise = loadGeoJson().then((geoData) => {
+      const projection = geoNaturalEarth1();
+      projection.fitExtent(
+        [[24, 24], [MAP_VIEWBOX.width - 24, MAP_VIEWBOX.height - 24]],
+        geoData as never,
+      );
+      return projection;
+    });
+  }
+
+  return mapProjectionPromise;
+}
+
+export async function projectCoordinatesToMap({ latitude, longitude }: Coordinates): Promise<ProjectedMapPoint | null> {
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+    return null;
+  }
+
+  const projection = await getMapProjection();
+  const projected = projection([longitude, latitude]);
+  if (!projected || !Number.isFinite(projected[0]) || !Number.isFinite(projected[1])) {
+    return null;
+  }
+
+  return { x: projected[0], y: projected[1] };
+}
+
 async function buildWorldMapPayload(locale: string): Promise<WorldMapPayload> {
-  const safeLocale = getSafeLocale(locale);
   const geoData = await loadGeoJson();
   const indexes = buildCountryIndexes();
-  const projection = createWorldProjection(geoData);
+  const projection = await getMapProjection();
+
   const generator = geoPath(projection);
   const seenCodes = new Set<string>();
   const mapCountries: WorldMapCountry[] = [];
@@ -395,7 +405,7 @@ async function buildWorldMapPayload(locale: string): Promise<WorldMapPayload> {
     const lng = Number.isFinite(country.latlng?.[1]) ? country.latlng[1] : 0;
     mapCountries.push({
       code: country.cca2,
-      name: getLocalizedCountryName(country, safeLocale),
+      name: getLocalizedCountryName(country, locale),
       capital: country.capital[0],
       flag: country.flag,
       path,
@@ -411,7 +421,7 @@ async function buildWorldMapPayload(locale: string): Promise<WorldMapPayload> {
     });
   }
 
-  mapCountries.sort((left, right) => left.name.localeCompare(right.name, safeLocale));
+  mapCountries.sort((left, right) => left.name.localeCompare(right.name, locale));
 
   return {
     countries: mapCountries,
@@ -420,30 +430,13 @@ async function buildWorldMapPayload(locale: string): Promise<WorldMapPayload> {
 }
 
 export async function getWorldMapPayload(locale: string): Promise<WorldMapPayload> {
-  const safeLocale = getSafeLocale(locale);
-
   if (!cachedPayloadPromise) {
     cachedPayloadPromise = buildWorldMapPayload('en');
   }
 
-  if (safeLocale === 'en') {
+  if (locale === 'en') {
     return cachedPayloadPromise;
   }
 
-  return buildWorldMapPayload(safeLocale);
-}
-
-export async function projectCoordinatesToMap({ latitude, longitude }: Coordinates): Promise<{ x: number; y: number } | null> {
-  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
-    return null;
-  }
-
-  const projection = await getWorldProjection();
-  const point = projection([longitude, latitude]);
-
-  if (!point || !Number.isFinite(point[0]) || !Number.isFinite(point[1])) {
-    return null;
-  }
-
-  return { x: point[0], y: point[1] };
+  return buildWorldMapPayload(locale);
 }
