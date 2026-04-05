@@ -1,5 +1,5 @@
-const STATIC_CACHE = 'tracker-static-v2';
-const RUNTIME_CACHE = 'tracker-runtime-v2';
+const STATIC_CACHE = 'tracker-static-v3';
+const RUNTIME_CACHE = 'tracker-runtime-v3';
 const OFFLINE_URL = '/offline.html';
 
 const PRECACHE_URLS = [
