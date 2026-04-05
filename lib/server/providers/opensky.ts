@@ -1,3 +1,4 @@
+import { Agent } from 'undici';
 import { geoNaturalEarth1 } from 'd3-geo';
 import type { AirportDetails, FlightMapPoint, TrackedFlightRoute } from '~/components/tracker/flight/types';
 import { guessNearestAirportDetails } from '~/lib/server/airports';
@@ -55,11 +56,20 @@ type OpenSkyDiagnosticsCarrier = Error & {
   diagnostics?: Record<string, unknown>;
 };
 
+type OpenSkyRequestInit = RequestInit & {
+  dispatcher?: Agent;
+};
+
 const DEFAULT_OPENSKY_REQUEST_TIMEOUT_MS = process.env.VERCEL ? 25_000 : 15_000;
 const parsedOpenSkyRequestTimeoutMs = Number.parseInt(process.env.OPENSKY_REQUEST_TIMEOUT_MS?.trim() ?? '', 10);
 const OPENSKY_REQUEST_TIMEOUT_MS = Number.isFinite(parsedOpenSkyRequestTimeoutMs) && parsedOpenSkyRequestTimeoutMs > 0
   ? parsedOpenSkyRequestTimeoutMs
   : DEFAULT_OPENSKY_REQUEST_TIMEOUT_MS;
+const DEFAULT_OPENSKY_CONNECT_TIMEOUT_MS = process.env.VERCEL ? 30_000 : 15_000;
+const parsedOpenSkyConnectTimeoutMs = Number.parseInt(process.env.OPENSKY_CONNECT_TIMEOUT_MS?.trim() ?? '', 10);
+const OPENSKY_CONNECT_TIMEOUT_MS = Number.isFinite(parsedOpenSkyConnectTimeoutMs) && parsedOpenSkyConnectTimeoutMs > 0
+  ? parsedOpenSkyConnectTimeoutMs
+  : DEFAULT_OPENSKY_CONNECT_TIMEOUT_MS;
 const OPENSKY_RETRY_DELAY_MS = 250;
 const OPENSKY_RETRY_ATTEMPTS = 2;
 const OPENSKY_RETRYABLE_ERROR_CODES = new Set([
@@ -79,6 +89,10 @@ const OPENSKY_RETRYABLE_ERROR_CODES = new Set([
   'UND_ERR_HEADERS_TIMEOUT',
   'UND_ERR_SOCKET',
 ]);
+
+const openSkyDispatcher = new Agent({
+  connectTimeout: OPENSKY_CONNECT_TIMEOUT_MS,
+});
 
 function toNumber(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
@@ -187,10 +201,11 @@ async function fetchWithOpenSkyTransportRetry(
     attempt += 1;
 
     try {
-      const requestInit = {
+      const requestInit: OpenSkyRequestInit = {
         ...init,
+        dispatcher: openSkyDispatcher,
         signal: getOpenSkyRequestSignal(init.signal),
-      } satisfies RequestInit;
+      };
 
       return await fetch(input, requestInit);
     } catch (error) {
@@ -264,6 +279,7 @@ function buildOpenSkyTransportDiagnostics(stage: 'auth' | 'request', target: str
       port: causeMetadata.port ?? topLevel.port,
       hint,
       timeoutMs: OPENSKY_REQUEST_TIMEOUT_MS,
+      connectTimeoutMs: OPENSKY_CONNECT_TIMEOUT_MS,
       runtimeEnvironment: process.env.VERCEL ? 'vercel' : 'node',
       vercelRegion: process.env.VERCEL_REGION,
       vercelEnvironment: process.env.VERCEL_ENV,
@@ -516,6 +532,7 @@ async function getAccessToken(forceRefresh = false): Promise<string> {
       method: 'POST',
       headers: {
         'Content-Type': 'application/x-www-form-urlencoded',
+        Accept: 'application/json',
       },
       body: new URLSearchParams({
         grant_type: 'client_credentials',
@@ -578,6 +595,7 @@ export async function fetchOpenSky<T>(pathname: string, searchParams?: Record<st
       url,
       {
         headers: {
+          Accept: 'application/json',
           Authorization: `Bearer ${token}`,
         },
         cache: 'no-store',

@@ -206,9 +206,10 @@ describe('searchFlights', () => {
     expect(result.requestedIdentifiers).toEqual(['AF123']);
     expect(result.flights).toEqual([]);
 
-    const [authUrl, authInit] = fetchMock.mock.calls[0] as [string, RequestInit];
+    const [authUrl, authInit] = fetchMock.mock.calls[0] as [string, RequestInit & { dispatcher?: unknown }];
     expect(authUrl).toBe('https://auth.opensky-network.org/auth/realms/opensky-network/protocol/openid-connect/token');
     expect(authInit.method).toBe('POST');
+    expect(authInit.dispatcher).toBeDefined();
 
     const params = authInit.body as URLSearchParams;
     expect(params.get('client_id')).toBe('client-from-env');
