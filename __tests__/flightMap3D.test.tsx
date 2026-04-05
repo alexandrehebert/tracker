@@ -439,6 +439,37 @@ describe('FlightMap3D', () => {
     expect(forecastPath.points[1].lat).not.toBe(forecastPath.points.at(-1)?.lat);
   });
 
+  it('keeps the other plane location dots visible when a flight is selected', async () => {
+    const { globe } = createGlobeMock();
+    globeFactory.mockReturnValue(() => globe);
+
+    render(
+      <TrackerMapProvider
+        value={{
+          globeRef: { current: null },
+          setGlobeRef: vi.fn(),
+          svgRef: { current: null },
+          mapTransform: { x: 0, y: 0, k: 1, apply: vi.fn(), applyX: vi.fn(), applyY: vi.fn(), invert: vi.fn(), invertX: vi.fn(), invertY: vi.fn(), rescaleX: vi.fn(), rescaleY: vi.fn(), scale: vi.fn(), translate: vi.fn(), toString: vi.fn(() => 'translate(0,0) scale(1)') },
+          zoomBy: vi.fn(),
+          resetZoom: vi.fn(),
+        }}
+      >
+        <FlightMap3D
+          flights={[trackedFlight, secondaryFlight]}
+          selectedIcao24={trackedFlight.icao24}
+          selectedFlightDetails={selectedFlightDetails}
+        />
+      </TrackerMapProvider>,
+    );
+
+    await waitFor(() => {
+      expect(globe.htmlElementsData).toHaveBeenCalled();
+    });
+
+    const renderedHtmlElements = globe.htmlElementsData.mock.calls.at(-1)?.[0] ?? [];
+    expect(renderedHtmlElements.some((item: { type?: string; icao24?: string }) => item.type === 'plane' && item.icao24 === secondaryFlight.icao24)).toBe(true);
+  });
+
   it('only renders route lines for the selected flight when multiple flights are tracked', async () => {
     const { globe } = createGlobeMock();
     globeFactory.mockReturnValue(() => globe);

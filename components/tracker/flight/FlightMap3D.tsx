@@ -80,7 +80,17 @@ interface GlobeDepartureMarkerDatum {
   selected: boolean;
 }
 
-type GlobeHtmlDatum = GlobeLabelDatum | GlobeDepartureMarkerDatum;
+interface GlobePlaneMarkerDatum {
+  type: 'plane';
+  icao24: string;
+  lat: number;
+  lng: number;
+  altitude: number;
+  color: string;
+  selected: boolean;
+}
+
+type GlobeHtmlDatum = GlobeLabelDatum | GlobeDepartureMarkerDatum | GlobePlaneMarkerDatum;
 
 interface GlobeRingDatum {
   lat: number;
@@ -661,9 +671,21 @@ export default function FlightMap3D({
     });
   }, [flights, selectedFlightDetails, selectedIcao24]);
 
+  const planeMarkerData = useMemo(() => {
+    return pointData.map((point) => ({
+      type: 'plane' as const,
+      icao24: point.icao24,
+      lat: point.lat,
+      lng: point.lng,
+      altitude: point.altitude,
+      color: point.color,
+      selected: point.selected,
+    })) satisfies GlobePlaneMarkerDatum[];
+  }, [pointData]);
+
   const htmlOverlayData = useMemo(() => {
-    return [...departureMarkerData, ...labelData] satisfies GlobeHtmlDatum[];
-  }, [departureMarkerData, labelData]);
+    return [...departureMarkerData, ...planeMarkerData, ...labelData] satisfies GlobeHtmlDatum[];
+  }, [departureMarkerData, labelData, planeMarkerData]);
 
   useEffect(() => {
     if (!containerRef.current) {
@@ -872,6 +894,26 @@ export default function FlightMap3D({
           element.style.background = item.color;
           element.style.border = '2px solid rgba(255,255,255,0.85)';
           element.style.boxShadow = '0 0 0 4px rgba(245,158,11,0.16), 0 6px 16px rgba(2,6,23,0.35)';
+          element.style.transform = 'translate(-50%, -50%)';
+          element.title = `Select ${item.icao24}`;
+          element.addEventListener('click', (event) => {
+            event.stopPropagation();
+            onSelectFlight?.(item.icao24);
+          });
+          return element;
+        }
+
+        if (item.type === 'plane') {
+          element.style.pointerEvents = 'auto';
+          element.style.cursor = 'pointer';
+          element.style.width = item.selected ? '11px' : '8px';
+          element.style.height = item.selected ? '11px' : '8px';
+          element.style.borderRadius = '999px';
+          element.style.background = item.color;
+          element.style.border = item.selected ? '2px solid rgba(255,255,255,0.95)' : '1.5px solid rgba(255,255,255,0.82)';
+          element.style.boxShadow = item.selected
+            ? `0 0 0 4px color-mix(in srgb, ${item.color} 26%, transparent), 0 6px 16px rgba(2,6,23,0.35)`
+            : `0 0 0 2px color-mix(in srgb, ${item.color} 18%, transparent), 0 4px 10px rgba(2,6,23,0.28)`;
           element.style.transform = 'translate(-50%, -50%)';
           element.title = `Select ${item.icao24}`;
           element.addEventListener('click', (event) => {
