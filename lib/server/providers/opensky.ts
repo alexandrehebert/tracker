@@ -55,10 +55,16 @@ type OpenSkyDiagnosticsCarrier = Error & {
   diagnostics?: Record<string, unknown>;
 };
 
-const OPENSKY_REQUEST_TIMEOUT_MS = 15_000;
+const DEFAULT_OPENSKY_REQUEST_TIMEOUT_MS = process.env.VERCEL ? 25_000 : 15_000;
+const parsedOpenSkyRequestTimeoutMs = Number.parseInt(process.env.OPENSKY_REQUEST_TIMEOUT_MS?.trim() ?? '', 10);
+const OPENSKY_REQUEST_TIMEOUT_MS = Number.isFinite(parsedOpenSkyRequestTimeoutMs) && parsedOpenSkyRequestTimeoutMs > 0
+  ? parsedOpenSkyRequestTimeoutMs
+  : DEFAULT_OPENSKY_REQUEST_TIMEOUT_MS;
 const OPENSKY_RETRY_DELAY_MS = 250;
 const OPENSKY_RETRY_ATTEMPTS = 2;
 const OPENSKY_RETRYABLE_ERROR_CODES = new Set([
+  '23',
+  'ABORT_ERR',
   'ECONNABORTED',
   'ECONNREFUSED',
   'ECONNRESET',
@@ -90,10 +96,16 @@ function truncateText(value: string, maxLength = 240): string {
   return `${value.slice(0, maxLength - 1)}…`;
 }
 
-function getOpenSkyRequestSignal(): AbortSignal | undefined {
-  return typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function'
+function getOpenSkyRequestSignal(baseSignal?: AbortSignal | null): AbortSignal | undefined {
+  const timeoutSignal = typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function'
     ? AbortSignal.timeout(OPENSKY_REQUEST_TIMEOUT_MS)
     : undefined;
+
+  if (baseSignal && timeoutSignal && typeof AbortSignal.any === 'function') {
+    return AbortSignal.any([baseSignal, timeoutSignal]);
+  }
+
+  return baseSignal ?? timeoutSignal;
 }
 
 function extractErrorMetadata(error: unknown): Record<string, unknown> {
@@ -146,8 +158,15 @@ function shouldRetryOpenSkyTransportError(error: unknown): boolean {
     return true;
   }
 
+  const candidate = typeof error === 'object' && error ? error as OpenSkyDiagnosticsCarrier : null;
+  const name = error instanceof Error ? error.name : String(candidate?.name ?? '');
   const message = error instanceof Error ? error.message : (error != null ? String(error) : '');
-  return /connect timeout|timed out|socket hang up|fetch failed/i.test(message);
+
+  if (/^(AbortError|TimeoutError)$/i.test(name) && /timeout/i.test(message)) {
+    return true;
+  }
+
+  return /connect timeout|timed out|timeout|socket hang up|fetch failed/i.test(message);
 }
 
 function wait(ms: number): Promise<void> {
@@ -168,7 +187,12 @@ async function fetchWithOpenSkyTransportRetry(
     attempt += 1;
 
     try {
-      return await fetch(input, init);
+      const requestInit = {
+        ...init,
+        signal: getOpenSkyRequestSignal(init.signal),
+      } satisfies RequestInit;
+
+      return await fetch(input, requestInit);
     } catch (error) {
       const shouldRetry = attempt < OPENSKY_RETRY_ATTEMPTS && shouldRetryOpenSkyTransportError(error);
       if (shouldRetry) {
@@ -239,6 +263,7 @@ function buildOpenSkyTransportDiagnostics(stage: 'auth' | 'request', target: str
       address: causeMetadata.address ?? topLevel.address,
       port: causeMetadata.port ?? topLevel.port,
       hint,
+      timeoutMs: OPENSKY_REQUEST_TIMEOUT_MS,
       runtimeEnvironment: process.env.VERCEL ? 'vercel' : 'node',
       vercelRegion: process.env.VERCEL_REGION,
       vercelEnvironment: process.env.VERCEL_ENV,
@@ -498,7 +523,6 @@ async function getAccessToken(forceRefresh = false): Promise<string> {
         client_secret: credentials.clientSecret,
       }),
       cache: 'no-store',
-      signal: getOpenSkyRequestSignal(),
     },
     'auth',
     OPENSKY_TOKEN_URL,
@@ -557,7 +581,6 @@ export async function fetchOpenSky<T>(pathname: string, searchParams?: Record<st
           Authorization: `Bearer ${token}`,
         },
         cache: 'no-store',
-        signal: getOpenSkyRequestSignal(),
       },
       'request',
       url.toString(),

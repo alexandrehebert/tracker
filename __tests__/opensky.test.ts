@@ -250,6 +250,38 @@ describe('searchFlights', () => {
     expect(fetchMock.mock.calls[1]?.[0]).toBe('https://auth.opensky-network.org/auth/realms/opensky-network/protocol/openid-connect/token');
   });
 
+  it('retries OpenSky auth once after an AbortSignal timeout', async () => {
+    process.env.OPENSKY_CLIENT_ID = 'client-from-env';
+    process.env.OPENSKY_CLIENT_SECRET = 'secret-from-env';
+
+    const timeoutError = Object.assign(new Error('The operation was aborted due to timeout'), {
+      name: 'TimeoutError',
+      code: 23,
+    });
+
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(timeoutError)
+      .mockResolvedValueOnce(new Response(JSON.stringify({ access_token: 'token-123', expires_in: 1800 }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ time: 123, states: [] }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }));
+
+    vi.stubGlobal('fetch', fetchMock);
+
+    const searchFlights = await loadSearchFlights();
+    const result = await searchFlights('AF123');
+
+    expect(result.requestedIdentifiers).toEqual(['AF123']);
+    expect(result.flights).toEqual([]);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
+    expect(fetchMock.mock.calls[0]?.[0]).toBe('https://auth.opensky-network.org/auth/realms/opensky-network/protocol/openid-connect/token');
+    expect(fetchMock.mock.calls[1]?.[0]).toBe('https://auth.opensky-network.org/auth/realms/opensky-network/protocol/openid-connect/token');
+  });
+
   it('fails fast when the OpenSky env vars are missing', async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal('fetch', fetchMock);
