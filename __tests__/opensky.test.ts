@@ -93,6 +93,11 @@ describe('searchFlights', () => {
   const originalAviationStackApiKey = process.env.AVIATION_STACK_API_KEY;
   const originalFlightAwareApiKey = process.env.FLIGHTAWARE_API_KEY;
   const originalFlightAwareApiKeyAlt = process.env.FLIGHT_AWARE_API_KEY;
+  const originalEnabledApiProviders = process.env.ENABLED_API_PROVIDERS;
+  const originalDisabledApiProviders = process.env.DISABLED_API_PROVIDERS;
+  const originalOpenSkyDisabled = process.env.OPENSKY_DISABLED;
+  const originalFlightAwareDisabled = process.env.FLIGHTAWARE_DISABLED;
+  const originalAviationstackDisabled = process.env.AVIATIONSTACK_DISABLED;
   const originalMongoDbUri = process.env.MONGODB_URI;
   const originalCacheTtl = process.env.OPENSKY_CACHE_TTL_SECONDS;
 
@@ -146,6 +151,36 @@ describe('searchFlights', () => {
       process.env.OPENSKY_CACHE_TTL_SECONDS = originalCacheTtl;
     }
 
+    if (originalEnabledApiProviders === undefined) {
+      delete process.env.ENABLED_API_PROVIDERS;
+    } else {
+      process.env.ENABLED_API_PROVIDERS = originalEnabledApiProviders;
+    }
+
+    if (originalDisabledApiProviders === undefined) {
+      delete process.env.DISABLED_API_PROVIDERS;
+    } else {
+      process.env.DISABLED_API_PROVIDERS = originalDisabledApiProviders;
+    }
+
+    if (originalOpenSkyDisabled === undefined) {
+      delete process.env.OPENSKY_DISABLED;
+    } else {
+      process.env.OPENSKY_DISABLED = originalOpenSkyDisabled;
+    }
+
+    if (originalFlightAwareDisabled === undefined) {
+      delete process.env.FLIGHTAWARE_DISABLED;
+    } else {
+      process.env.FLIGHTAWARE_DISABLED = originalFlightAwareDisabled;
+    }
+
+    if (originalAviationstackDisabled === undefined) {
+      delete process.env.AVIATIONSTACK_DISABLED;
+    } else {
+      process.env.AVIATIONSTACK_DISABLED = originalAviationstackDisabled;
+    }
+
     vi.unstubAllGlobals();
   });
 
@@ -191,6 +226,108 @@ describe('searchFlights', () => {
     );
 
     expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('lets the provider allowlist disable OpenSky before any network call', async () => {
+    process.env.OPENSKY_CLIENT_ID = 'client-from-env';
+    process.env.OPENSKY_CLIENT_SECRET = 'secret-from-env';
+    process.env.ENABLED_API_PROVIDERS = 'flightaware, aviationstack';
+
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    const searchFlights = await loadSearchFlights();
+
+    await expect(searchFlights('AF123')).rejects.toThrow(
+      'OpenSky provider is disabled by `ENABLED_API_PROVIDERS`.',
+    );
+
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('skips FlightAware and Aviationstack when the allowlist only enables OpenSky', async () => {
+    process.env.OPENSKY_CLIENT_ID = 'client-from-env';
+    process.env.OPENSKY_CLIENT_SECRET = 'secret-from-env';
+    process.env.FLIGHT_AWARE_API_KEY = 'flightaware-key';
+    process.env.AVIATION_STACK_API_KEY = 'aviationstack-key';
+    process.env.ENABLED_API_PROVIDERS = 'opensky';
+
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input.toString();
+
+      if (url.includes('/protocol/openid-connect/token')) {
+        return new Response(JSON.stringify({ access_token: 'token-123', expires_in: 1800 }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      if (url.includes('/states/all')) {
+        return new Response(JSON.stringify({
+          time: 1_700_000_600,
+          states: [[
+            '39bd24',
+            'AFR123',
+            'France',
+            1_700_000_580,
+            1_700_000_600,
+            -15.4,
+            49.5,
+            10_668,
+            false,
+            905,
+            281,
+            0,
+            null,
+            10_668,
+            '1234',
+            false,
+            0,
+            null,
+          ]],
+        }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      if (url.includes('/tracks/all')) {
+        return new Response(JSON.stringify({ path: [] }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      if (url.includes('/flights/all')) {
+        return new Response(JSON.stringify([]), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      throw new Error(`Unhandled fetch URL in test: ${url}`);
+    });
+
+    vi.stubGlobal('fetch', fetchMock);
+
+    const searchFlights = await loadSearchFlights();
+    const result = await searchFlights('AFR123');
+
+    expect(result.flights).toHaveLength(1);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('aeroapi.flightaware.com'))).toBe(false);
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('aviationstack.com/v1/flights'))).toBe(false);
+    expect(result.flights[0]?.sourceDetails).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        source: 'flightaware',
+        status: 'skipped',
+        reason: expect.stringContaining('ENABLED_API_PROVIDERS'),
+      }),
+      expect.objectContaining({
+        source: 'aviationstack',
+        status: 'skipped',
+        reason: expect.stringContaining('ENABLED_API_PROVIDERS'),
+      }),
+    ]));
   });
 
   it('matches callsigns exactly instead of returning partial substring results', async () => {

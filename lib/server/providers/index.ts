@@ -2,18 +2,86 @@ import type { FlightSourceName } from '~/components/tracker/flight/types';
 
 export type ProviderName = FlightSourceName;
 
+const ALL_PROVIDERS = ['opensky', 'flightaware', 'aviationstack'] as const satisfies readonly ProviderName[];
 const PROVIDER_DISABLE_ENV: Record<ProviderName, string> = {
   opensky: 'OPENSKY_DISABLED',
   flightaware: 'FLIGHTAWARE_DISABLED',
   aviationstack: 'AVIATIONSTACK_DISABLED',
 };
+const PROVIDER_LABELS: Record<ProviderName, string> = {
+  opensky: 'OpenSky',
+  flightaware: 'FlightAware',
+  aviationstack: 'Aviationstack',
+};
+const ENABLED_PROVIDER_ENV_KEYS = ['ENABLED_API_PROVIDERS', 'TRACKER_ENABLED_PROVIDERS'] as const;
+const DISABLED_PROVIDER_ENV_KEYS = ['DISABLED_API_PROVIDERS', 'TRACKER_DISABLED_PROVIDERS'] as const;
+const TRUTHY_ENV_VALUES = new Set(['1', 'true', 'yes', 'on']);
+
+function isTruthyEnvValue(value: string | undefined): boolean {
+  return TRUTHY_ENV_VALUES.has(value?.trim().toLowerCase() ?? '');
+}
+
+function parseProviderList(value: string | undefined): Set<ProviderName> | null {
+  const normalized = value?.trim().toLowerCase();
+  if (!normalized) {
+    return null;
+  }
+
+  if (normalized === '*' || normalized === 'all') {
+    return new Set(ALL_PROVIDERS);
+  }
+
+  if (normalized === 'none' || normalized === 'off' || normalized === 'false' || normalized === '0') {
+    return new Set<ProviderName>();
+  }
+
+  const allowed = new Set<ProviderName>();
+
+  for (const entry of normalized.split(/[\s,]+/)) {
+    if ((ALL_PROVIDERS as readonly string[]).includes(entry)) {
+      allowed.add(entry as ProviderName);
+    }
+  }
+
+  return allowed;
+}
+
+function getConfiguredEnvValue(keys: readonly string[]): { key: string; value: string } | null {
+  for (const key of keys) {
+    const value = process.env[key]?.trim();
+    if (value) {
+      return { key, value };
+    }
+  }
+
+  return null;
+}
+
+export function getProviderDisabledReason(name: ProviderName): string | null {
+  const providerDisableKey = PROVIDER_DISABLE_ENV[name];
+  if (isTruthyEnvValue(process.env[providerDisableKey])) {
+    return `${PROVIDER_LABELS[name]} provider is disabled by \`${providerDisableKey}\`.`;
+  }
+
+  const enabledProvidersConfig = getConfiguredEnvValue(ENABLED_PROVIDER_ENV_KEYS);
+  const explicitlyEnabledProviders = enabledProvidersConfig ? parseProviderList(enabledProvidersConfig.value) : null;
+  if (enabledProvidersConfig && explicitlyEnabledProviders && !explicitlyEnabledProviders.has(name)) {
+    return `${PROVIDER_LABELS[name]} provider is disabled by \`${enabledProvidersConfig.key}\`.`;
+  }
+
+  const disabledProvidersConfig = getConfiguredEnvValue(DISABLED_PROVIDER_ENV_KEYS);
+  const explicitlyDisabledProviders = disabledProvidersConfig ? parseProviderList(disabledProvidersConfig.value) : null;
+  if (disabledProvidersConfig && explicitlyDisabledProviders?.has(name)) {
+    return `${PROVIDER_LABELS[name]} provider is disabled by \`${disabledProvidersConfig.key}\`.`;
+  }
+
+  return null;
+}
 
 export function isProviderEnabled(name: ProviderName): boolean {
-  const disableKey = PROVIDER_DISABLE_ENV[name];
-  const disableValue = process.env[disableKey]?.trim().toLowerCase();
-  return disableValue !== '1' && disableValue !== 'true' && disableValue !== 'yes';
+  return getProviderDisabledReason(name) == null;
 }
 
 export function getEnabledProviders(): ProviderName[] {
-  return (['opensky', 'flightaware', 'aviationstack'] as ProviderName[]).filter(isProviderEnabled);
+  return [...ALL_PROVIDERS].filter(isProviderEnabled);
 }

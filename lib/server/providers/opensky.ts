@@ -1,7 +1,7 @@
 import { geoNaturalEarth1 } from 'd3-geo';
 import type { AirportDetails, FlightMapPoint, TrackedFlightRoute } from '~/components/tracker/flight/types';
 import { guessNearestAirportDetails } from '~/lib/server/airports';
-import { isProviderEnabled } from './index';
+import { getProviderDisabledReason, isProviderEnabled } from './index';
 
 const OPENSKY_TOKEN_URL = 'https://auth.opensky-network.org/auth/realms/opensky-network/protocol/openid-connect/token';
 const OPENSKY_API_BASE = 'https://opensky-network.org/api';
@@ -376,6 +376,11 @@ function normalizeTrackHistory(points: FlightMapPoint[]): FlightMapPoint[] {
 }
 
 async function readCredentialsFromEnv(): Promise<Credentials> {
+  const disabledReason = getProviderDisabledReason('opensky');
+  if (disabledReason) {
+    throw new Error(disabledReason);
+  }
+
   if (credentialsCache) {
     return credentialsCache;
   }
