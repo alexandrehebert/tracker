@@ -1,5 +1,5 @@
-const STATIC_CACHE = 'tracker-static-v1';
-const RUNTIME_CACHE = 'tracker-runtime-v1';
+const STATIC_CACHE = 'tracker-static-v2';
+const RUNTIME_CACHE = 'tracker-runtime-v2';
 const OFFLINE_URL = '/offline.html';
 
 const PRECACHE_URLS = [
@@ -70,6 +70,7 @@ self.addEventListener('fetch', (event) => {
   // being mixed with fresh HTML, which can trigger hydration mismatches.
   if (
     requestUrl.pathname.startsWith('/_next/')
+    || requestUrl.pathname.startsWith('/api/')
     || requestUrl.pathname === '/sw.js'
     || requestUrl.searchParams.has('_rsc')
     || requestUrl.searchParams.has('__nextDataReq')
