@@ -84,6 +84,38 @@ const trackedFlight: TrackedFlight = {
   },
 };
 
+const preDepartureFlight: TrackedFlight = {
+  ...trackedFlight,
+  icao24: 'predep1',
+  callsign: 'TEST1',
+  matchedBy: ['TEST1'],
+  current: {
+    time: 1_700_000_000,
+    latitude: 43.6293,
+    longitude: 1.363,
+    x: 80,
+    y: 160,
+    altitude: 0,
+    heading: 45,
+    onGround: true,
+  },
+  originPoint: {
+    time: 1_699_999_000,
+    latitude: 43.6293,
+    longitude: 1.363,
+    x: 80,
+    y: 160,
+    altitude: 0,
+    heading: null,
+    onGround: true,
+  },
+  track: [],
+  onGround: true,
+  velocity: 0,
+  geoAltitude: 0,
+  baroAltitude: 0,
+};
+
 const secondaryFlight: TrackedFlight = {
   ...trackedFlight,
   icao24: 'def456',
@@ -174,6 +206,8 @@ describe('FlightMap2D', () => {
     return render(
       <TrackerMapProvider
         value={{
+          globeRef: { current: null },
+          setGlobeRef: vi.fn(),
           svgRef: { current: null },
           mapTransform,
           zoomBy: vi.fn(),
@@ -197,10 +231,20 @@ describe('FlightMap2D', () => {
     expect(screen.getByRole('img', { name: /interactive world map/i })).toHaveAttribute('preserveAspectRatio', 'xMidYMid slice');
   });
 
-  it('keeps the full map framed on desktop', () => {
+  it('uses slice preserveAspectRatio on desktop so the map fills the screen without top or bottom padding', () => {
     renderMap(false);
 
-    expect(screen.getByRole('img', { name: /interactive world map/i })).toHaveAttribute('preserveAspectRatio', 'xMidYMid meet');
+    expect(screen.getByRole('img', { name: /interactive world map/i })).toHaveAttribute('preserveAspectRatio', 'xMidYMid slice');
+  });
+
+  it('keeps the dark map background across the full viewport while preserving the grid overlay', () => {
+    const { container } = renderMap(false);
+
+    const svg = screen.getByRole('img', { name: /interactive world map/i });
+    expect(svg).toHaveStyle({ background: '#071a31' });
+
+    expect(container.querySelector('pattern#tracker-map-grid')).not.toBeNull();
+    expect(container.querySelector('rect[fill="url(#tracker-map-grid)"]')).not.toBeNull();
   });
 
   it('keeps selected markers and labels at a fixed screen size while zoomed', () => {
@@ -261,6 +305,8 @@ describe('FlightMap2D', () => {
     rerender(
       <TrackerMapProvider
         value={{
+          globeRef: { current: null },
+          setGlobeRef: vi.fn(),
           svgRef: { current: null },
           mapTransform: zoomIdentity,
           zoomBy: vi.fn(),
@@ -507,19 +553,45 @@ describe('FlightMap2D', () => {
     expect(Number(labelRect?.getAttribute('width'))).toBeGreaterThanOrEqual(120);
   });
 
-  it('draws a fading dashed forecast path for the selected flight toward its arrival airport', () => {
+  it('draws a fading dashed forecast path with a matching shadow line toward its arrival airport', () => {
     const { container } = renderMap(false, {
       flights: [trackedFlight],
       selectedIcao24: trackedFlight.icao24,
       selectedFlightDetails,
     });
 
-    const forecastPath = Array.from(container.querySelectorAll('path')).find(
+    const dashedForecastPaths = Array.from(container.querySelectorAll('path')).filter(
       (path) => path.getAttribute('stroke-dasharray') === '8 8',
+    );
+    const forecastPath = dashedForecastPaths.find((path) =>
+      (path.getAttribute('stroke') ?? '').includes('selected-flight-forecast-gradient'),
+    );
+    const shadowPath = dashedForecastPaths.find((path) =>
+      (path.getAttribute('stroke') ?? '').includes('selected-flight-forecast-shadow-gradient'),
     );
 
     expect(forecastPath).toBeTruthy();
-    expect(forecastPath).toHaveAttribute('stroke', expect.stringContaining('selected-flight-forecast-gradient'));
+    expect(shadowPath).toBeTruthy();
+    expect(Number(shadowPath?.getAttribute('stroke-width'))).toBeGreaterThan(Number(forecastPath?.getAttribute('stroke-width')));
+  });
+
+  it('shows the dashed forecast route even before takeoff when the flight is still at departure', () => {
+    const { container } = renderMap(false, {
+      flights: [preDepartureFlight],
+      selectedIcao24: preDepartureFlight.icao24,
+      selectedFlightDetails: {
+        ...selectedFlightDetails,
+        icao24: preDepartureFlight.icao24,
+        callsign: preDepartureFlight.callsign,
+      },
+    });
+
+    const forecastPath = Array.from(container.querySelectorAll('path')).find(
+      (path) => path.getAttribute('stroke-dasharray') === '8 8'
+        && (path.getAttribute('stroke') ?? '').includes('selected-flight-forecast-gradient'),
+    );
+
+    expect(forecastPath).toBeTruthy();
   });
 
   it('falls back to a heading-based forecast path when airport details are not available', () => {

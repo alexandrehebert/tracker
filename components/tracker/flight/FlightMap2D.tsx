@@ -15,7 +15,14 @@ interface FlightMap2DProps {
   selectedIcao24: string | null;
   selectedFlightDetails?: SelectedFlightDetails | null;
   onSelectFlight?: (icao24: string) => void;
+  onInitialZoomEnd?: () => void;
 }
+
+const OCEAN_FILL = '#071a31';
+const GRID_STROKE = 'rgba(203,213,225,0.08)';
+const COUNTRY_FILL = 'rgba(30,41,59,0.84)';
+const COUNTRY_STROKE = 'rgba(203,213,225,0.32)';
+const FORECAST_SHADOW_COLOR = 'rgba(8,17,32,0.7)';
 
 function getPointDistanceKm(first: FlightMapPoint, second: FlightMapPoint): number {
   const earthRadiusKm = 6371;
@@ -303,7 +310,25 @@ function getForecastRoutePoints({
   projectPoint: ReturnType<typeof createFlightMapPointProjector>;
 }): FlightMapPoint[] {
   const currentPoint = flight.current ?? flight.track.at(-1) ?? null;
-  if (!currentPoint || currentPoint.onGround) {
+  if (!currentPoint) {
+    return [];
+  }
+
+  const departureAirport = selectedFlightDetails?.departureAirport;
+  const departurePoint = departureAirport?.latitude != null && departureAirport?.longitude != null
+    ? projectPoint({
+        latitude: departureAirport.latitude,
+        longitude: departureAirport.longitude,
+        time: flight.route.firstSeen,
+        altitude: 0,
+        onGround: true,
+      })
+    : flight.originPoint;
+  const allowGroundPreview = currentPoint.onGround
+    ? departurePoint != null && getPointDistanceKm(currentPoint, departurePoint) <= 90
+    : true;
+
+  if (!allowGroundPreview) {
     return [];
   }
 
@@ -631,10 +656,11 @@ export default function FlightMap2D({
   selectedIcao24,
   selectedFlightDetails,
   onSelectFlight,
+  onInitialZoomEnd,
 }: FlightMap2DProps) {
   const { isMobile } = useTrackerLayout();
   const { svgRef, mapTransform, focusBounds } = useTrackerMap();
-  const preserveAspectRatio = isMobile ? 'xMidYMid slice' : 'xMidYMid meet';
+  const preserveAspectRatio = 'xMidYMid slice';
   const lastAutoFocusedFlightRef = useRef<string | null>(null);
 
   const projectPoint = useMemo(
@@ -691,6 +717,15 @@ export default function FlightMap2D({
   }, [flights]);
 
   useEffect(() => {
+    if (!onInitialZoomEnd) {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(onInitialZoomEnd, 350);
+    return () => window.clearTimeout(timeoutId);
+  }, [onInitialZoomEnd]);
+
+  useEffect(() => {
     if (!selectedFlight || !focusBounds) {
       lastAutoFocusedFlightRef.current = null;
       return;
@@ -716,6 +751,12 @@ export default function FlightMap2D({
         viewBox={`0 0 ${map.viewBox.width} ${map.viewBox.height}`}
         preserveAspectRatio={preserveAspectRatio}
         className="h-full w-full touch-none select-none"
+        style={{
+          background: OCEAN_FILL,
+          backgroundImage: `linear-gradient(${GRID_STROKE} 1px, transparent 1px), linear-gradient(90deg, ${GRID_STROKE} 1px, transparent 1px)`,
+          backgroundSize: isMobile ? '22px 22px' : '26px 26px',
+          backgroundPosition: 'center center',
+        }}
         role="img"
         aria-label="Interactive world map showing live tracked flight paths"
       >
@@ -727,15 +768,33 @@ export default function FlightMap2D({
               <feMergeNode in="SourceGraphic" />
             </feMerge>
           </filter>
+          <pattern id="tracker-map-grid" width="26" height="26" patternUnits="userSpaceOnUse">
+            <path d="M 26 0 L 0 0 0 26" fill="none" stroke={GRID_STROKE} strokeWidth="1" />
+          </pattern>
         </defs>
+
+        <rect
+          x="0"
+          y="0"
+          width={map.viewBox.width}
+          height={map.viewBox.height}
+          fill={OCEAN_FILL}
+        />
+        <rect
+          x="0"
+          y="0"
+          width={map.viewBox.width}
+          height={map.viewBox.height}
+          fill="url(#tracker-map-grid)"
+        />
 
         <g transform={mapTransform.toString()}>
           {map.countries.map((country) => (
             <path
               key={country.code}
               d={country.path}
-              fill="#081120"
-              stroke="rgba(148, 163, 184, 0.32)"
+              fill={COUNTRY_FILL}
+              stroke={COUNTRY_STROKE}
               strokeWidth="0.8"
               vectorEffect="non-scaling-stroke"
             />
@@ -765,6 +824,7 @@ export default function FlightMap2D({
               : [];
             const forecastRoutePath = forecastRoutePoints.length > 1 ? buildSmoothRoutePath(forecastRoutePoints) : '';
             const forecastGradientId = `selected-flight-forecast-gradient-${flight.icao24}`;
+            const forecastShadowGradientId = `selected-flight-forecast-shadow-gradient-${flight.icao24}`;
             const forecastStartPoint = forecastRoutePoints[0] ?? null;
             const forecastEndPoint = forecastRoutePoints.at(-1) ?? null;
             const labelPoint = routeCurrentPoint ?? routeStartPoint;
@@ -808,6 +868,18 @@ export default function FlightMap2D({
                   <>
                     <defs>
                       <linearGradient
+                        id={forecastShadowGradientId}
+                        gradientUnits="userSpaceOnUse"
+                        x1={forecastStartPoint.x}
+                        y1={forecastStartPoint.y}
+                        x2={forecastEndPoint.x}
+                        y2={forecastEndPoint.y}
+                      >
+                        <stop offset="0%" stopColor={FORECAST_SHADOW_COLOR} stopOpacity="0.62" />
+                        <stop offset="55%" stopColor={FORECAST_SHADOW_COLOR} stopOpacity="0.24" />
+                        <stop offset="100%" stopColor={FORECAST_SHADOW_COLOR} stopOpacity="0" />
+                      </linearGradient>
+                      <linearGradient
                         id={forecastGradientId}
                         gradientUnits="userSpaceOnUse"
                         x1={forecastStartPoint.x}
@@ -820,6 +892,18 @@ export default function FlightMap2D({
                         <stop offset="100%" stopColor={strokeColor} stopOpacity="0" />
                       </linearGradient>
                     </defs>
+                    <path
+                      d={forecastRoutePath}
+                      fill="none"
+                      stroke={`url(#${forecastShadowGradientId})`}
+                      strokeWidth={4.2}
+                      strokeDasharray="8 8"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      vectorEffect="non-scaling-stroke"
+                      className="cursor-pointer"
+                      onClick={() => onSelectFlight?.(flight.icao24)}
+                    />
                     <path
                       d={forecastRoutePath}
                       fill="none"

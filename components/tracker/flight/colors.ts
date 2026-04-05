@@ -6,5 +6,5 @@ export function getFlightMapColor(index: number, isSelected: boolean) {
   }
 
   const hue = (index * 57) % 360;
-  return `hsl(${hue} 78% 64%)`;
+  return `hsl(${hue}, 78%, 64%)`;
 }

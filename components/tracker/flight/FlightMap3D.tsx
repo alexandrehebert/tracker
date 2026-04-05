@@ -1,0 +1,935 @@
+'use client';
+
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { useTrackerLayout } from '../contexts/TrackerLayoutContext';
+import { useTrackerMap } from '../contexts/TrackerMapContext';
+import { getFlightMapColor, SELECTED_FLIGHT_COLOR } from './colors';
+import type { FlightMapPoint, SelectedFlightDetails, TrackedFlight } from './types';
+
+const DEFAULT_ALT = 1.65;
+const MOBILE_ALT = 1.95;
+const FOCUS_ALT = 1.15;
+const INITIAL_LNG = -20;
+const INITIAL_LAT = 15;
+const OCEAN_COLOR = '#071a31';
+const COUNTRY_ALTITUDE = 0.0035;
+const ROUTE_SHADOW_COLOR = '#081120';
+const ROUTE_SHADOW_ALTITUDE = COUNTRY_ALTITUDE + 0.0008;
+const DEPARTURE_MARKER_COLOR = '#f59e0b';
+const DEPARTURE_MARKER_ALTITUDE = COUNTRY_ALTITUDE + 0.006;
+const PATH_ALTITUDE_OFFSET = 0.006;
+const FORECAST_PATH_ALTITUDE = COUNTRY_ALTITUDE + 0.0016;
+const PATH_STROKE = 0.9;
+const SELECTED_PATH_STROKE = 1.7;
+const PATH_SHADOW_STROKE = 1.08;
+const SELECTED_PATH_SHADOW_STROKE = 1.95;
+const FORECAST_PATH_STROKE = 0.62;
+const FORECAST_PATH_DASH_LENGTH = 0.07;
+const FORECAST_PATH_DASH_GAP = 0.08;
+const FORECAST_PATH_DASH_ANIMATE_TIME = 1600;
+const POINT_MARKER_ALTITUDE = COUNTRY_ALTITUDE + 0.0012;
+const SELECTED_POINT_MARKER_ALTITUDE = COUNTRY_ALTITUDE + 0.0016;
+const POINT_ALTITUDE_OFFSET = 0.018;
+const SELECTED_POINT_ALTITUDE_OFFSET = 0.03;
+const ALTITUDE_GUIDE_STROKE = 0.14;
+const GROUND_RING_ALTITUDE = COUNTRY_ALTITUDE + 0.001;
+
+interface FlightMap3DProps {
+  flights: TrackedFlight[];
+  selectedIcao24: string | null;
+  selectedFlightDetails?: SelectedFlightDetails | null;
+  onSelectFlight?: (icao24: string) => void;
+  onInitialZoomEnd?: () => void;
+}
+
+interface GlobePointDatum {
+  icao24: string;
+  callsign: string;
+  lat: number;
+  lng: number;
+  altitude: number;
+  flightAltitude: number;
+  color: string;
+  selected: boolean;
+}
+
+interface GlobePathDatum {
+  id: string;
+  color: string | string[];
+  selected: boolean;
+  variant: 'main' | 'shadow' | 'forecast' | 'guide';
+  points: Array<{ lat: number; lng: number; alt: number }>;
+}
+
+interface GlobeLabelDatum {
+  type: 'label';
+  lat: number;
+  lng: number;
+  altitude: number;
+  text: string;
+  color: string;
+}
+
+interface GlobeDepartureMarkerDatum {
+  type: 'departure';
+  icao24: string;
+  lat: number;
+  lng: number;
+  altitude: number;
+  color: string;
+  selected: boolean;
+}
+
+type GlobeHtmlDatum = GlobeLabelDatum | GlobeDepartureMarkerDatum;
+
+interface GlobeRingDatum {
+  lat: number;
+  lng: number;
+  color: string;
+  altitude: number;
+}
+
+function getAltitudeRatio(point: FlightMapPoint | null): number {
+  if (!point?.altitude || point.altitude <= 0) {
+    return 0.012;
+  }
+
+  return Math.min(0.16, Math.max(0.012, point.altitude / 160_000));
+}
+
+function getPointDistanceKm(first: FlightMapPoint | null, second: FlightMapPoint | null): number {
+  if (!first || !second) {
+    return Number.POSITIVE_INFINITY;
+  }
+
+  const earthRadiusKm = 6371;
+  const toRadians = (value: number) => value * (Math.PI / 180);
+  const latitudeDelta = toRadians(second.latitude - first.latitude);
+  const longitudeDelta = toRadians(second.longitude - first.longitude);
+  const startLatitude = toRadians(first.latitude);
+  const endLatitude = toRadians(second.latitude);
+
+  const haversine = Math.sin(latitudeDelta / 2) ** 2
+    + Math.cos(startLatitude) * Math.cos(endLatitude) * Math.sin(longitudeDelta / 2) ** 2;
+
+  return 2 * earthRadiusKm * Math.atan2(Math.sqrt(haversine), Math.sqrt(1 - haversine));
+}
+
+function isPointNear(first: FlightMapPoint | null, second: FlightMapPoint | null, maxDistanceKm = 80): boolean {
+  return getPointDistanceKm(first, second) <= maxDistanceKm;
+}
+
+function toDegrees(value: number): number {
+  return value * (180 / Math.PI);
+}
+
+function normalizeLongitude(value: number): number {
+  const normalized = ((value + 180) % 360 + 360) % 360 - 180;
+  return normalized === -180 ? 180 : normalized;
+}
+
+function getBearingBetweenPoints(start: FlightMapPoint, end: FlightMapPoint): number {
+  const startLatitude = (start.latitude * Math.PI) / 180;
+  const endLatitude = (end.latitude * Math.PI) / 180;
+  const longitudeDelta = ((end.longitude - start.longitude) * Math.PI) / 180;
+  const y = Math.sin(longitudeDelta) * Math.cos(endLatitude);
+  const x = Math.cos(startLatitude) * Math.sin(endLatitude)
+    - Math.sin(startLatitude) * Math.cos(endLatitude) * Math.cos(longitudeDelta);
+
+  return (toDegrees(Math.atan2(y, x)) + 360) % 360;
+}
+
+function getHeadingDeltaDegrees(first: number, second: number): number {
+  return Math.abs((((first - second) % 360) + 540) % 360 - 180);
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(Math.max(value, min), max);
+}
+
+function unwrapLongitude(value: number, reference: number): number {
+  let result = value;
+
+  while (result - reference > 180) {
+    result -= 360;
+  }
+
+  while (result - reference < -180) {
+    result += 360;
+  }
+
+  return result;
+}
+
+function interpolateNullableNumber(start: number | null, end: number | null, t: number): number | null {
+  if (start == null && end == null) {
+    return null;
+  }
+
+  if (start == null) {
+    return end;
+  }
+
+  if (end == null) {
+    return start;
+  }
+
+  return start + (end - start) * t;
+}
+
+function interpolateFlightPathPoint(start: FlightMapPoint, end: FlightMapPoint, t: number): FlightMapPoint {
+  const safeT = clamp(t, 0, 1);
+  const startLongitude = start.longitude;
+  const endLongitude = unwrapLongitude(end.longitude, startLongitude);
+
+  return {
+    time: interpolateNullableNumber(start.time, end.time, safeT),
+    latitude: start.latitude + (end.latitude - start.latitude) * safeT,
+    longitude: normalizeLongitude(startLongitude + (endLongitude - startLongitude) * safeT),
+    x: 0,
+    y: 0,
+    altitude: interpolateNullableNumber(start.altitude, end.altitude, safeT),
+    heading: interpolateNullableNumber(start.heading, end.heading, safeT),
+    onGround: safeT < 0.5 ? start.onGround : end.onGround,
+  };
+}
+
+function getPointToward(start: FlightMapPoint, end: FlightMapPoint, distanceKm: number): FlightMapPoint {
+  const segmentLength = getPointDistanceKm(start, end);
+
+  if (!Number.isFinite(segmentLength) || segmentLength < 0.01 || distanceKm <= 0) {
+    return { ...start };
+  }
+
+  const ratio = Math.min(1, distanceKm / segmentLength);
+  return interpolateFlightPathPoint(start, end, ratio);
+}
+
+function getQuadraticCurvePoint(start: FlightMapPoint, control: FlightMapPoint, end: FlightMapPoint, t: number): FlightMapPoint {
+  const safeT = clamp(t, 0, 1);
+  const inverseT = 1 - safeT;
+  const startLongitude = start.longitude;
+  const controlLongitude = unwrapLongitude(control.longitude, startLongitude);
+  const endLongitude = unwrapLongitude(end.longitude, controlLongitude);
+
+  return {
+    time: interpolateNullableNumber(start.time, end.time, safeT),
+    latitude: (inverseT ** 2 * start.latitude) + (2 * inverseT * safeT * control.latitude) + (safeT ** 2 * end.latitude),
+    longitude: normalizeLongitude(
+      (inverseT ** 2 * startLongitude) + (2 * inverseT * safeT * controlLongitude) + (safeT ** 2 * endLongitude),
+    ),
+    x: 0,
+    y: 0,
+    altitude: interpolateNullableNumber(start.altitude, end.altitude, safeT),
+    heading: interpolateNullableNumber(start.heading, end.heading, safeT),
+    onGround: safeT < 0.5 ? start.onGround : end.onGround,
+  };
+}
+
+function smoothForecastPathPoints(points: FlightMapPoint[]): FlightMapPoint[] {
+  if (points.length < 3) {
+    return points;
+  }
+
+  const smoothed: FlightMapPoint[] = [{ ...points[0]! }];
+
+  for (let index = 1; index < points.length - 1; index += 1) {
+    const previous = points[index - 1]!;
+    const current = points[index]!;
+    const next = points[index + 1]!;
+    const incomingLength = getPointDistanceKm(previous, current);
+    const outgoingLength = getPointDistanceKm(current, next);
+
+    if (!Number.isFinite(incomingLength) || !Number.isFinite(outgoingLength) || incomingLength < 1 || outgoingLength < 1) {
+      smoothed.push({ ...current });
+      continue;
+    }
+
+    const easingDistance = clamp(Math.min(incomingLength, outgoingLength) * 0.22, 24, 140);
+    const entry = getPointToward(current, previous, easingDistance);
+    const exit = getPointToward(current, next, easingDistance);
+
+    smoothed.push(entry);
+
+    for (let sample = 1; sample <= 5; sample += 1) {
+      smoothed.push(getQuadraticCurvePoint(entry, current, exit, sample / 6));
+    }
+
+    smoothed.push(exit);
+  }
+
+  smoothed.push({ ...points.at(-1)! });
+
+  return smoothed.filter((point, index) => {
+    const previous = smoothed[index - 1];
+    return !previous
+      || Math.abs(previous.latitude - point.latitude) > 0.00001
+      || Math.abs(previous.longitude - point.longitude) > 0.00001;
+  });
+}
+
+function createFlightPathPoint({
+  latitude,
+  longitude,
+  time = null,
+  altitude = 0,
+  heading = null,
+  onGround = false,
+}: {
+  latitude: number;
+  longitude: number;
+  time?: number | null;
+  altitude?: number | null;
+  heading?: number | null;
+  onGround?: boolean;
+}): FlightMapPoint | null {
+  if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+    return null;
+  }
+
+  return {
+    time,
+    latitude,
+    longitude,
+    x: 0,
+    y: 0,
+    altitude,
+    heading,
+    onGround,
+  };
+}
+
+function projectForecastHeadingPoint({
+  start,
+  heading,
+  distanceKm,
+}: {
+  start: FlightMapPoint;
+  heading: number;
+  distanceKm: number;
+}): FlightMapPoint | null {
+  const earthRadiusKm = 6371;
+  const angularDistance = Math.max(distanceKm, 1) / earthRadiusKm;
+  const headingRadians = (heading * Math.PI) / 180;
+  const startLatitude = (start.latitude * Math.PI) / 180;
+  const startLongitude = (start.longitude * Math.PI) / 180;
+  const projectedLatitude = Math.asin(
+    Math.sin(startLatitude) * Math.cos(angularDistance)
+      + Math.cos(startLatitude) * Math.sin(angularDistance) * Math.cos(headingRadians),
+  );
+  const projectedLongitude = startLongitude + Math.atan2(
+    Math.sin(headingRadians) * Math.sin(angularDistance) * Math.cos(startLatitude),
+    Math.cos(angularDistance) - Math.sin(startLatitude) * Math.sin(projectedLatitude),
+  );
+
+  return createFlightPathPoint({
+    latitude: toDegrees(projectedLatitude),
+    longitude: normalizeLongitude(toDegrees(projectedLongitude)),
+    time: start.time,
+    altitude: start.altitude,
+    heading,
+    onGround: false,
+  });
+}
+
+function getForecastPathPoints({
+  flight,
+  selectedFlightDetails,
+  allowGroundPreview,
+}: {
+  flight: TrackedFlight;
+  selectedFlightDetails: SelectedFlightDetails | null | undefined;
+  allowGroundPreview: boolean;
+}): FlightMapPoint[] {
+  const currentPoint = flight.current ?? flight.track.at(-1) ?? null;
+  if (!currentPoint || (currentPoint.onGround && !allowGroundPreview)) {
+    return [];
+  }
+
+  const arrivalAirport = selectedFlightDetails?.arrivalAirport;
+  const arrivalPoint = arrivalAirport?.latitude != null && arrivalAirport?.longitude != null
+    ? createFlightPathPoint({
+        latitude: arrivalAirport.latitude,
+        longitude: arrivalAirport.longitude,
+        time: flight.route.lastSeen,
+        altitude: 0,
+        onGround: true,
+      })
+    : null;
+
+  const bearingToArrival = arrivalPoint ? getBearingBetweenPoints(currentPoint, arrivalPoint) : null;
+  const liveHeading = flight.heading ?? currentPoint.heading ?? null;
+  const forecastHeading = liveHeading != null && bearingToArrival != null && getHeadingDeltaDegrees(liveHeading, bearingToArrival) > 105
+    ? bearingToArrival
+    : liveHeading ?? bearingToArrival;
+
+  if (forecastHeading == null) {
+    return arrivalPoint ? [currentPoint, arrivalPoint] : [];
+  }
+
+  const speedKmh = flight.velocity != null && Number.isFinite(flight.velocity) ? flight.velocity * 3.6 : 820;
+  const leadDistanceKm = clamp(speedKmh * 0.35, 180, 540);
+  const distanceToArrivalKm = arrivalPoint ? getPointDistanceKm(currentPoint, arrivalPoint) : null;
+  const guidedLeadDistanceKm = distanceToArrivalKm != null
+    ? clamp(Math.min(leadDistanceKm, distanceToArrivalKm * 0.55), 90, leadDistanceKm)
+    : leadDistanceKm;
+  const leadPoint = projectForecastHeadingPoint({
+    start: currentPoint,
+    heading: forecastHeading,
+    distanceKm: guidedLeadDistanceKm,
+  });
+
+  const forecastPoints = [currentPoint, leadPoint];
+
+  if (arrivalPoint && (distanceToArrivalKm ?? 0) > 18) {
+    forecastPoints.push(arrivalPoint);
+  } else if (!arrivalPoint) {
+    forecastPoints.push(projectForecastHeadingPoint({
+      start: currentPoint,
+      heading: forecastHeading,
+      distanceKm: leadDistanceKm * 1.7,
+    }));
+  }
+
+  const seen = new Set<string>();
+  return forecastPoints
+    .filter((point): point is FlightMapPoint => Boolean(point))
+    .filter((point) => {
+      const key = `${point.time ?? 'na'}:${point.latitude.toFixed(4)}:${point.longitude.toFixed(4)}`;
+      if (seen.has(key)) {
+        return false;
+      }
+
+      seen.add(key);
+      return true;
+    });
+}
+
+function dedupeFlightPoints(points: Array<FlightMapPoint | null>): FlightMapPoint[] {
+  const deduped = points.filter((point): point is FlightMapPoint => Boolean(point));
+
+  deduped.sort((first, second) => {
+    if (first.time == null && second.time == null) {
+      return 0;
+    }
+
+    if (first.time == null) {
+      return 1;
+    }
+
+    if (second.time == null) {
+      return -1;
+    }
+
+    return first.time - second.time;
+  });
+
+  const seen = new Set<string>();
+
+  return deduped.filter((point) => {
+    const key = `${point.time ?? 'na'}:${point.latitude.toFixed(4)}:${point.longitude.toFixed(4)}`;
+    if (seen.has(key)) {
+      return false;
+    }
+
+    seen.add(key);
+    return true;
+  });
+}
+
+function createAirportPoint(
+  airport: SelectedFlightDetails['departureAirport'] | SelectedFlightDetails['arrivalAirport'] | null | undefined,
+  time: number | null,
+): FlightMapPoint | null {
+  if (airport?.latitude == null || airport?.longitude == null) {
+    return null;
+  }
+
+  return createFlightPathPoint({
+    time,
+    latitude: airport.latitude,
+    longitude: airport.longitude,
+    altitude: 0,
+    heading: null,
+    onGround: true,
+  });
+}
+
+function buildFlightPathData(
+  flight: TrackedFlight,
+  details: SelectedFlightDetails | null | undefined,
+  selected: boolean,
+  color: string,
+): GlobePathDatum[] {
+  const matchingDetails = details?.icao24 === flight.icao24 ? details : null;
+  const departurePoint = createAirportPoint(matchingDetails?.departureAirport, flight.route.firstSeen ?? null);
+  const arrivalPoint = createAirportPoint(matchingDetails?.arrivalAirport, flight.route.lastSeen ?? flight.lastContact ?? null);
+
+  const historyPoints = selected
+    ? dedupeFlightPoints([departurePoint, flight.originPoint, ...flight.track, flight.current])
+    : dedupeFlightPoints([departurePoint ?? flight.originPoint, flight.current]);
+
+  const lastObservedPoint = historyPoints.at(-1) ?? departurePoint ?? flight.current ?? flight.originPoint ?? null;
+  const nearDeparture = isPointNear(lastObservedPoint, departurePoint, 90);
+  const nearArrival = isPointNear(lastObservedPoint, arrivalPoint, 90);
+  const showForecastPreview = Boolean(selected && lastObservedPoint && (!flight.onGround || nearDeparture));
+  const shouldIncludeArrivalInMainPath = Boolean(arrivalPoint && flight.onGround && nearArrival && !nearDeparture);
+  const mainPoints = shouldIncludeArrivalInMainPath
+    ? dedupeFlightPoints([...historyPoints, arrivalPoint])
+    : historyPoints;
+
+  const paths: GlobePathDatum[] = [];
+
+  if (mainPoints.length >= 2) {
+    paths.push(
+      {
+        id: `${flight.icao24}:shadow`,
+        color: ROUTE_SHADOW_COLOR,
+        selected,
+        variant: 'shadow',
+        points: mainPoints.map((point) => ({
+          lat: point.latitude,
+          lng: point.longitude,
+          alt: ROUTE_SHADOW_ALTITUDE,
+        })),
+      },
+      {
+        id: `${flight.icao24}:main`,
+        color,
+        selected,
+        variant: 'main',
+        points: mainPoints.map((point, index) => {
+          const isSelectedAirborneEndpoint = selected
+            && index === mainPoints.length - 1
+            && point === lastObservedPoint
+            && !point.onGround;
+
+          return {
+            lat: point.latitude,
+            lng: point.longitude,
+            alt: getAltitudeRatio(point) + (isSelectedAirborneEndpoint ? SELECTED_POINT_ALTITUDE_OFFSET : PATH_ALTITUDE_OFFSET),
+          };
+        }),
+      },
+    );
+  }
+
+  const forecastPoints = showForecastPreview
+    ? getForecastPathPoints({
+        flight,
+        selectedFlightDetails: matchingDetails,
+        allowGroundPreview: nearDeparture,
+      })
+    : [];
+
+  if (forecastPoints.length > 1) {
+    const smoothedForecastPoints = smoothForecastPathPoints(forecastPoints);
+
+    paths.push({
+      id: `${flight.icao24}:forecast`,
+      color,
+      selected,
+      variant: 'forecast',
+      points: smoothedForecastPoints.map((point) => ({
+        lat: point.latitude,
+        lng: point.longitude,
+        alt: FORECAST_PATH_ALTITUDE,
+      })),
+    });
+  }
+
+  if (selected && lastObservedPoint && !lastObservedPoint.onGround && (lastObservedPoint.altitude ?? 0) > 0) {
+    const guideTopAltitude = Math.max(
+      SELECTED_POINT_MARKER_ALTITUDE + 0.02,
+      getAltitudeRatio(lastObservedPoint) + SELECTED_POINT_ALTITUDE_OFFSET,
+    );
+
+    paths.push({
+      id: `${flight.icao24}:guide`,
+      color: ['rgba(255,255,255,0.78)', 'rgba(255,255,255,0.26)', 'rgba(255,255,255,0)'],
+      selected,
+      variant: 'guide',
+      points: [
+        { lat: lastObservedPoint.latitude, lng: lastObservedPoint.longitude, alt: SELECTED_POINT_MARKER_ALTITUDE },
+        { lat: lastObservedPoint.latitude, lng: lastObservedPoint.longitude, alt: guideTopAltitude },
+      ],
+    });
+  }
+
+  return paths;
+}
+
+export default function FlightMap3D({
+  flights,
+  selectedIcao24,
+  selectedFlightDetails,
+  onSelectFlight,
+  onInitialZoomEnd,
+}: FlightMap3DProps) {
+  const { isMobile } = useTrackerLayout();
+  const { setGlobeRef } = useTrackerMap();
+  const containerRef = useRef<HTMLDivElement>(null);
+  const globeRef = useRef<any>(null);
+  const [globeReady, setGlobeReady] = useState(false);
+
+  const pointData = useMemo(() => {
+    return flights
+      .map((flight, index) => {
+        const currentPoint = flight.current ?? flight.track.at(-1) ?? flight.originPoint;
+        if (!currentPoint) {
+          return null;
+        }
+
+        const selected = flight.icao24 === selectedIcao24;
+        const flightAltitude = getAltitudeRatio(currentPoint) + (selected ? SELECTED_POINT_ALTITUDE_OFFSET : POINT_ALTITUDE_OFFSET);
+
+        return {
+          icao24: flight.icao24,
+          callsign: flight.callsign,
+          lat: currentPoint.latitude,
+          lng: currentPoint.longitude,
+          altitude: selected ? SELECTED_POINT_MARKER_ALTITUDE : POINT_MARKER_ALTITUDE,
+          flightAltitude,
+          color: selected ? SELECTED_FLIGHT_COLOR : getFlightMapColor(index, false),
+          selected,
+        } satisfies GlobePointDatum;
+      })
+      .filter((point): point is GlobePointDatum => Boolean(point));
+  }, [flights, selectedIcao24]);
+
+  const activeRouteIcao24 = useMemo(() => {
+    return flights.find((flight) => flight.icao24 === selectedIcao24)?.icao24
+      ?? flights[0]?.icao24
+      ?? null;
+  }, [flights, selectedIcao24]);
+
+  const pathData = useMemo(() => {
+    if (!activeRouteIcao24) {
+      return [];
+    }
+
+    const activeFlight = flights.find((flight) => flight.icao24 === activeRouteIcao24);
+    if (!activeFlight) {
+      return [];
+    }
+
+    const colorIndex = Math.max(0, flights.findIndex((flight) => flight.icao24 === activeRouteIcao24));
+    return buildFlightPathData(activeFlight, selectedFlightDetails, true, SELECTED_FLIGHT_COLOR || getFlightMapColor(colorIndex, true));
+  }, [activeRouteIcao24, flights, selectedFlightDetails]);
+
+  const labelData = useMemo(() => {
+    const labels = pointData.filter((point) => point.selected || pointData.length === 1);
+
+    return labels.map((point) => ({
+      type: 'label' as const,
+      lat: point.lat,
+      lng: point.lng,
+      altitude: Math.max(0.035, point.flightAltitude + 0.012),
+      text: point.callsign,
+      color: point.color,
+    })) satisfies GlobeLabelDatum[];
+  }, [pointData]);
+
+  const departureMarkerData = useMemo(() => {
+    return flights.flatMap((flight) => {
+      const selected = flight.icao24 === selectedIcao24;
+      const matchingDetails = selectedFlightDetails?.icao24 === flight.icao24 ? selectedFlightDetails : null;
+      const departurePoint = createAirportPoint(matchingDetails?.departureAirport, flight.route.firstSeen ?? null) ?? flight.originPoint;
+      const currentPoint = flight.current ?? flight.track.at(-1) ?? flight.originPoint;
+
+      if (!departurePoint) {
+        return [];
+      }
+
+      const overlapsCurrentPoint = currentPoint
+        && Math.abs(currentPoint.latitude - departurePoint.latitude) < 0.05
+        && Math.abs(currentPoint.longitude - departurePoint.longitude) < 0.05;
+
+      if (overlapsCurrentPoint && !currentPoint.onGround) {
+        return [];
+      }
+
+      return [{
+        type: 'departure' as const,
+        icao24: flight.icao24,
+        lat: departurePoint.latitude,
+        lng: departurePoint.longitude,
+        altitude: DEPARTURE_MARKER_ALTITUDE + (selected ? 0.002 : 0),
+        color: DEPARTURE_MARKER_COLOR,
+        selected,
+      }] satisfies GlobeDepartureMarkerDatum[];
+    });
+  }, [flights, selectedFlightDetails, selectedIcao24]);
+
+  const htmlOverlayData = useMemo(() => {
+    return [...departureMarkerData, ...labelData] satisfies GlobeHtmlDatum[];
+  }, [departureMarkerData, labelData]);
+
+  useEffect(() => {
+    if (!containerRef.current) {
+      return;
+    }
+
+    let mounted = true;
+    setGlobeReady(false);
+    let removeResizeListener: (() => void) | null = null;
+    const container = containerRef.current;
+
+    const init = async () => {
+      await new Promise<void>((resolve) => {
+        requestAnimationFrame(() => resolve());
+      });
+
+      const geoData: GeoJSON.FeatureCollection = await fetch('/maps/world-countries-110m.geojson').then((response) => response.json());
+      if (!mounted) {
+        return;
+      }
+
+      const features = (geoData.features ?? []).filter((feature) => feature.geometry);
+      const { default: Globe } = await import('globe.gl');
+      if (!mounted || !containerRef.current) {
+        return;
+      }
+
+      const globe = (Globe as any)({
+        animateIn: false,
+        waitForGlobeReady: false,
+        rendererConfig: { antialias: true, alpha: true },
+      })(container);
+
+      globe
+        .globeImageUrl('data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR42mPgldYCAACLAFN4VUZsAAAAAElFTkSuQmCC')
+        .backgroundColor('rgba(0,0,0,0)')
+        .showGraticules(true)
+        .showAtmosphere(true)
+        .atmosphereColor('#3b82f6')
+        .atmosphereAltitude(0.14)
+        .polygonsData(features)
+        .polygonGeoJsonGeometry((feature: any) => feature.geometry)
+        .polygonAltitude(COUNTRY_ALTITUDE)
+        .polygonCapColor(() => 'rgba(30,41,59,0.84)')
+        .polygonSideColor(() => '#0a1628')
+        .polygonStrokeColor(() => 'rgba(203,213,225,0.32)');
+
+      const globeMaterial = globe.globeMaterial?.();
+      if (globeMaterial) {
+        globeMaterial.color?.set?.(OCEAN_COLOR);
+        globeMaterial.emissive?.set?.(OCEAN_COLOR);
+        globeMaterial.emissiveIntensity = 0.2;
+        globeMaterial.specular?.set?.('#0b1220');
+        globeMaterial.shininess = 2;
+        globeMaterial.map = null;
+        globeMaterial.needsUpdate = true;
+      }
+
+      globe.pointOfView({ lat: INITIAL_LAT, lng: INITIAL_LNG, altitude: isMobile ? MOBILE_ALT : DEFAULT_ALT }, 0);
+      globe.width(container.clientWidth).height(container.clientHeight);
+
+      const onResize = () => {
+        if (containerRef.current) {
+          globe.width(containerRef.current.clientWidth).height(containerRef.current.clientHeight);
+        }
+      };
+      window.addEventListener('resize', onResize);
+      removeResizeListener = () => window.removeEventListener('resize', onResize);
+
+      globeRef.current = globe;
+      setGlobeRef(globe);
+      setGlobeReady(true);
+
+      window.setTimeout(() => {
+        if (mounted) {
+          onInitialZoomEnd?.();
+        }
+      }, 450);
+    };
+
+    init().catch(console.error);
+
+    return () => {
+      mounted = false;
+      removeResizeListener?.();
+      setGlobeReady(false);
+
+      if (globeRef.current) {
+        const globeInstance = globeRef.current as any;
+        globeInstance.pauseAnimation?.();
+        globeInstance._destructor?.();
+      }
+
+      globeRef.current = null;
+      setGlobeRef(null);
+
+      if (containerRef.current) {
+        containerRef.current.replaceChildren();
+      }
+    };
+  }, [isMobile, onInitialZoomEnd, setGlobeRef]);
+
+  useEffect(() => {
+    if (!globeReady || !globeRef.current) {
+      return;
+    }
+
+    const globe = globeRef.current as any;
+
+    globe
+      .pathsData(pathData)
+      .pathPoints((path: GlobePathDatum) => path.points)
+      .pathPointLat((point: { lat: number }) => point.lat)
+      .pathPointLng((point: { lng: number }) => point.lng)
+      .pathPointAlt((point: { alt: number }) => point.alt)
+      .pathColor((path: GlobePathDatum) => path.color)
+      .pathStroke((path: GlobePathDatum) => {
+        if (path.variant === 'shadow') {
+          return path.selected ? SELECTED_PATH_SHADOW_STROKE : PATH_SHADOW_STROKE;
+        }
+
+        if (path.variant === 'forecast') {
+          return FORECAST_PATH_STROKE;
+        }
+
+        if (path.variant === 'guide') {
+          return ALTITUDE_GUIDE_STROKE;
+        }
+
+        return path.selected ? SELECTED_PATH_STROKE : PATH_STROKE;
+      })
+      .pathDashLength((path: GlobePathDatum) => {
+        if (path.variant === 'shadow' || path.variant === 'guide') {
+          return 1;
+        }
+
+        if (path.variant === 'forecast') {
+          return FORECAST_PATH_DASH_LENGTH;
+        }
+
+        return path.selected ? 0.96 : 0.84;
+      })
+      .pathDashGap((path: GlobePathDatum) => {
+        if (path.variant === 'shadow' || path.variant === 'guide') {
+          return 0;
+        }
+
+        if (path.variant === 'forecast') {
+          return FORECAST_PATH_DASH_GAP;
+        }
+
+        return path.selected ? 0.04 : 0.12;
+      })
+      .pathDashAnimateTime(() => 0)
+      .pathResolution(2)
+      .pathTransitionDuration(0);
+
+    globe
+      .pointsData(pointData)
+      .pointLat((point: GlobePointDatum) => point.lat)
+      .pointLng((point: GlobePointDatum) => point.lng)
+      .pointAltitude((point: GlobePointDatum) => point.altitude)
+      .pointRadius((point: GlobePointDatum) => (point.selected ? 0.26 : 0.18))
+      .pointColor((point: GlobePointDatum) => point.color)
+      .pointsMerge(false)
+      .onPointClick((point: GlobePointDatum | null) => {
+        if (point?.icao24) {
+          onSelectFlight?.(point.icao24);
+        }
+      });
+
+    const selectedPoint = pointData.find((point) => point.selected) ?? null;
+    const ringData: GlobeRingDatum[] = selectedPoint
+      ? [{
+          lat: selectedPoint.lat,
+          lng: selectedPoint.lng,
+          color: selectedPoint.color,
+          altitude: GROUND_RING_ALTITUDE,
+        }]
+      : [];
+
+    globe
+      .ringsData(ringData)
+      .ringLat((ring: GlobeRingDatum) => ring.lat)
+      .ringLng((ring: GlobeRingDatum) => ring.lng)
+      .ringAltitude((ring: GlobeRingDatum) => ring.altitude)
+      .ringColor((ring: GlobeRingDatum) => () => ring.color)
+      .ringMaxRadius(4.2)
+      .ringPropagationSpeed(1.6)
+      .ringRepeatPeriod(1200);
+
+    globe
+      .htmlElementsData(htmlOverlayData)
+      .htmlLat((item: GlobeHtmlDatum) => item.lat)
+      .htmlLng((item: GlobeHtmlDatum) => item.lng)
+      .htmlAltitude((item: GlobeHtmlDatum) => item.altitude)
+      .htmlElement((item: GlobeHtmlDatum) => {
+        const element = document.createElement('div');
+
+        if (item.type === 'departure') {
+          element.style.pointerEvents = 'auto';
+          element.style.cursor = 'pointer';
+          element.style.width = item.selected ? '12px' : '10px';
+          element.style.height = item.selected ? '12px' : '10px';
+          element.style.borderRadius = '999px';
+          element.style.background = item.color;
+          element.style.border = '2px solid rgba(255,255,255,0.85)';
+          element.style.boxShadow = '0 0 0 4px rgba(245,158,11,0.16), 0 6px 16px rgba(2,6,23,0.35)';
+          element.style.transform = 'translate(-50%, -50%)';
+          element.title = `Select ${item.icao24}`;
+          element.addEventListener('click', (event) => {
+            event.stopPropagation();
+            onSelectFlight?.(item.icao24);
+          });
+          return element;
+        }
+
+        element.textContent = item.text;
+        element.style.pointerEvents = 'none';
+        element.style.whiteSpace = 'nowrap';
+        element.style.padding = '4px 10px';
+        element.style.borderRadius = '999px';
+        element.style.fontSize = '12px';
+        element.style.fontWeight = '600';
+        element.style.color = 'rgba(226,232,240,0.96)';
+        element.style.background = 'rgba(2,6,23,0.72)';
+        element.style.border = `1px solid ${item.color}`;
+        element.style.boxShadow = '0 6px 16px rgba(2,6,23,0.35)';
+        element.style.transform = 'translate(-50%, -120%)';
+        return element;
+      });
+  }, [globeReady, htmlOverlayData, onSelectFlight, pathData, pointData]);
+
+  useEffect(() => {
+    if (!globeReady || !globeRef.current) {
+      return;
+    }
+
+    const focusPoint = pointData.find((point) => point.selected) ?? pointData[0] ?? null;
+    const globe = globeRef.current as any;
+
+    if (!focusPoint) {
+      globe.pointOfView({ lat: INITIAL_LAT, lng: INITIAL_LNG, altitude: isMobile ? MOBILE_ALT : DEFAULT_ALT }, 500);
+      return;
+    }
+
+    globe.pointOfView(
+      {
+        lat: focusPoint.lat,
+        lng: focusPoint.lng,
+        altitude: focusPoint.selected ? FOCUS_ALT : (isMobile ? MOBILE_ALT : DEFAULT_ALT),
+      },
+      800,
+    );
+  }, [globeReady, isMobile, pointData, selectedIcao24]);
+
+  return (
+    <div className="absolute inset-0 z-10">
+      <div ref={containerRef} className="absolute inset-0" />
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-0"
+        style={{
+          background: 'radial-gradient(circle at 50% 50%, rgba(2,6,23,0) 62%, rgba(2,6,23,0.42) 86%, rgba(2,6,23,0.62) 100%)',
+        }}
+      />
+    </div>
+  );
+}

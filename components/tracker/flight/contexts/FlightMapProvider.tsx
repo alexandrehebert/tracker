@@ -14,7 +14,12 @@ import { zoom, zoomIdentity, type ZoomBehavior, type ZoomTransform } from 'd3-zo
 import { DESKTOP_DEFAULT_MAP_TRANSFORM } from '../../constants';
 import { useTrackerLayout } from '../../contexts/TrackerLayoutContext';
 import { TrackerMapProvider } from '../../contexts/TrackerMapContext';
+import type { TrackerMapView } from '../FlightMapViewToggle';
 
+const DEFAULT_GLOBE_ALTITUDE = 1.65;
+const MOBILE_GLOBE_ALTITUDE = 1.95;
+const MIN_GLOBE_ALTITUDE = 0.4;
+const MAX_GLOBE_ALTITUDE = 6;
 const MIN_FLAT_MAP_ZOOM = 1;
 const MAX_FLAT_MAP_ZOOM = 24;
 const TRACKER_VIEWBOX = { width: 1000, height: 560 };
@@ -26,10 +31,20 @@ interface BoundsRect {
   height: number;
 }
 
-export function FlightMapProvider({ children }: { children: ReactNode }) {
+export function FlightMapProvider({
+  children,
+  mapView,
+}: {
+  children: ReactNode;
+  mapView: TrackerMapView;
+}) {
   const { isMobile, sidebarOpen } = useTrackerLayout();
+  const globeRef = useRef<any>(null);
   const svgRef = useRef<SVGSVGElement | null>(null);
   const zoomBehaviorRef = useRef<ZoomBehavior<SVGSVGElement, unknown> | null>(null);
+  const flatMapMountRetryFrameRef = useRef<number | null>(null);
+  const [flatMapMountTick, setFlatMapMountTick] = useState(0);
+  const [globeAltitude, setGlobeAltitude] = useState(isMobile ? MOBILE_GLOBE_ALTITUDE : DEFAULT_GLOBE_ALTITUDE);
   const getDefaultMapTransform = useCallback(() => {
     return isMobile ? zoomIdentity : DESKTOP_DEFAULT_MAP_TRANSFORM;
   }, [isMobile]);
@@ -38,7 +53,25 @@ export function FlightMapProvider({ children }: { children: ReactNode }) {
   const mapTransformRef = useRef<ZoomTransform>(DESKTOP_DEFAULT_MAP_TRANSFORM);
   const [mapTransform, setMapTransform] = useState<ZoomTransform>(DESKTOP_DEFAULT_MAP_TRANSFORM);
 
+  const setGlobeRef = useCallback((globe: any) => {
+    globeRef.current = globe;
+    const nextAltitude = globe?.pointOfView?.()?.altitude ?? (isMobile ? MOBILE_GLOBE_ALTITUDE : DEFAULT_GLOBE_ALTITUDE);
+    setGlobeAltitude(nextAltitude);
+  }, [isMobile]);
+
   useEffect(() => {
+    return () => {
+      if (flatMapMountRetryFrameRef.current !== null) {
+        cancelAnimationFrame(flatMapMountRetryFrameRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (mapView !== 'flat') {
+      return;
+    }
+
     defaultTransformRef.current = getDefaultMapTransform();
     if (!svgRef.current || !zoomBehaviorRef.current) {
       return;
@@ -48,12 +81,26 @@ export function FlightMapProvider({ children }: { children: ReactNode }) {
       .transition()
       .duration(220)
       .call(zoomBehaviorRef.current.transform, defaultTransformRef.current);
-  }, [getDefaultMapTransform]);
+  }, [getDefaultMapTransform, mapView]);
 
   useEffect(() => {
+    if (mapView !== 'flat') {
+      return;
+    }
+
     const svgElement = svgRef.current;
     if (!svgElement) {
-      return;
+      flatMapMountRetryFrameRef.current = window.requestAnimationFrame(() => {
+        flatMapMountRetryFrameRef.current = null;
+        setFlatMapMountTick((current) => current + 1);
+      });
+
+      return () => {
+        if (flatMapMountRetryFrameRef.current !== null) {
+          cancelAnimationFrame(flatMapMountRetryFrameRef.current);
+          flatMapMountRetryFrameRef.current = null;
+        }
+      };
     }
 
     const svgSelection = select(svgElement);
@@ -98,9 +145,34 @@ export function FlightMapProvider({ children }: { children: ReactNode }) {
       svgSelection.on('.zoom', null);
       zoomBehaviorRef.current = null;
     };
-  }, [getDefaultMapTransform]);
+  }, [flatMapMountTick, getDefaultMapTransform, mapView]);
+
+  useEffect(() => {
+    if (mapView !== 'globe') {
+      return;
+    }
+
+    const nextAltitude = globeRef.current?.pointOfView?.()?.altitude ?? (isMobile ? MOBILE_GLOBE_ALTITUDE : DEFAULT_GLOBE_ALTITUDE);
+    setGlobeAltitude(nextAltitude);
+  }, [isMobile, mapView]);
 
   const zoomBy = useCallback((factor: number) => {
+    if (mapView === 'globe') {
+      if (!globeRef.current) {
+        return;
+      }
+
+      const currentPointOfView = globeRef.current.pointOfView?.() ?? {};
+      const nextAltitude = Math.max(
+        MIN_GLOBE_ALTITUDE,
+        Math.min(MAX_GLOBE_ALTITUDE, (currentPointOfView.altitude ?? DEFAULT_GLOBE_ALTITUDE) / factor),
+      );
+
+      setGlobeAltitude(nextAltitude);
+      globeRef.current.pointOfView({ ...currentPointOfView, altitude: nextAltitude }, 300);
+      return;
+    }
+
     if (!svgRef.current || !zoomBehaviorRef.current) {
       return;
     }
@@ -109,7 +181,7 @@ export function FlightMapProvider({ children }: { children: ReactNode }) {
       .transition()
       .duration(180)
       .call(zoomBehaviorRef.current.scaleBy, factor);
-  }, []);
+  }, [mapView]);
 
   const focusBounds = useCallback((bounds: BoundsRect) => {
     if (!svgRef.current || !zoomBehaviorRef.current || bounds.width <= 0 || bounds.height <= 0) {
@@ -142,6 +214,18 @@ export function FlightMapProvider({ children }: { children: ReactNode }) {
   }, [isMobile, sidebarOpen]);
 
   const resetZoom = useCallback(() => {
+    if (mapView === 'globe') {
+      if (!globeRef.current) {
+        return;
+      }
+
+      const currentPointOfView = globeRef.current.pointOfView?.() ?? {};
+      const nextAltitude = isMobile ? MOBILE_GLOBE_ALTITUDE : DEFAULT_GLOBE_ALTITUDE;
+      setGlobeAltitude(nextAltitude);
+      globeRef.current.pointOfView({ ...currentPointOfView, altitude: nextAltitude }, 500);
+      return;
+    }
+
     if (!svgRef.current || !zoomBehaviorRef.current) {
       return;
     }
@@ -150,17 +234,23 @@ export function FlightMapProvider({ children }: { children: ReactNode }) {
       .transition()
       .duration(220)
       .call(zoomBehaviorRef.current.transform, defaultTransformRef.current);
-  }, []);
+  }, [isMobile, mapView]);
 
   const value = useMemo(() => ({
+    globeRef,
+    setGlobeRef,
     svgRef,
     mapTransform,
     zoomBy,
     resetZoom,
     focusBounds,
-    isAtMinZoom: mapTransform.k <= MIN_FLAT_MAP_ZOOM + 0.001,
-    isAtMaxZoom: mapTransform.k >= MAX_FLAT_MAP_ZOOM - 0.001,
-  }), [focusBounds, mapTransform, resetZoom, zoomBy]);
+    isAtMinZoom: mapView === 'globe'
+      ? globeAltitude >= MAX_GLOBE_ALTITUDE - 0.001
+      : mapTransform.k <= MIN_FLAT_MAP_ZOOM + 0.001,
+    isAtMaxZoom: mapView === 'globe'
+      ? globeAltitude <= MIN_GLOBE_ALTITUDE + 0.001
+      : mapTransform.k >= MAX_FLAT_MAP_ZOOM - 0.001,
+  }), [focusBounds, globeAltitude, mapTransform, mapView, resetZoom, setGlobeRef, zoomBy]);
 
   return <TrackerMapProvider value={value}>{children}</TrackerMapProvider>;
 }

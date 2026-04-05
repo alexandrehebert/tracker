@@ -4,6 +4,8 @@ import { createContext, useContext, type ReactNode, type RefObject } from 'react
 import type { ZoomTransform } from 'd3-zoom';
 
 export interface TrackerMapContextValue {
+  globeRef: RefObject<any>;
+  setGlobeRef: (globe: any) => void;
   svgRef: RefObject<SVGSVGElement | null>;
   mapTransform: ZoomTransform;
   zoomBy: (factor: number) => void;

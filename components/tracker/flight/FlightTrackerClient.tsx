@@ -9,6 +9,8 @@ import {
   CircleAlert,
   Clock3,
   Gauge,
+  Globe,
+  Map as MapIcon,
   MapPin,
   Plane,
   Radar,
@@ -22,7 +24,8 @@ import TrackerShell from '../TrackerShell';
 import TrackerZoomControls from '../TrackerZoomControls';
 import { TrackerLayoutProvider, useTrackerLayout } from '../contexts/TrackerLayoutContext';
 import { FlightMapProvider } from './contexts/FlightMapProvider';
-import FlightMap2D from './FlightMap2D';
+import FlightMap from './FlightMap';
+import FlightMapViewToggle, { type TrackerMapView } from './FlightMapViewToggle';
 import { getFlightMapColor } from './colors';
 import type {
   AirportDetails,
@@ -39,6 +42,7 @@ import type {
 } from './types';
 
 const AUTO_REFRESH_MS = 60_000;
+const MIN_MAP_LOADING_MS = 2_000;
 const STORAGE_KEY = 'tracker:last-query';
 const URL_QUERY_KEY = 'q';
 const TRACKER_SOURCES: FlightSourceName[] = ['opensky', 'aviationstack', 'flightaware'];
@@ -56,6 +60,14 @@ function formatSourceLabel(source: FlightSourceName): string {
 
 interface FlightTrackerClientProps {
   map: WorldMapPayload;
+}
+
+interface FlightTrackerDashboardProps extends FlightTrackerClientProps {
+  mapView: TrackerMapView;
+  onMapViewChange: (nextView: TrackerMapView) => void;
+  mapReady: boolean;
+  loadingTargetView: TrackerMapView;
+  onMapReady: () => void;
 }
 
 function formatTimestamp(timestampMs: number | null): string {
@@ -1198,11 +1210,15 @@ function TrackerTopBar({
   isRefreshing,
   onRefresh,
   lastUpdated,
+  mapView,
+  onMapViewChange,
 }: {
   trackedCount: number;
   isRefreshing: boolean;
   onRefresh: () => void;
   lastUpdated: number | null;
+  mapView: TrackerMapView;
+  onMapViewChange: (nextView: TrackerMapView) => void;
 }) {
   const { topBarRef } = useTrackerLayout();
 
@@ -1221,6 +1237,7 @@ function TrackerTopBar({
       </div>
 
       <div className="pointer-events-auto flex items-center gap-2">
+        <FlightMapViewToggle mapView={mapView} onChange={onMapViewChange} />
         <TrackerZoomControls />
         <button
           type="button"
@@ -1235,7 +1252,14 @@ function TrackerTopBar({
   );
 }
 
-function FlightTrackerDashboard({ map }: FlightTrackerClientProps) {
+function FlightTrackerDashboard({
+  map,
+  mapView,
+  onMapViewChange,
+  mapReady,
+  loadingTargetView,
+  onMapReady,
+}: FlightTrackerDashboardProps) {
   const [query, setQuery] = useState('');
   const [submittedQuery, setSubmittedQuery] = useState('');
   const [data, setData] = useState<TrackerApiResponse | null>(null);
@@ -1780,31 +1804,126 @@ function FlightTrackerDashboard({ map }: FlightTrackerClientProps) {
               });
             }}
             lastUpdated={data?.fetchedAt ?? null}
+            mapView={mapView}
+            onMapViewChange={onMapViewChange}
           />
         }
         showBackgroundGrid
         mapContent={
           <div className="relative h-[100dvh] w-full">
-            <FlightMap2D
+            <FlightMap
               map={map}
               flights={data?.flights ?? []}
+              mapView={mapView}
               selectedIcao24={selectedFlight?.icao24 ?? null}
               selectedFlightDetails={selectedFlightDetails}
               onSelectFlight={setSelectedIcao24}
+              onInitialZoomEnd={onMapReady}
             />
           </div>
         }
         sidebarContent={sidebarContent}
+        isLoading={!mapReady}
+        loadingContent={
+          loadingTargetView === 'globe'
+            ? <Globe className="animate-spin text-sky-400" size={64} strokeWidth={2.5} />
+            : <MapIcon className="animate-spin text-sky-400" size={64} strokeWidth={2.5} />
+        }
       />
     </>
   );
 }
 
 export default function FlightTrackerClient({ map }: FlightTrackerClientProps) {
+  const [mapView, setMapView] = useState<TrackerMapView>('flat');
+  const [mapReady, setMapReady] = useState(false);
+  const [loadingTargetView, setLoadingTargetView] = useState<TrackerMapView>('flat');
+  const mapReadyRef = useRef(false);
+  const isMapTransitioningRef = useRef(true);
+  const mapTransitionStartedAtRef = useRef<number | null>(null);
+  const mapReadyTimeoutRef = useRef<number | null>(null);
+
+  const handleMapLoadingStart = useCallback((targetView?: TrackerMapView) => {
+    if (mapReadyTimeoutRef.current !== null) {
+      window.clearTimeout(mapReadyTimeoutRef.current);
+      mapReadyTimeoutRef.current = null;
+    }
+
+    if (targetView) {
+      setLoadingTargetView(targetView);
+    }
+
+    isMapTransitioningRef.current = true;
+    mapTransitionStartedAtRef.current = Date.now();
+    mapReadyRef.current = false;
+    setMapReady(false);
+  }, []);
+
+  const handleMapReady = useCallback(() => {
+    if (mapReadyTimeoutRef.current !== null) {
+      window.clearTimeout(mapReadyTimeoutRef.current);
+      mapReadyTimeoutRef.current = null;
+    }
+
+    const startedAt = mapTransitionStartedAtRef.current;
+    if (startedAt !== null) {
+      const elapsed = Date.now() - startedAt;
+      const remaining = MIN_MAP_LOADING_MS - elapsed;
+
+      if (remaining > 0) {
+        mapReadyTimeoutRef.current = window.setTimeout(() => {
+          mapReadyTimeoutRef.current = null;
+          mapTransitionStartedAtRef.current = null;
+          isMapTransitioningRef.current = false;
+          mapReadyRef.current = true;
+          setMapReady(true);
+        }, remaining);
+        return;
+      }
+    }
+
+    if (!isMapTransitioningRef.current && mapReadyRef.current) {
+      return;
+    }
+
+    mapTransitionStartedAtRef.current = null;
+    isMapTransitioningRef.current = false;
+    mapReadyRef.current = true;
+    setMapReady(true);
+  }, []);
+
+  const handleMapViewChange = useCallback((nextView: TrackerMapView) => {
+    if (nextView === mapView) {
+      return;
+    }
+
+    handleMapLoadingStart(nextView);
+    setMapView(nextView);
+  }, [handleMapLoadingStart, mapView]);
+
+  useEffect(() => {
+    handleMapLoadingStart(mapView);
+  }, [handleMapLoadingStart]);
+
+  useEffect(() => {
+    return () => {
+      if (mapReadyTimeoutRef.current !== null) {
+        window.clearTimeout(mapReadyTimeoutRef.current);
+      }
+    };
+  }, []);
+
   return (
     <TrackerLayoutProvider>
-      <FlightMapProvider>
-        <FlightTrackerDashboard map={map} />
+      <FlightMapProvider mapView={mapView}>
+        <FlightTrackerDashboard
+          map={map}
+          mapView={mapView}
+          onMapViewChange={handleMapViewChange}
+          mapReady={mapReady}
+          loadingTargetView={loadingTargetView}
+          onMapReady={handleMapReady}
+        />
       </FlightMapProvider>
     </TrackerLayoutProvider>
   );

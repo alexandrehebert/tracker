@@ -263,6 +263,63 @@ describe('searchFlights', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it('returns realistic preset demo flights for TEST1, TEST2, and TEST3 searches', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    const searchFlights = await loadSearchFlights();
+    const result = await searchFlights('TEST1,TEST2,TEST3');
+
+    expect(result.requestedIdentifiers).toEqual(['TEST1', 'TEST2', 'TEST3']);
+    expect(result.matchedIdentifiers).toEqual(['TEST1', 'TEST2', 'TEST3']);
+    expect(result.notFoundIdentifiers).toEqual([]);
+    expect(result.flights).toHaveLength(3);
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    expect(result.flights).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        callsign: 'AFR006',
+        matchedBy: expect.arrayContaining(['TEST1']),
+        onGround: true,
+        geoAltitude: 0,
+        route: expect.objectContaining({
+          departureAirport: 'CDG',
+          arrivalAirport: 'JFK',
+          lastSeen: null,
+        }),
+      }),
+      expect.objectContaining({
+        callsign: 'BAW117',
+        matchedBy: expect.arrayContaining(['TEST2']),
+        onGround: false,
+        route: expect.objectContaining({
+          departureAirport: 'LHR',
+          arrivalAirport: 'JFK',
+        }),
+      }),
+      expect.objectContaining({
+        callsign: 'DAL220',
+        matchedBy: expect.arrayContaining(['TEST3']),
+        onGround: true,
+        originPoint: expect.objectContaining({
+          longitude: expect.any(Number),
+          latitude: expect.any(Number),
+          onGround: true,
+        }),
+        route: expect.objectContaining({
+          departureAirport: 'MEX',
+          arrivalAirport: 'ATL',
+        }),
+      }),
+    ]));
+
+    const groundedFlight = result.flights.find((flight) => flight.callsign === 'DAL220');
+    expect(groundedFlight?.originPoint?.longitude).toBeGreaterThan(-100);
+    expect(groundedFlight?.originPoint?.longitude).toBeLessThan(-98);
+    expect(groundedFlight?.originPoint?.latitude).toBeGreaterThan(19);
+    expect(groundedFlight?.originPoint?.latitude).toBeLessThan(20);
+  });
+
   it('lets the provider allowlist disable OpenSky before any network call', async () => {
     process.env.OPENSKY_CLIENT_ID = 'client-from-env';
     process.env.OPENSKY_CLIENT_SECRET = 'secret-from-env';

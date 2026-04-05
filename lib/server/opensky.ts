@@ -83,6 +83,370 @@ type SearchFlightsOptions = {
   forceRefresh?: boolean;
 };
 
+type DemoFlightIdentifier = 'TEST1' | 'TEST2' | 'TEST3';
+
+function isDemoFlightIdentifier(value: string): value is DemoFlightIdentifier {
+  return value === 'TEST1' || value === 'TEST2' || value === 'TEST3';
+}
+
+function createDemoFlightPoint(params: {
+  time: number;
+  latitude: number;
+  longitude: number;
+  altitude: number;
+  heading: number;
+  onGround: boolean;
+}): FlightMapPoint {
+  return projectPoint(params) ?? {
+    time: params.time,
+    latitude: params.latitude,
+    longitude: params.longitude,
+    x: 0,
+    y: 0,
+    altitude: params.altitude,
+    heading: params.heading,
+    onGround: params.onGround,
+  };
+}
+
+function createDemoTrackedFlight(identifier: DemoFlightIdentifier, nowSeconds = Math.floor(Date.now() / 1000)): TrackedFlight {
+  switch (identifier) {
+    case 'TEST1': {
+      const track = [
+        createDemoFlightPoint({
+          time: nowSeconds - 240,
+          latitude: 49.0088,
+          longitude: 2.5486,
+          altitude: 0,
+          heading: 90,
+          onGround: true,
+        }),
+        createDemoFlightPoint({
+          time: nowSeconds - 150,
+          latitude: 49.0097,
+          longitude: 2.5535,
+          altitude: 0,
+          heading: 92,
+          onGround: true,
+        }),
+        createDemoFlightPoint({
+          time: nowSeconds - 45,
+          latitude: 49.0108,
+          longitude: 2.5584,
+          altitude: 0,
+          heading: 95,
+          onGround: true,
+        }),
+      ];
+      const current = track.at(-1) ?? null;
+
+      return {
+        icao24: 'demo-test1',
+        callsign: 'AFR006',
+        originCountry: 'France',
+        matchedBy: [identifier],
+        lastContact: current?.time ?? nowSeconds - 45,
+        current,
+        originPoint: track[0] ?? current,
+        track,
+        rawTrack: track,
+        onGround: true,
+        velocity: 12,
+        heading: current?.heading ?? 95,
+        verticalRate: 0,
+        geoAltitude: 0,
+        baroAltitude: 0,
+        squawk: '1001',
+        category: 0,
+        route: {
+          departureAirport: 'CDG',
+          arrivalAirport: 'JFK',
+          firstSeen: null,
+          lastSeen: null,
+        },
+        flightNumber: 'AF 6',
+        airline: {
+          name: 'Air France',
+          iata: 'AF',
+          icao: 'AFR',
+        },
+        aircraft: {
+          registration: 'F-GSQX',
+          iata: 'B77W',
+          icao: 'B77W',
+          icao24: 'demo-test1',
+          model: 'Boeing 777-300ER',
+        },
+        dataSource: 'opensky',
+        sourceDetails: [
+          createSourceDetail(
+            'opensky',
+            'used',
+            true,
+            'Built-in demo result for TEST1: Air France AFR006 is still on the ground at Paris Charles de Gaulle awaiting departure to New York JFK.',
+            {
+              demoIdentifier: identifier,
+              scenario: 'pre-departure',
+              route: {
+                departureAirport: 'CDG',
+                arrivalAirport: 'JFK',
+              },
+            },
+          ),
+        ],
+      };
+    }
+    case 'TEST2': {
+      const track = [
+        createDemoFlightPoint({
+          time: nowSeconds - 4_200,
+          latitude: 52.62,
+          longitude: -8.41,
+          altitude: 7_200,
+          heading: 287,
+          onGround: false,
+        }),
+        createDemoFlightPoint({
+          time: nowSeconds - 2_700,
+          latitude: 53.46,
+          longitude: -16.8,
+          altitude: 10_100,
+          heading: 289,
+          onGround: false,
+        }),
+        createDemoFlightPoint({
+          time: nowSeconds - 1_200,
+          latitude: 53.88,
+          longitude: -24.7,
+          altitude: 10_700,
+          heading: 290,
+          onGround: false,
+        }),
+        createDemoFlightPoint({
+          time: nowSeconds - 75,
+          latitude: 53.94,
+          longitude: -31.25,
+          altitude: 10_650,
+          heading: 291,
+          onGround: false,
+        }),
+      ];
+      const current = track.at(-1) ?? null;
+
+      return {
+        icao24: 'demo-test2',
+        callsign: 'BAW117',
+        originCountry: 'United Kingdom',
+        matchedBy: [identifier],
+        lastContact: current?.time ?? nowSeconds - 75,
+        current,
+        originPoint: track[0] ?? current,
+        track,
+        rawTrack: track,
+        onGround: false,
+        velocity: 247,
+        heading: current?.heading ?? 291,
+        verticalRate: 0,
+        geoAltitude: current?.altitude ?? 10_650,
+        baroAltitude: (current?.altitude ?? 10_650) + 40,
+        squawk: '2201',
+        category: 1,
+        route: {
+          departureAirport: 'LHR',
+          arrivalAirport: 'JFK',
+          firstSeen: nowSeconds - 5_400,
+          lastSeen: null,
+        },
+        flightNumber: 'BA 117',
+        airline: {
+          name: 'British Airways',
+          iata: 'BA',
+          icao: 'BAW',
+        },
+        aircraft: {
+          registration: 'G-STBC',
+          iata: 'B77W',
+          icao: 'B77W',
+          icao24: 'demo-test2',
+          model: 'Boeing 777-300ER',
+        },
+        dataSource: 'opensky',
+        sourceDetails: [
+          createSourceDetail(
+            'opensky',
+            'used',
+            true,
+            'Built-in demo result for TEST2: British Airways BAW117 is currently airborne on its transatlantic leg from London Heathrow to New York JFK.',
+            {
+              demoIdentifier: identifier,
+              scenario: 'airborne',
+              route: {
+                departureAirport: 'LHR',
+                arrivalAirport: 'JFK',
+              },
+            },
+          ),
+        ],
+      };
+    }
+    case 'TEST3': {
+      const track = [
+        createDemoFlightPoint({
+          time: nowSeconds - 13_800,
+          latitude: 19.4361,
+          longitude: -99.0719,
+          altitude: 0,
+          heading: 40,
+          onGround: true,
+        }),
+        createDemoFlightPoint({
+          time: nowSeconds - 13_500,
+          latitude: 19.593,
+          longitude: -98.804,
+          altitude: 2_400,
+          heading: 42,
+          onGround: false,
+        }),
+        createDemoFlightPoint({
+          time: nowSeconds - 10_800,
+          latitude: 22.156,
+          longitude: -100.987,
+          altitude: 10_200,
+          heading: 53,
+          onGround: false,
+        }),
+        createDemoFlightPoint({
+          time: nowSeconds - 7_200,
+          latitude: 27.542,
+          longitude: -99.486,
+          altitude: 10_950,
+          heading: 61,
+          onGround: false,
+        }),
+        createDemoFlightPoint({
+          time: nowSeconds - 3_600,
+          latitude: 31.204,
+          longitude: -95.614,
+          altitude: 10_700,
+          heading: 79,
+          onGround: false,
+        }),
+        createDemoFlightPoint({
+          time: nowSeconds - 1_200,
+          latitude: 33.991,
+          longitude: -85.114,
+          altitude: 3_200,
+          heading: 119,
+          onGround: false,
+        }),
+        createDemoFlightPoint({
+          time: nowSeconds - 600,
+          latitude: 33.774,
+          longitude: -84.742,
+          altitude: 1_050,
+          heading: 121,
+          onGround: false,
+        }),
+        createDemoFlightPoint({
+          time: nowSeconds - 240,
+          latitude: 33.648,
+          longitude: -84.44,
+          altitude: 0,
+          heading: 95,
+          onGround: true,
+        }),
+        createDemoFlightPoint({
+          time: nowSeconds - 90,
+          latitude: 33.6407,
+          longitude: -84.4277,
+          altitude: 0,
+          heading: 89,
+          onGround: true,
+        }),
+      ];
+      const current = track.at(-1) ?? null;
+
+      return {
+        icao24: 'demo-test3',
+        callsign: 'DAL220',
+        originCountry: 'United States',
+        matchedBy: [identifier],
+        lastContact: current?.time ?? nowSeconds - 90,
+        current,
+        originPoint: track[0] ?? current,
+        track,
+        rawTrack: track,
+        onGround: true,
+        velocity: 6,
+        heading: current?.heading ?? 89,
+        verticalRate: 0,
+        geoAltitude: 0,
+        baroAltitude: 0,
+        squawk: '1453',
+        category: 1,
+        route: {
+          departureAirport: 'MEX',
+          arrivalAirport: 'ATL',
+          firstSeen: nowSeconds - 13_800,
+          lastSeen: nowSeconds - 120,
+        },
+        flightNumber: 'DL 220',
+        airline: {
+          name: 'Delta Air Lines',
+          iata: 'DL',
+          icao: 'DAL',
+        },
+        aircraft: {
+          registration: 'N840DN',
+          iata: 'B739',
+          icao: 'B739',
+          icao24: 'demo-test3',
+          model: 'Boeing 737-900ER',
+        },
+        dataSource: 'opensky',
+        sourceDetails: [
+          createSourceDetail(
+            'opensky',
+            'used',
+            true,
+            'Built-in demo result for TEST3: Delta DAL220 has completed its flight from Mexico City to Atlanta and is now grounded after landing.',
+            {
+              demoIdentifier: identifier,
+              scenario: 'landed',
+              route: {
+                departureAirport: 'MEX',
+                arrivalAirport: 'ATL',
+              },
+            },
+          ),
+        ],
+      };
+    }
+  }
+}
+
+function createPresetDemoSearchPayload(query: string, requestedIdentifiers: string[]): TrackerApiResponse | null {
+  const matchedEntries = requestedIdentifiers.flatMap((identifier) => {
+    const normalizedIdentifier = normalizeIdentifier(identifier);
+    return isDemoFlightIdentifier(normalizedIdentifier)
+      ? [{ requestedIdentifier: identifier, demoIdentifier: normalizedIdentifier }]
+      : [];
+  });
+
+  if (matchedEntries.length === 0) {
+    return null;
+  }
+
+  return {
+    query,
+    requestedIdentifiers,
+    matchedIdentifiers: matchedEntries.map((entry) => entry.requestedIdentifier),
+    notFoundIdentifiers: requestedIdentifiers.filter((identifier) => !isDemoFlightIdentifier(normalizeIdentifier(identifier))),
+    fetchedAt: Date.now(),
+    flights: matchedEntries.map((entry) => createDemoTrackedFlight(entry.demoIdentifier)),
+  };
+}
+
 let recentFlightsCache: { flights: OpenSkyRecentFlight[]; expiresAt: number } | null = null;
 const inFlightSearches = new Map<string, Promise<TrackerApiResponse>>();
 
@@ -930,6 +1294,11 @@ export async function searchFlights(query: string, options: SearchFlightsOptions
       fetchedAt: Date.now(),
       flights: [],
     };
+  }
+
+  const demoPayload = createPresetDemoSearchPayload(trimmedQuery, requestedIdentifiers);
+  if (demoPayload && demoPayload.notFoundIdentifiers.length === 0) {
+    return demoPayload;
   }
 
   const cacheKey = buildSearchCacheKey(requestedIdentifiers);
