@@ -1,9 +1,13 @@
+import { MongoClient, type Collection } from 'mongodb';
 import { Agent } from 'undici';
 import { geoNaturalEarth1 } from 'd3-geo';
 import type { AirportDetails, FlightMapPoint, TrackedFlightRoute } from '~/components/tracker/flight/types';
 import { guessNearestAirportDetails } from '~/lib/server/airports';
 import { getProviderDisabledReason, isProviderEnabled } from './index';
 
+const DEFAULT_DB_NAME = 'tracker';
+const OPENSKY_TOKEN_COLLECTION_NAME = 'opensky_token_cache';
+const OPENSKY_TOKEN_DOCUMENT_ID = 'shared';
 const OPENSKY_TOKEN_URL = 'https://auth.opensky-network.org/auth/realms/opensky-network/protocol/openid-connect/token';
 const OPENSKY_API_BASE = 'https://opensky-network.org/api';
 const TRACKER_MAP_VIEWBOX = { width: 1000, height: 560 };
@@ -41,8 +45,43 @@ export type OpenSkyTrackHistory = {
 const projection = geoNaturalEarth1();
 projection.fitSize([TRACKER_MAP_VIEWBOX.width, TRACKER_MAP_VIEWBOX.height], { type: 'Sphere' } as never);
 
+type OpenSkyStoredTokenSource = 'oauth' | 'manual';
+
+type CachedOpenSkyToken = {
+  accessToken: string;
+  expiresAt: number;
+  fetchedAt: number;
+  storageSource: OpenSkyStoredTokenSource;
+};
+
+export type OpenSkyTokenStatus = {
+  providerConfigured: boolean;
+  mongoConfigured: boolean;
+  hasToken: boolean;
+  cacheSource: 'memory' | 'mongo' | 'none';
+  storageSource: OpenSkyStoredTokenSource | null;
+  tokenPreview: string | null;
+  fetchedAt: number | null;
+  expiresAt: number | null;
+  expiresInMs: number | null;
+  isExpired: boolean;
+};
+
+type OpenSkyTokenDocument = {
+  _id: typeof OPENSKY_TOKEN_DOCUMENT_ID;
+  accessToken: string;
+  expiresAt: Date;
+  fetchedAt: Date;
+  updatedAt: Date;
+  storageSource: OpenSkyStoredTokenSource;
+};
+
 let credentialsCache: Credentials | null = null;
-let tokenCache: { accessToken: string; expiresAt: number } | null = null;
+let tokenCache: CachedOpenSkyToken | null = null;
+let tokenFetchPromise: Promise<CachedOpenSkyToken> | null = null;
+let mongoClientPromise: Promise<MongoClient> | null = null;
+let openSkyTokenIndexesReady: Promise<void> | null = null;
+let mongoWarningLogged = false;
 
 type OpenSkyDiagnosticsCarrier = Error & {
   cause?: unknown;
@@ -93,6 +132,225 @@ const OPENSKY_RETRYABLE_ERROR_CODES = new Set([
 const openSkyDispatcher = new Agent({
   connectTimeout: OPENSKY_CONNECT_TIMEOUT_MS,
 });
+
+function isMongoConfigured(): boolean {
+  return Boolean(process.env.MONGODB_URI?.trim());
+}
+
+function getMongoDbName(): string {
+  return process.env.MONGODB_DB_NAME?.trim() || DEFAULT_DB_NAME;
+}
+
+function logMongoWarning(error: unknown) {
+  if (mongoWarningLogged) {
+    return;
+  }
+
+  mongoWarningLogged = true;
+  console.warn('MongoDB OpenSky token cache is unavailable.', error);
+}
+
+function createCachedOpenSkyToken(params: {
+  accessToken: string;
+  expiresAt: number;
+  fetchedAt?: number;
+  storageSource: OpenSkyStoredTokenSource;
+}): CachedOpenSkyToken {
+  return {
+    accessToken: params.accessToken,
+    expiresAt: params.expiresAt,
+    fetchedAt: params.fetchedAt ?? Date.now(),
+    storageSource: params.storageSource,
+  };
+}
+
+function isOpenSkyTokenValid(token: CachedOpenSkyToken | null, allowRefreshMarginBypass = false): token is CachedOpenSkyToken {
+  if (!token) {
+    return false;
+  }
+
+  const thresholdMs = allowRefreshMarginBypass ? 0 : TOKEN_REFRESH_MARGIN_MS;
+  return Date.now() < token.expiresAt - thresholdMs;
+}
+
+function maskOpenSkyToken(value: string | null | undefined): string | null {
+  if (!value) {
+    return null;
+  }
+
+  const trimmedValue = value.trim();
+  if (trimmedValue.length <= 10) {
+    return `${trimmedValue.slice(0, 3)}…${trimmedValue.slice(-2)}`;
+  }
+
+  return `${trimmedValue.slice(0, 6)}…${trimmedValue.slice(-4)}`;
+}
+
+function buildOpenSkyTokenStatus(token: CachedOpenSkyToken | null, cacheSource: OpenSkyTokenStatus['cacheSource']): OpenSkyTokenStatus {
+  const expiresInMs = token ? token.expiresAt - Date.now() : null;
+
+  return {
+    providerConfigured: isOpenSkyConfigured(),
+    mongoConfigured: isMongoConfigured(),
+    hasToken: Boolean(token),
+    cacheSource,
+    storageSource: token?.storageSource ?? null,
+    tokenPreview: maskOpenSkyToken(token?.accessToken),
+    fetchedAt: token?.fetchedAt ?? null,
+    expiresAt: token?.expiresAt ?? null,
+    expiresInMs,
+    isExpired: expiresInMs != null ? expiresInMs <= 0 : false,
+  };
+}
+
+async function getOpenSkyTokenCollection(): Promise<Collection<OpenSkyTokenDocument> | null> {
+  const mongoUri = process.env.MONGODB_URI?.trim();
+  if (!mongoUri) {
+    return null;
+  }
+
+  try {
+    if (!mongoClientPromise) {
+      const client = new MongoClient(mongoUri);
+      mongoClientPromise = client.connect();
+    }
+
+    let client: MongoClient;
+    try {
+      client = await mongoClientPromise;
+    } catch (error) {
+      mongoClientPromise = null;
+      throw error;
+    }
+
+    const collection = client.db(getMongoDbName()).collection<OpenSkyTokenDocument>(OPENSKY_TOKEN_COLLECTION_NAME);
+
+    if (!openSkyTokenIndexesReady) {
+      openSkyTokenIndexesReady = Promise.all([
+        collection.createIndex({ expiresAt: 1 }, { expireAfterSeconds: 0 }),
+        collection.createIndex({ updatedAt: -1 }),
+      ]).then(() => undefined);
+    }
+
+    try {
+      await openSkyTokenIndexesReady;
+    } catch (error) {
+      openSkyTokenIndexesReady = null;
+      throw error;
+    }
+
+    return collection;
+  } catch (error) {
+    logMongoWarning(error);
+    return null;
+  }
+}
+
+async function readStoredOpenSkyToken(allowRefreshMarginBypass = false): Promise<CachedOpenSkyToken | null> {
+  const collection = await getOpenSkyTokenCollection();
+  if (!collection) {
+    return null;
+  }
+
+  try {
+    const document = await collection.findOne({ _id: OPENSKY_TOKEN_DOCUMENT_ID } as Parameters<typeof collection.findOne>[0]);
+    if (!document?.accessToken) {
+      return null;
+    }
+
+    const expiresAt = document.expiresAt instanceof Date ? document.expiresAt.getTime() : Number(document.expiresAt);
+    const fetchedAt = document.fetchedAt instanceof Date ? document.fetchedAt.getTime() : Date.now();
+    const token = createCachedOpenSkyToken({
+      accessToken: document.accessToken,
+      expiresAt,
+      fetchedAt,
+      storageSource: document.storageSource ?? 'oauth',
+    });
+
+    return isOpenSkyTokenValid(token, allowRefreshMarginBypass) ? token : null;
+  } catch (error) {
+    logMongoWarning(error);
+    return null;
+  }
+}
+
+async function persistOpenSkyToken(token: CachedOpenSkyToken): Promise<void> {
+  const collection = await getOpenSkyTokenCollection();
+  if (!collection) {
+    return;
+  }
+
+  try {
+    await collection.updateOne(
+      { _id: OPENSKY_TOKEN_DOCUMENT_ID } as Parameters<typeof collection.updateOne>[0],
+      {
+        $set: {
+          _id: OPENSKY_TOKEN_DOCUMENT_ID,
+          accessToken: token.accessToken,
+          expiresAt: new Date(token.expiresAt),
+          fetchedAt: new Date(token.fetchedAt),
+          updatedAt: new Date(),
+          storageSource: token.storageSource,
+        },
+      },
+      { upsert: true },
+    );
+  } catch (error) {
+    logMongoWarning(error);
+  }
+}
+
+async function clearPersistedOpenSkyToken(): Promise<void> {
+  const collection = await getOpenSkyTokenCollection();
+  if (!collection) {
+    return;
+  }
+
+  try {
+    await collection.deleteOne?.({ _id: OPENSKY_TOKEN_DOCUMENT_ID } as Parameters<typeof collection.deleteOne>[0]);
+  } catch (error) {
+    logMongoWarning(error);
+  }
+}
+
+export async function getOpenSkyTokenStatus(): Promise<OpenSkyTokenStatus> {
+  if (isOpenSkyTokenValid(tokenCache, true)) {
+    return buildOpenSkyTokenStatus(tokenCache, 'memory');
+  }
+
+  const storedToken = await readStoredOpenSkyToken(true);
+  if (storedToken) {
+    return buildOpenSkyTokenStatus(storedToken, 'mongo');
+  }
+
+  return buildOpenSkyTokenStatus(null, 'none');
+}
+
+export async function setStoredOpenSkyAccessToken(accessToken: string, expiresInSeconds = 1800): Promise<OpenSkyTokenStatus> {
+  const normalizedToken = accessToken.trim();
+  if (!normalizedToken) {
+    throw new Error('Provide a non-empty OpenSky access token.');
+  }
+
+  const parsedExpiresInSeconds = Number.isFinite(expiresInSeconds) && expiresInSeconds > 0
+    ? Math.floor(expiresInSeconds)
+    : 1800;
+  const nextToken = createCachedOpenSkyToken({
+    accessToken: normalizedToken,
+    expiresAt: Date.now() + (parsedExpiresInSeconds * 1000),
+    storageSource: 'manual',
+  });
+
+  tokenCache = nextToken;
+  await persistOpenSkyToken(nextToken);
+  return buildOpenSkyTokenStatus(nextToken, 'memory');
+}
+
+export async function clearStoredOpenSkyAccessToken(): Promise<OpenSkyTokenStatus> {
+  tokenCache = null;
+  await clearPersistedOpenSkyToken();
+  return buildOpenSkyTokenStatus(null, 'none');
+}
 
 function toNumber(value: unknown): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value : null;
@@ -520,61 +778,103 @@ async function readCredentialsFromEnv(): Promise<Credentials> {
 }
 
 async function getAccessToken(forceRefresh = false): Promise<string> {
-  if (!forceRefresh && tokenCache && Date.now() < tokenCache.expiresAt - TOKEN_REFRESH_MARGIN_MS) {
+  if (!forceRefresh && isOpenSkyTokenValid(tokenCache)) {
     return tokenCache.accessToken;
   }
 
-  const credentials = await readCredentialsFromEnv();
-
-  const response = await fetchWithOpenSkyTransportRetry(
-    OPENSKY_TOKEN_URL,
-    {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded',
-        Accept: 'application/json',
-      },
-      body: new URLSearchParams({
-        grant_type: 'client_credentials',
-        client_id: credentials.clientId,
-        client_secret: credentials.clientSecret,
-      }),
-      cache: 'no-store',
-    },
-    'auth',
-    OPENSKY_TOKEN_URL,
-  );
-
-  if (!response.ok) {
-    const bodyPreview = await readResponsePreview(response);
-    const statusSummary = [response.status, response.statusText].filter(Boolean).join(' ');
-    const message = bodyPreview
-      ? `OpenSky auth failed with status ${statusSummary}: ${bodyPreview}`
-      : `OpenSky auth failed with status ${statusSummary}`;
-
-    throw createOpenSkyError(message, compactRecord({
-      stage: 'auth',
-      url: OPENSKY_TOKEN_URL,
-      status: response.status,
-      statusText: response.statusText,
-      bodyPreview,
-    }));
+  if (!forceRefresh) {
+    const storedToken = await readStoredOpenSkyToken();
+    if (storedToken) {
+      tokenCache = storedToken;
+      return storedToken.accessToken;
+    }
   }
 
-  const payload = await response.json() as { access_token?: string; expires_in?: number };
-  if (!payload.access_token) {
-    throw createOpenSkyError(
-      'OpenSky auth response did not include an access token.',
-      { stage: 'auth', url: OPENSKY_TOKEN_URL },
-    );
+  const fallbackToken = isOpenSkyTokenValid(tokenCache, true)
+    ? tokenCache
+    : await readStoredOpenSkyToken(true);
+
+  if (!tokenFetchPromise) {
+    tokenFetchPromise = (async () => {
+      const credentials = await readCredentialsFromEnv();
+
+      const response = await fetchWithOpenSkyTransportRetry(
+        OPENSKY_TOKEN_URL,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded',
+            Accept: 'application/json',
+          },
+          body: new URLSearchParams({
+            grant_type: 'client_credentials',
+            client_id: credentials.clientId,
+            client_secret: credentials.clientSecret,
+          }),
+          cache: 'no-store',
+        },
+        'auth',
+        OPENSKY_TOKEN_URL,
+      );
+
+      if (!response.ok) {
+        const bodyPreview = await readResponsePreview(response);
+        const statusSummary = [response.status, response.statusText].filter(Boolean).join(' ');
+        const message = bodyPreview
+          ? `OpenSky auth failed with status ${statusSummary}: ${bodyPreview}`
+          : `OpenSky auth failed with status ${statusSummary}`;
+
+        throw createOpenSkyError(message, compactRecord({
+          stage: 'auth',
+          url: OPENSKY_TOKEN_URL,
+          status: response.status,
+          statusText: response.statusText,
+          bodyPreview,
+        }));
+      }
+
+      const payload = await response.json() as { access_token?: string; expires_in?: number };
+      if (!payload.access_token) {
+        throw createOpenSkyError(
+          'OpenSky auth response did not include an access token.',
+          { stage: 'auth', url: OPENSKY_TOKEN_URL },
+        );
+      }
+
+      const nextToken = createCachedOpenSkyToken({
+        accessToken: payload.access_token,
+        expiresAt: Date.now() + (payload.expires_in ?? 1800) * 1000,
+        storageSource: 'oauth',
+      });
+
+      tokenCache = nextToken;
+      await persistOpenSkyToken(nextToken);
+      return nextToken;
+    })().finally(() => {
+      tokenFetchPromise = null;
+    });
   }
 
-  tokenCache = {
-    accessToken: payload.access_token,
-    expiresAt: Date.now() + (payload.expires_in ?? 1800) * 1000,
-  };
+  try {
+    const nextToken = await tokenFetchPromise;
+    return nextToken.accessToken;
+  } catch (error) {
+    if (fallbackToken && Date.now() < fallbackToken.expiresAt) {
+      tokenCache = fallbackToken;
+      return fallbackToken.accessToken;
+    }
 
-  return tokenCache.accessToken;
+    throw error;
+  }
+}
+
+export async function ensureOpenSkyAccessToken(forceRefresh = false): Promise<OpenSkyTokenStatus> {
+  await getAccessToken(forceRefresh);
+  return getOpenSkyTokenStatus();
+}
+
+export async function refreshOpenSkyAccessToken(): Promise<OpenSkyTokenStatus> {
+  return ensureOpenSkyAccessToken(true);
 }
 
 export async function fetchOpenSky<T>(pathname: string, searchParams?: Record<string, string | number | undefined>): Promise<T> {

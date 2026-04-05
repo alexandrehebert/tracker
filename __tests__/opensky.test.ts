@@ -216,6 +216,56 @@ describe('searchFlights', () => {
     expect(params.get('client_secret')).toBe('secret-from-env');
   });
 
+  it('reuses a Mongo-backed OpenSky access token across module reloads until expiry', async () => {
+    process.env.OPENSKY_CLIENT_ID = 'client-from-env';
+    process.env.OPENSKY_CLIENT_SECRET = 'secret-from-env';
+    process.env.MONGODB_URI = 'mongodb://example.test:27017/tracker';
+    process.env.MONGODB_DB_NAME = 'tracker-test';
+
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input.toString();
+
+      if (url.includes('/protocol/openid-connect/token')) {
+        return new Response(JSON.stringify({ access_token: 'token-123', expires_in: 1800 }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      if (url.includes('/states/all')) {
+        return new Response(JSON.stringify({ time: 123, states: [] }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      if (url.includes('/flights/all')) {
+        return new Response(JSON.stringify([]), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      throw new Error(`Unexpected fetch URL in test: ${url}`);
+    });
+
+    vi.stubGlobal('fetch', fetchMock);
+
+    const firstSearchFlights = await loadSearchFlights();
+    const firstResult = await firstSearchFlights('AF123');
+    const secondSearchFlights = await loadSearchFlights();
+    const secondResult = await secondSearchFlights('AF123', { forceRefresh: true });
+
+    expect(firstResult.requestedIdentifiers).toEqual(['AF123']);
+    expect(secondResult.requestedIdentifiers).toEqual(['AF123']);
+
+    const authCalls = fetchMock.mock.calls.filter(([input]) => String(input).includes('/protocol/openid-connect/token'));
+    const stateCalls = fetchMock.mock.calls.filter(([input]) => String(input).includes('/states/all'));
+
+    expect(authCalls).toHaveLength(1);
+    expect(stateCalls.length).toBeGreaterThanOrEqual(2);
+  });
+
   it('retries OpenSky auth once after a transient connect timeout', async () => {
     process.env.OPENSKY_CLIENT_ID = 'client-from-env';
     process.env.OPENSKY_CLIENT_SECRET = 'secret-from-env';

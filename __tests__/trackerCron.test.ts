@@ -89,9 +89,35 @@ vi.mock('mongodb', () => {
 });
 
 const searchFlightsMock = vi.fn<[string, { forceRefresh?: boolean }?], Promise<TrackerApiResponse>>();
+const ensureOpenSkyAccessTokenMock = vi.fn().mockResolvedValue({
+  providerConfigured: true,
+  mongoConfigured: true,
+  hasToken: true,
+  cacheSource: 'memory',
+  storageSource: 'oauth',
+  tokenPreview: 'token-1…abcd',
+  fetchedAt: 1_700_000_000_000,
+  expiresAt: 1_700_001_800_000,
+  expiresInMs: 1_800_000,
+  isExpired: false,
+});
+const getOpenSkyTokenStatusMock = vi.fn().mockResolvedValue({
+  providerConfigured: true,
+  mongoConfigured: true,
+  hasToken: true,
+  cacheSource: 'memory',
+  storageSource: 'oauth',
+  tokenPreview: 'token-1…abcd',
+  fetchedAt: 1_700_000_000_000,
+  expiresAt: 1_700_001_800_000,
+  expiresInMs: 1_800_000,
+  isExpired: false,
+});
 
 vi.mock('~/lib/server/opensky', () => ({
   searchFlights: searchFlightsMock,
+  ensureOpenSkyAccessToken: ensureOpenSkyAccessTokenMock,
+  getOpenSkyTokenStatus: getOpenSkyTokenStatusMock,
 }));
 
 async function loadTrackerCronModule() {

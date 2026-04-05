@@ -1,5 +1,5 @@
 import { MongoClient, type Collection } from 'mongodb';
-import { searchFlights } from './opensky';
+import { ensureOpenSkyAccessToken, getOpenSkyTokenStatus, searchFlights, type OpenSkyTokenStatus } from './opensky';
 
 const DEFAULT_DB_NAME = 'tracker';
 const TRACKER_CRON_CONFIG_COLLECTION_NAME = 'tracker_cron_config';
@@ -56,6 +56,7 @@ export interface TrackerCronDashboard {
   mongoConfigured: boolean;
   config: TrackerCronConfig;
   history: TrackerCronRun[];
+  openSkyToken: OpenSkyTokenStatus;
 }
 
 type TrackerCronConfigDocument = TrackerCronConfig & {
@@ -363,15 +364,17 @@ export async function listTrackerCronRuns(limit = DEFAULT_HISTORY_LIMIT): Promis
 }
 
 export async function getTrackerCronDashboard(limit = DEFAULT_HISTORY_LIMIT): Promise<TrackerCronDashboard> {
-  const [config, history] = await Promise.all([
+  const [config, history, openSkyToken] = await Promise.all([
     readTrackerCronConfig(),
     listTrackerCronRuns(limit),
+    getOpenSkyTokenStatus(),
   ]);
 
   return {
     mongoConfigured: isMongoConfigured(),
     config,
     history,
+    openSkyToken,
   };
 }
 
@@ -432,6 +435,12 @@ export async function runTrackerCronJob(options: {
 
   const results: TrackerCronFlightResult[] = [];
   let runError: string | null = null;
+
+  try {
+    await ensureOpenSkyAccessToken(false);
+  } catch (error) {
+    runError = error instanceof Error ? error.message : 'Unable to prefetch the OpenSky access token.';
+  }
 
   for (const identifier of identifiers) {
     try {

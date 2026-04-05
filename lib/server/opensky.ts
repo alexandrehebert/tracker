@@ -18,13 +18,28 @@ import {
   type FlightAwareFlightEnrichment,
 } from './providers/flightaware';
 import {
+  clearStoredOpenSkyAccessToken,
+  ensureOpenSkyAccessToken,
   fetchOpenSky,
   getOpenSkyErrorDiagnostics,
+  getOpenSkyTokenStatus,
   getTrackForAircraft,
   getRecentRoute,
   guessDepartureAirportFromOriginPoint,
+  refreshOpenSkyAccessToken,
+  setStoredOpenSkyAccessToken,
+  type OpenSkyTokenStatus,
   type OpenSkyTrackHistory,
 } from './providers/opensky';
+
+export {
+  clearStoredOpenSkyAccessToken,
+  ensureOpenSkyAccessToken,
+  getOpenSkyTokenStatus,
+  refreshOpenSkyAccessToken,
+  setStoredOpenSkyAccessToken,
+};
+export type { OpenSkyTokenStatus };
 import { lookupAirportDetails } from './airports';
 import {
   readFlightSearchCache,

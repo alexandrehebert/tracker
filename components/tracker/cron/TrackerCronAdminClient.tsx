@@ -24,6 +24,28 @@ function formatDuration(durationMs: number | null): string {
   return `${(durationMs / 1000).toFixed(durationMs >= 10_000 ? 0 : 1)} s`;
 }
 
+function formatExpiryWindow(expiresInMs: number | null): string {
+  if (expiresInMs == null) {
+    return '—';
+  }
+
+  if (expiresInMs <= 0) {
+    return 'Expired';
+  }
+
+  const totalSeconds = Math.ceil(expiresInMs / 1000);
+  if (totalSeconds < 60) {
+    return `${totalSeconds}s remaining`;
+  }
+
+  const totalMinutes = Math.ceil(totalSeconds / 60);
+  if (totalMinutes < 60) {
+    return `${totalMinutes}m remaining`;
+  }
+
+  return `${Math.ceil(totalMinutes / 60)}h remaining`;
+}
+
 function getStatusClasses(status: TrackerCronRunStatus): string {
   switch (status) {
     case 'success':
@@ -58,7 +80,8 @@ function isTrackerCronDashboard(value: unknown): value is TrackerCronDashboard {
   return typeof value === 'object'
     && value !== null
     && 'config' in value
-    && 'history' in value;
+    && 'history' in value
+    && 'openSkyToken' in value;
 }
 
 function isTrackerCronRun(value: unknown): value is TrackerCronRun {
@@ -74,8 +97,11 @@ export function TrackerCronAdminClient({ initialDashboard }: { initialDashboard:
   const [dashboard, setDashboard] = useState(initialDashboard);
   const [identifiersInput, setIdentifiersInput] = useState(initialDashboard.config.identifiers.join('\n'));
   const [enabled, setEnabled] = useState(initialDashboard.config.enabled);
+  const [manualToken, setManualToken] = useState('');
+  const [manualTokenExpirySeconds, setManualTokenExpirySeconds] = useState('1800');
   const [isSaving, setIsSaving] = useState(false);
   const [isRunning, setIsRunning] = useState(false);
+  const [isTokenPending, setIsTokenPending] = useState(false);
   const [notice, setNotice] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
 
   const latestRun = useMemo(() => dashboard.history[0] ?? null, [dashboard.history]);
@@ -84,6 +110,11 @@ export function TrackerCronAdminClient({ initialDashboard }: { initialDashboard:
     timeStyle: 'short',
     timeZone: 'UTC',
   }), [locale]);
+  const tokenStatusLabel = !dashboard.openSkyToken.hasToken
+    ? 'Missing'
+    : dashboard.openSkyToken.isExpired
+      ? 'Expired'
+      : 'Cached';
 
   async function refreshDashboard() {
     const response = await fetch('/api/tracker/cron/config', { cache: 'no-store' });
@@ -171,6 +202,56 @@ export function TrackerCronAdminClient({ initialDashboard }: { initialDashboard:
     }
   }
 
+  async function handleTokenAction(action: 'refresh' | 'clear' | 'set') {
+    if (action === 'set' && !manualToken.trim()) {
+      setNotice({ type: 'error', text: 'Paste an OpenSky access token before saving it.' });
+      return;
+    }
+
+    setIsTokenPending(true);
+    setNotice(null);
+
+    try {
+      const response = await fetch('/api/tracker/cron/token', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          action,
+          accessToken: action === 'set' ? manualToken : undefined,
+          expiresInSeconds: action === 'set' ? Number.parseInt(manualTokenExpirySeconds, 10) : undefined,
+        }),
+      });
+
+      const payload: unknown = await response.json();
+      if (!response.ok || isErrorResponse(payload)) {
+        throw new Error(isErrorResponse(payload) ? payload.error : 'Unable to update the OpenSky token cache.');
+      }
+
+      await refreshDashboard();
+      if (action === 'set') {
+        setManualToken('');
+      }
+
+      setNotice({
+        type: 'success',
+        text: action === 'refresh'
+          ? 'Fetched and cached a fresh OpenSky token.'
+          : action === 'clear'
+            ? 'Cleared the shared OpenSky token cache.'
+            : 'Saved the provided OpenSky token to MongoDB.',
+      });
+    } catch (error) {
+      setNotice({
+        type: 'error',
+        text: error instanceof Error ? error.message : 'Unable to update the OpenSky token cache.',
+      });
+    } finally {
+      setIsTokenPending(false);
+    }
+  }
+
   return (
     <div className="space-y-6">
       {!dashboard.mongoConfigured ? (
@@ -206,61 +287,153 @@ export function TrackerCronAdminClient({ initialDashboard }: { initialDashboard:
           <p className="mt-1 text-sm text-slate-300">{latestRun ? `${triggerLabel(latestRun)} · ${latestRun.status}` : 'No executions yet.'}</p>
         </div>
         <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-          <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Mongo persistence</p>
-          <p className="mt-2 text-lg font-semibold text-white">{dashboard.mongoConfigured ? 'Enabled' : 'Missing'}</p>
-          <p className="mt-1 text-sm text-slate-300">Search cache and execution history are stored there.</p>
+          <p className="text-xs uppercase tracking-[0.2em] text-slate-400">OpenSky token</p>
+          <p className="mt-2 text-lg font-semibold text-white">{tokenStatusLabel}</p>
+          <p className="mt-1 text-sm text-slate-300">{dashboard.openSkyToken.tokenPreview ?? 'No shared token cached yet.'}</p>
         </div>
       </div>
 
       <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]">
-        <form onSubmit={handleSave} className="rounded-3xl border border-white/10 bg-slate-900/70 p-5 shadow-[0_18px_50px_rgba(2,6,23,0.25)]">
-          <div className="flex items-start justify-between gap-4">
-            <div>
-              <h2 className="text-lg font-semibold text-white">Cron flight list</h2>
-              <p className="mt-1 text-sm text-slate-300">
-                Enter one callsign or ICAO24 per line. These identifiers are fetched every 15 minutes and refreshed into Mongo.
-              </p>
+        <div className="space-y-6">
+          <form onSubmit={handleSave} className="rounded-3xl border border-white/10 bg-slate-900/70 p-5 shadow-[0_18px_50px_rgba(2,6,23,0.25)]">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <h2 className="text-lg font-semibold text-white">Cron flight list</h2>
+                <p className="mt-1 text-sm text-slate-300">
+                  Enter one callsign or ICAO24 per line. These identifiers are fetched every 15 minutes and refreshed into Mongo.
+                </p>
+              </div>
+              <label className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-2 text-sm text-slate-200">
+                <input
+                  type="checkbox"
+                  className="h-4 w-4 rounded border-slate-500 bg-slate-950"
+                  checked={enabled}
+                  onChange={(event) => setEnabled(event.target.checked)}
+                />
+                Enabled
+              </label>
             </div>
-            <label className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-2 text-sm text-slate-200">
-              <input
-                type="checkbox"
-                className="h-4 w-4 rounded border-slate-500 bg-slate-950"
-                checked={enabled}
-                onChange={(event) => setEnabled(event.target.checked)}
-              />
-              Enabled
+
+            <label className="mt-4 block text-sm font-medium text-slate-200" htmlFor="tracker-cron-identifiers">
+              Flight identifiers
             </label>
-          </div>
+            <textarea
+              id="tracker-cron-identifiers"
+              value={identifiersInput}
+              onChange={(event) => setIdentifiersInput(event.target.value)}
+              placeholder={'AF123\nBA117\n3c675a'}
+              className="mt-2 min-h-56 w-full rounded-2xl border border-white/10 bg-slate-950 px-3 py-3 font-mono text-sm text-slate-100 outline-none transition focus:border-sky-400/60"
+            />
 
-          <label className="mt-4 block text-sm font-medium text-slate-200" htmlFor="tracker-cron-identifiers">
-            Flight identifiers
-          </label>
-          <textarea
-            id="tracker-cron-identifiers"
-            value={identifiersInput}
-            onChange={(event) => setIdentifiersInput(event.target.value)}
-            placeholder={'AF123\nBA117\n3c675a'}
-            className="mt-2 min-h-56 w-full rounded-2xl border border-white/10 bg-slate-950 px-3 py-3 font-mono text-sm text-slate-100 outline-none transition focus:border-sky-400/60"
-          />
+            <div className="mt-4 flex flex-wrap gap-3">
+              <button
+                type="submit"
+                disabled={isSaving}
+                className="inline-flex items-center justify-center rounded-full bg-sky-500 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-sky-400 disabled:cursor-wait disabled:opacity-70"
+              >
+                {isSaving ? 'Saving…' : 'Save list'}
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleRunNow()}
+                disabled={isRunning}
+                className="inline-flex items-center justify-center rounded-full border border-white/15 bg-white/5 px-4 py-2 text-sm font-semibold text-slate-100 transition hover:border-sky-300/60 hover:bg-sky-500/10 disabled:cursor-wait disabled:opacity-70"
+              >
+                {isRunning ? 'Running…' : 'Run now'}
+              </button>
+            </div>
+          </form>
 
-          <div className="mt-4 flex flex-wrap gap-3">
-            <button
-              type="submit"
-              disabled={isSaving}
-              className="inline-flex items-center justify-center rounded-full bg-sky-500 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-sky-400 disabled:cursor-wait disabled:opacity-70"
-            >
-              {isSaving ? 'Saving…' : 'Save list'}
-            </button>
-            <button
-              type="button"
-              onClick={() => void handleRunNow()}
-              disabled={isRunning}
-              className="inline-flex items-center justify-center rounded-full border border-white/15 bg-white/5 px-4 py-2 text-sm font-semibold text-slate-100 transition hover:border-sky-300/60 hover:bg-sky-500/10 disabled:cursor-wait disabled:opacity-70"
-            >
-              {isRunning ? 'Running…' : 'Run now'}
-            </button>
-          </div>
-        </form>
+          <section className="rounded-3xl border border-white/10 bg-slate-900/70 p-5 shadow-[0_18px_50px_rgba(2,6,23,0.25)]">
+            <h2 className="text-lg font-semibold text-white">Shared OpenSky token cache</h2>
+            <p className="mt-1 text-sm text-slate-300">
+              Fetch the OAuth token once, store it in Mongo, and reuse it across cold starts until it expires. These controls run on the Node.js server runtime.
+            </p>
+
+            <div className="mt-4 grid gap-3 sm:grid-cols-2">
+              <div className="rounded-2xl border border-white/10 bg-slate-950/40 px-3 py-3 text-sm text-slate-200">
+                <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Status</p>
+                <p className="mt-1 font-semibold text-white">{tokenStatusLabel}</p>
+                <p className="mt-1 text-xs text-slate-400">Cache source: {dashboard.openSkyToken.cacheSource}</p>
+              </div>
+              <div className="rounded-2xl border border-white/10 bg-slate-950/40 px-3 py-3 text-sm text-slate-200">
+                <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Preview</p>
+                <p className="mt-1 break-all font-mono text-white">{dashboard.openSkyToken.tokenPreview ?? '—'}</p>
+                <p className="mt-1 text-xs text-slate-400">Origin: {dashboard.openSkyToken.storageSource ?? '—'}</p>
+              </div>
+              <div className="rounded-2xl border border-white/10 bg-slate-950/40 px-3 py-3 text-sm text-slate-200">
+                <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Fetched at (UTC)</p>
+                <p className="mt-1 text-white">{formatDateTime(dashboard.openSkyToken.fetchedAt, dateTimeFormatter)}</p>
+              </div>
+              <div className="rounded-2xl border border-white/10 bg-slate-950/40 px-3 py-3 text-sm text-slate-200">
+                <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Expires</p>
+                <p className="mt-1 text-white">{formatDateTime(dashboard.openSkyToken.expiresAt, dateTimeFormatter)}</p>
+                <p className="mt-1 text-xs text-slate-400">{formatExpiryWindow(dashboard.openSkyToken.expiresInMs)}</p>
+              </div>
+            </div>
+
+            <div className="mt-4 flex flex-wrap gap-3">
+              <button
+                type="button"
+                onClick={() => void refreshDashboard().then(() => setNotice({ type: 'info', text: 'OpenSky token status refreshed.' })).catch((error) => setNotice({ type: 'error', text: error instanceof Error ? error.message : 'Unable to refresh the OpenSky token status.' }))}
+                disabled={isTokenPending}
+                className="inline-flex items-center justify-center rounded-full border border-white/15 bg-white/5 px-4 py-2 text-sm font-semibold text-slate-100 transition hover:border-sky-300/60 hover:bg-sky-500/10 disabled:cursor-wait disabled:opacity-70"
+              >
+                Check token
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleTokenAction('refresh')}
+                disabled={isTokenPending}
+                className="inline-flex items-center justify-center rounded-full bg-emerald-500 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-emerald-400 disabled:cursor-wait disabled:opacity-70"
+              >
+                {isTokenPending ? 'Working…' : 'Fetch token now'}
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleTokenAction('clear')}
+                disabled={isTokenPending}
+                className="inline-flex items-center justify-center rounded-full border border-rose-400/40 bg-rose-500/10 px-4 py-2 text-sm font-semibold text-rose-100 transition hover:bg-rose-500/20 disabled:cursor-wait disabled:opacity-70"
+              >
+                Clear token
+              </button>
+            </div>
+
+            <div className="mt-5 border-t border-white/10 pt-4">
+              <label className="block text-sm font-medium text-slate-200" htmlFor="manual-opensky-token">
+                Manually set a token
+              </label>
+              <textarea
+                id="manual-opensky-token"
+                value={manualToken}
+                onChange={(event) => setManualToken(event.target.value)}
+                placeholder="Paste an access_token here if you want to seed the shared cache manually"
+                className="mt-2 min-h-28 w-full rounded-2xl border border-white/10 bg-slate-950 px-3 py-3 font-mono text-sm text-slate-100 outline-none transition focus:border-sky-400/60"
+              />
+              <div className="mt-3 flex flex-col gap-3 sm:flex-row sm:items-end">
+                <label className="block text-sm text-slate-200">
+                  <span className="mb-1 block">Expiry in seconds</span>
+                  <input
+                    type="number"
+                    min="60"
+                    step="60"
+                    value={manualTokenExpirySeconds}
+                    onChange={(event) => setManualTokenExpirySeconds(event.target.value)}
+                    className="w-full rounded-xl border border-white/10 bg-slate-950 px-3 py-2 text-sm text-slate-100 outline-none transition focus:border-sky-400/60"
+                  />
+                </label>
+                <button
+                  type="button"
+                  onClick={() => void handleTokenAction('set')}
+                  disabled={isTokenPending}
+                  className="inline-flex items-center justify-center rounded-full bg-sky-500 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-sky-400 disabled:cursor-wait disabled:opacity-70"
+                >
+                  Save token to Mongo
+                </button>
+              </div>
+            </div>
+          </section>
+        </div>
 
         <section className="rounded-3xl border border-white/10 bg-slate-900/70 p-5 shadow-[0_18px_50px_rgba(2,6,23,0.25)]">
           <h2 className="text-lg font-semibold text-white">Execution history</h2>
