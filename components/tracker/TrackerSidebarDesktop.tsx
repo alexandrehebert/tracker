@@ -11,27 +11,24 @@ interface TrackerSidebarDesktopProps {
 
 export default function TrackerSidebarDesktop({ children, footer }: TrackerSidebarDesktopProps) {
   const { sidebarOpen, setSidebarOpen, sidebarRef, sidebarToggleRef } = useTrackerLayout();
-  const [suppressCollapsedPreview, setSuppressCollapsedPreview] = useState(false);
+  const [isPeekActive, setIsPeekActive] = useState(false);
 
-  const desktopWrapperClass =
-    'z-40 absolute top-[5rem] right-3 flex w-[min(92vw,25rem)] xl:w-[min(40vw,30rem)] 2xl:w-[min(36vw,34rem)] flex-col gap-3 transition-all duration-300' +
-    (sidebarOpen
-      ? ' translate-x-0 opacity-100'
-      : ` translate-x-[calc(100%-1rem)] opacity-100 ${suppressCollapsedPreview ? '' : 'hover:translate-x-[calc(100%-1.5rem)] focus-visible:translate-x-[calc(100%-1.5rem)]'}`);
+  const desktopWrapperClass = 'z-40 absolute top-[5rem] right-3 flex w-[min(92vw,25rem)] xl:w-[min(40vw,30rem)] 2xl:w-[min(36vw,34rem)] flex-col gap-3';
 
   return (
     <div
       ref={sidebarRef}
       className={desktopWrapperClass}
+      style={{
+        transform: sidebarOpen
+          ? 'translate3d(0, 0, 0)'
+          : `translate3d(calc(100% - ${isPeekActive ? '1.2rem' : '1rem'}), 0, 0)`,
+        transition: 'transform 280ms ease-out',
+        willChange: 'transform',
+      }}
       onClick={() => {
         if (!sidebarOpen) {
-          setSuppressCollapsedPreview(false);
           setSidebarOpen(true);
-        }
-      }}
-      onMouseLeave={() => {
-        if (!sidebarOpen && suppressCollapsedPreview) {
-          setSuppressCollapsedPreview(false);
         }
       }}
       role={!sidebarOpen ? 'button' : undefined}
@@ -49,9 +46,24 @@ export default function TrackerSidebarDesktop({ children, footer }: TrackerSideb
           ref={sidebarToggleRef}
           type="button"
           onClick={() => {
-            const willOpen = !sidebarOpen;
-            setSuppressCollapsedPreview(!willOpen);
-            setSidebarOpen(willOpen);
+            setIsPeekActive(false);
+            setSidebarOpen((current) => !current);
+          }}
+          onMouseEnter={() => {
+            if (!sidebarOpen) {
+              setIsPeekActive(true);
+            }
+          }}
+          onMouseLeave={() => {
+            setIsPeekActive(false);
+          }}
+          onFocus={() => {
+            if (!sidebarOpen) {
+              setIsPeekActive(true);
+            }
+          }}
+          onBlur={() => {
+            setIsPeekActive(false);
           }}
           className={`absolute -left-16 top-1/2 -translate-y-1/2 z-40 flex h-12 w-12 items-center justify-center rounded-full border border-white/12 bg-slate-950/85 text-slate-100 shadow-xl backdrop-blur-sm transition-[background-color,border-color,color,box-shadow,transform] duration-150 hover:bg-slate-900 hover:border-white/20 ${!sidebarOpen ? 'hover:scale-105 focus-visible:scale-105' : ''}`}
           aria-label={sidebarOpen ? 'Collapse tracker panel' : 'Expand tracker panel'}
