@@ -1,17 +1,15 @@
 'use client';
 
+import { useLocale } from 'next-intl';
 import { useMemo, useState, type FormEvent } from 'react';
 import type { TrackerCronDashboard, TrackerCronRun, TrackerCronRunStatus } from '~/lib/server/trackerCron';
 
-function formatDateTime(value: number | null): string {
+function formatDateTime(value: number | null, formatter: Intl.DateTimeFormat): string {
   if (!value) {
     return '—';
   }
 
-  return new Intl.DateTimeFormat(undefined, {
-    dateStyle: 'medium',
-    timeStyle: 'short',
-  }).format(value);
+  return formatter.format(value);
 }
 
 function formatDuration(durationMs: number | null): string {
@@ -72,6 +70,7 @@ function isTrackerCronRun(value: unknown): value is TrackerCronRun {
 }
 
 export function TrackerCronAdminClient({ initialDashboard }: { initialDashboard: TrackerCronDashboard }) {
+  const locale = useLocale();
   const [dashboard, setDashboard] = useState(initialDashboard);
   const [identifiersInput, setIdentifiersInput] = useState(initialDashboard.config.identifiers.join('\n'));
   const [enabled, setEnabled] = useState(initialDashboard.config.enabled);
@@ -80,6 +79,11 @@ export function TrackerCronAdminClient({ initialDashboard }: { initialDashboard:
   const [notice, setNotice] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
 
   const latestRun = useMemo(() => dashboard.history[0] ?? null, [dashboard.history]);
+  const dateTimeFormatter = useMemo(() => new Intl.DateTimeFormat(locale, {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+    timeZone: 'UTC',
+  }), [locale]);
 
   async function refreshDashboard() {
     const response = await fetch('/api/tracker/cron/config', { cache: 'no-store' });
@@ -197,8 +201,8 @@ export function TrackerCronAdminClient({ initialDashboard }: { initialDashboard:
           <p className="mt-1 text-sm text-slate-300">Saved identifiers that the cron will refresh.</p>
         </div>
         <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-          <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Latest run</p>
-          <p className="mt-2 text-lg font-semibold text-white">{latestRun ? formatDateTime(latestRun.startedAt) : 'Never'}</p>
+          <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Latest run (UTC)</p>
+          <p className="mt-2 text-lg font-semibold text-white">{latestRun ? formatDateTime(latestRun.startedAt, dateTimeFormatter) : 'Never'}</p>
           <p className="mt-1 text-sm text-slate-300">{latestRun ? `${triggerLabel(latestRun)} · ${latestRun.status}` : 'No executions yet.'}</p>
         </div>
         <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
@@ -279,7 +283,7 @@ export function TrackerCronAdminClient({ initialDashboard }: { initialDashboard:
                       </span>
                       <span className="text-sm text-slate-300">{triggerLabel(run)}</span>
                     </div>
-                    <p className="mt-2 text-sm text-white">{formatDateTime(run.startedAt)}</p>
+                    <p className="mt-2 text-sm text-white">{formatDateTime(run.startedAt, dateTimeFormatter)}</p>
                     <p className="mt-1 text-xs text-slate-400">
                       {run.identifiers.length} identifier{run.identifiers.length === 1 ? '' : 's'} · {run.summary.flightsFetched} flight{run.summary.flightsFetched === 1 ? '' : 's'} stored
                     </p>
@@ -310,7 +314,7 @@ export function TrackerCronAdminClient({ initialDashboard }: { initialDashboard:
                         </span>
                       </div>
                       <p className="mt-2 text-xs text-slate-400">
-                        {result.flightCount} flight result{result.flightCount === 1 ? '' : 's'} · fetched at {formatDateTime(result.fetchedAt)}
+                        {result.flightCount} flight result{result.flightCount === 1 ? '' : 's'} · fetched at {formatDateTime(result.fetchedAt, dateTimeFormatter)}
                       </p>
                       {result.cachedIcao24s.length > 0 ? (
                         <p className="mt-1 text-xs text-slate-300">ICAO24: {result.cachedIcao24s.join(', ')}</p>
