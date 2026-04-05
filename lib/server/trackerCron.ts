@@ -5,6 +5,11 @@ const DEFAULT_DB_NAME = 'tracker';
 const TRACKER_CRON_CONFIG_COLLECTION_NAME = 'tracker_cron_config';
 const TRACKER_CRON_HISTORY_COLLECTION_NAME = 'tracker_cron_history';
 const DEFAULT_HISTORY_LIMIT = 100;
+const DEFAULT_TRACKER_CRON_STALE_RUN_MS = 45_000;
+const parsedTrackerCronStaleRunMs = Number.parseInt(process.env.TRACKER_CRON_STALE_RUN_MS?.trim() ?? '', 10);
+const TRACKER_CRON_STALE_RUN_MS = Number.isFinite(parsedTrackerCronStaleRunMs) && parsedTrackerCronStaleRunMs > 0
+  ? parsedTrackerCronStaleRunMs
+  : DEFAULT_TRACKER_CRON_STALE_RUN_MS;
 export const TRACKER_CRON_SCHEDULE = '*/15 * * * *';
 
 export type TrackerCronTrigger = 'vercel-cron' | 'manual-admin' | 'manual-api';
@@ -275,6 +280,27 @@ async function persistTrackerCronRun(run: TrackerCronRun): Promise<void> {
   }
 }
 
+function finalizeStaleTrackerCronRun(run: TrackerCronRun): TrackerCronRun {
+  if (run.status !== 'running') {
+    return run;
+  }
+
+  if (Date.now() - run.startedAt < TRACKER_CRON_STALE_RUN_MS) {
+    return run;
+  }
+
+  const finishedAt = run.finishedAt ?? (run.startedAt + TRACKER_CRON_STALE_RUN_MS);
+
+  return {
+    ...run,
+    status: 'error',
+    finishedAt,
+    durationMs: Math.max(0, finishedAt - run.startedAt),
+    summary: run.summary ?? summarizeResults(run.results),
+    error: run.error ?? 'Cron execution timed out or was interrupted before completion.',
+  };
+}
+
 export function isTrackerCronStorageConfigured(): boolean {
   return isMongoConfigured();
 }
@@ -344,18 +370,27 @@ export async function listTrackerCronRuns(limit = DEFAULT_HISTORY_LIMIT): Promis
       .limit(safeLimit)
       .toArray();
 
-    return documents.map((document) => ({
-      id: document.id,
-      trigger: document.trigger,
-      requestedBy: document.requestedBy ?? null,
-      status: document.status,
-      startedAt: document.startedAt,
-      finishedAt: document.finishedAt ?? null,
-      durationMs: document.durationMs ?? null,
-      identifiers: normalizeTrackerCronIdentifiers(document.identifiers ?? []),
-      results: Array.isArray(document.results) ? document.results : [],
-      summary: document.summary ?? createEmptySummary(Array.isArray(document.identifiers) ? document.identifiers.length : 0),
-      error: document.error ?? null,
+    return Promise.all(documents.map(async (document) => {
+      const normalizedRun: TrackerCronRun = {
+        id: document.id,
+        trigger: document.trigger,
+        requestedBy: document.requestedBy ?? null,
+        status: document.status,
+        startedAt: document.startedAt,
+        finishedAt: document.finishedAt ?? null,
+        durationMs: document.durationMs ?? null,
+        identifiers: normalizeTrackerCronIdentifiers(document.identifiers ?? []),
+        results: Array.isArray(document.results) ? document.results : [],
+        summary: document.summary ?? createEmptySummary(Array.isArray(document.identifiers) ? document.identifiers.length : 0),
+        error: document.error ?? null,
+      };
+
+      const reconciledRun = finalizeStaleTrackerCronRun(normalizedRun);
+      if (reconciledRun !== normalizedRun) {
+        await persistTrackerCronRun(reconciledRun);
+      }
+
+      return reconciledRun;
     }));
   } catch (error) {
     logMongoWarning(error);
@@ -436,10 +471,23 @@ export async function runTrackerCronJob(options: {
   const results: TrackerCronFlightResult[] = [];
   let runError: string | null = null;
 
+  const persistProgress = async () => {
+    await persistTrackerCronRun({
+      ...baseRun,
+      status: 'running',
+      finishedAt: null,
+      durationMs: Date.now() - startedAt,
+      results: [...results],
+      summary: summarizeResults(results),
+      error: runError,
+    });
+  };
+
   try {
     await ensureOpenSkyAccessToken(false);
   } catch (error) {
     runError = error instanceof Error ? error.message : 'Unable to prefetch the OpenSky access token.';
+    await persistProgress();
   }
 
   for (const identifier of identifiers) {
@@ -474,6 +522,8 @@ export async function runTrackerCronJob(options: {
         error: message,
       });
     }
+
+    await persistProgress();
   }
 
   const finishedAt = Date.now();

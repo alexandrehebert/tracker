@@ -92,6 +92,29 @@ function isTrackerCronRun(value: unknown): value is TrackerCronRun {
     && 'results' in value;
 }
 
+function isOpenSkyTokenStatus(value: unknown): value is TrackerCronDashboard['openSkyToken'] {
+  return typeof value === 'object'
+    && value !== null
+    && 'hasToken' in value
+    && 'cacheSource' in value
+    && 'tokenPreview' in value;
+}
+
+async function readApiPayload<T>(response: Response): Promise<T | { error: string }> {
+  const text = await response.text();
+  if (!text) {
+    return {} as T;
+  }
+
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    return {
+      error: text.trim() || `Request failed with status ${response.status}.`,
+    };
+  }
+}
+
 export function TrackerCronAdminClient({ initialDashboard }: { initialDashboard: TrackerCronDashboard }) {
   const locale = useLocale();
   const [dashboard, setDashboard] = useState(initialDashboard);
@@ -99,9 +122,10 @@ export function TrackerCronAdminClient({ initialDashboard }: { initialDashboard:
   const [enabled, setEnabled] = useState(initialDashboard.config.enabled);
   const [manualToken, setManualToken] = useState('');
   const [manualTokenExpirySeconds, setManualTokenExpirySeconds] = useState('1800');
+  const [revealedToken, setRevealedToken] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [isRunning, setIsRunning] = useState(false);
-  const [isTokenPending, setIsTokenPending] = useState(false);
+  const [activeTokenAction, setActiveTokenAction] = useState<'checking' | 'refreshing' | 'clearing' | 'setting' | 'copying' | null>(null);
   const [notice, setNotice] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
 
   const latestRun = useMemo(() => dashboard.history[0] ?? null, [dashboard.history]);
@@ -115,10 +139,11 @@ export function TrackerCronAdminClient({ initialDashboard }: { initialDashboard:
     : dashboard.openSkyToken.isExpired
       ? 'Expired'
       : 'Cached';
+  const isTokenPending = activeTokenAction !== null;
 
   async function refreshDashboard() {
     const response = await fetch('/api/tracker/cron/config', { cache: 'no-store' });
-    const payload: unknown = await response.json();
+    const payload: unknown = await readApiPayload<TrackerCronDashboard>(response);
 
     if (!response.ok || isErrorResponse(payload) || !isTrackerCronDashboard(payload)) {
       throw new Error(isErrorResponse(payload) ? payload.error : 'Unable to refresh tracker cron dashboard.');
@@ -147,7 +172,7 @@ export function TrackerCronAdminClient({ initialDashboard }: { initialDashboard:
         }),
       });
 
-      const payload: unknown = await response.json();
+      const payload: unknown = await readApiPayload<TrackerCronDashboard>(response);
       if (!response.ok || isErrorResponse(payload) || !isTrackerCronDashboard(payload)) {
         throw new Error(isErrorResponse(payload) ? payload.error : 'Unable to save the cron settings.');
       }
@@ -182,7 +207,7 @@ export function TrackerCronAdminClient({ initialDashboard }: { initialDashboard:
         }),
       });
 
-      const payload: unknown = await response.json();
+      const payload: unknown = await readApiPayload<TrackerCronRun>(response);
       if (!response.ok || isErrorResponse(payload) || !isTrackerCronRun(payload)) {
         throw new Error(isErrorResponse(payload) ? payload.error : 'Unable to start the cron run.');
       }
@@ -202,13 +227,42 @@ export function TrackerCronAdminClient({ initialDashboard }: { initialDashboard:
     }
   }
 
+  async function handleCheckToken() {
+    setActiveTokenAction('checking');
+    setNotice(null);
+
+    try {
+      const response = await fetch('/api/tracker/cron/token', { cache: 'no-store' });
+      const payload: unknown = await readApiPayload<TrackerCronDashboard['openSkyToken']>(response);
+
+      if (!response.ok || isErrorResponse(payload) || !isOpenSkyTokenStatus(payload)) {
+        throw new Error(isErrorResponse(payload) ? payload.error : 'Unable to check the OpenSky token cache.');
+      }
+
+      const nextDashboard = await refreshDashboard();
+      setNotice({
+        type: 'info',
+        text: nextDashboard.openSkyToken.hasToken
+          ? `Token status checked: ${nextDashboard.openSkyToken.isExpired ? 'expired' : 'cached'} (${nextDashboard.openSkyToken.cacheSource}).`
+          : 'No shared OpenSky token is currently cached.',
+      });
+    } catch (error) {
+      setNotice({
+        type: 'error',
+        text: error instanceof Error ? error.message : 'Unable to check the OpenSky token cache.',
+      });
+    } finally {
+      setActiveTokenAction(null);
+    }
+  }
+
   async function handleTokenAction(action: 'refresh' | 'clear' | 'set') {
     if (action === 'set' && !manualToken.trim()) {
       setNotice({ type: 'error', text: 'Paste an OpenSky access token before saving it.' });
       return;
     }
 
-    setIsTokenPending(true);
+    setActiveTokenAction(action === 'refresh' ? 'refreshing' : action === 'clear' ? 'clearing' : 'setting');
     setNotice(null);
 
     try {
@@ -219,14 +273,21 @@ export function TrackerCronAdminClient({ initialDashboard }: { initialDashboard:
         },
         body: JSON.stringify({
           action,
+          includeToken: action !== 'clear',
           accessToken: action === 'set' ? manualToken : undefined,
           expiresInSeconds: action === 'set' ? Number.parseInt(manualTokenExpirySeconds, 10) : undefined,
         }),
       });
 
-      const payload: unknown = await response.json();
-      if (!response.ok || isErrorResponse(payload)) {
+      const payload: unknown = await readApiPayload<TrackerCronDashboard['openSkyToken']>(response);
+      if (!response.ok || isErrorResponse(payload) || !isOpenSkyTokenStatus(payload)) {
         throw new Error(isErrorResponse(payload) ? payload.error : 'Unable to update the OpenSky token cache.');
+      }
+
+      if (payload.accessToken) {
+        setRevealedToken(payload.accessToken);
+      } else if (action === 'clear') {
+        setRevealedToken(null);
       }
 
       await refreshDashboard();
@@ -248,7 +309,41 @@ export function TrackerCronAdminClient({ initialDashboard }: { initialDashboard:
         text: error instanceof Error ? error.message : 'Unable to update the OpenSky token cache.',
       });
     } finally {
-      setIsTokenPending(false);
+      setActiveTokenAction(null);
+    }
+  }
+
+  async function handleCopyActualToken() {
+    setActiveTokenAction('copying');
+    setNotice(null);
+
+    try {
+      const response = await fetch('/api/tracker/cron/token?includeToken=1', { cache: 'no-store' });
+      const payload: unknown = await readApiPayload<TrackerCronDashboard['openSkyToken']>(response);
+
+      if (!response.ok || isErrorResponse(payload) || !isOpenSkyTokenStatus(payload)) {
+        throw new Error(isErrorResponse(payload) ? payload.error : 'Unable to load the actual OpenSky token.');
+      }
+
+      if (!payload.accessToken) {
+        throw new Error('No shared OpenSky token is currently cached.');
+      }
+
+      setRevealedToken(payload.accessToken);
+
+      if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+        await navigator.clipboard.writeText(payload.accessToken);
+        setNotice({ type: 'success', text: 'Actual OpenSky token copied to clipboard.' });
+      } else {
+        setNotice({ type: 'info', text: 'Actual token loaded below. Copy it manually from the text box.' });
+      }
+    } catch (error) {
+      setNotice({
+        type: 'error',
+        text: error instanceof Error ? error.message : 'Unable to copy the OpenSky token.',
+      });
+    } finally {
+      setActiveTokenAction(null);
     }
   }
 
@@ -375,11 +470,11 @@ export function TrackerCronAdminClient({ initialDashboard }: { initialDashboard:
             <div className="mt-4 flex flex-wrap gap-3">
               <button
                 type="button"
-                onClick={() => void refreshDashboard().then(() => setNotice({ type: 'info', text: 'OpenSky token status refreshed.' })).catch((error) => setNotice({ type: 'error', text: error instanceof Error ? error.message : 'Unable to refresh the OpenSky token status.' }))}
+                onClick={() => void handleCheckToken()}
                 disabled={isTokenPending}
                 className="inline-flex items-center justify-center rounded-full border border-white/15 bg-white/5 px-4 py-2 text-sm font-semibold text-slate-100 transition hover:border-sky-300/60 hover:bg-sky-500/10 disabled:cursor-wait disabled:opacity-70"
               >
-                Check token
+                {activeTokenAction === 'checking' ? 'Checking…' : 'Check token'}
               </button>
               <button
                 type="button"
@@ -387,7 +482,15 @@ export function TrackerCronAdminClient({ initialDashboard }: { initialDashboard:
                 disabled={isTokenPending}
                 className="inline-flex items-center justify-center rounded-full bg-emerald-500 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-emerald-400 disabled:cursor-wait disabled:opacity-70"
               >
-                {isTokenPending ? 'Working…' : 'Fetch token now'}
+                {activeTokenAction === 'refreshing' ? 'Fetching…' : 'Fetch token now'}
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleCopyActualToken()}
+                disabled={isTokenPending}
+                className="inline-flex items-center justify-center rounded-full border border-sky-400/40 bg-sky-500/10 px-4 py-2 text-sm font-semibold text-sky-100 transition hover:bg-sky-500/20 disabled:cursor-wait disabled:opacity-70"
+              >
+                {activeTokenAction === 'copying' ? 'Copying…' : 'Copy actual token'}
               </button>
               <button
                 type="button"
@@ -395,9 +498,30 @@ export function TrackerCronAdminClient({ initialDashboard }: { initialDashboard:
                 disabled={isTokenPending}
                 className="inline-flex items-center justify-center rounded-full border border-rose-400/40 bg-rose-500/10 px-4 py-2 text-sm font-semibold text-rose-100 transition hover:bg-rose-500/20 disabled:cursor-wait disabled:opacity-70"
               >
-                Clear token
+                {activeTokenAction === 'clearing' ? 'Clearing…' : 'Clear token'}
               </button>
             </div>
+
+            {revealedToken ? (
+              <div className="mt-5 rounded-2xl border border-sky-400/30 bg-sky-500/10 p-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <p className="text-sm font-semibold text-sky-100">Actual token loaded in this browser session</p>
+                  <button
+                    type="button"
+                    onClick={() => void handleCopyActualToken()}
+                    disabled={isTokenPending}
+                    className="inline-flex items-center justify-center rounded-full border border-sky-300/40 bg-sky-500/10 px-3 py-1.5 text-xs font-semibold text-sky-100 transition hover:bg-sky-500/20 disabled:cursor-wait disabled:opacity-70"
+                  >
+                    Copy again
+                  </button>
+                </div>
+                <textarea
+                  readOnly
+                  value={revealedToken}
+                  className="mt-3 min-h-24 w-full rounded-2xl border border-white/10 bg-slate-950 px-3 py-3 font-mono text-xs text-slate-100 outline-none"
+                />
+              </div>
+            ) : null}
 
             <div className="mt-5 border-t border-white/10 pt-4">
               <label className="block text-sm font-medium text-slate-200" htmlFor="manual-opensky-token">
@@ -428,7 +552,7 @@ export function TrackerCronAdminClient({ initialDashboard }: { initialDashboard:
                   disabled={isTokenPending}
                   className="inline-flex items-center justify-center rounded-full bg-sky-500 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-sky-400 disabled:cursor-wait disabled:opacity-70"
                 >
-                  Save token to Mongo
+                  {activeTokenAction === 'setting' ? 'Saving token…' : 'Save token to Mongo'}
                 </button>
               </div>
             </div>

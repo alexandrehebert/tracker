@@ -61,6 +61,7 @@ export type OpenSkyTokenStatus = {
   cacheSource: 'memory' | 'mongo' | 'none';
   storageSource: OpenSkyStoredTokenSource | null;
   tokenPreview: string | null;
+  accessToken: string | null;
   fetchedAt: number | null;
   expiresAt: number | null;
   expiresInMs: number | null;
@@ -186,7 +187,11 @@ function maskOpenSkyToken(value: string | null | undefined): string | null {
   return `${trimmedValue.slice(0, 6)}…${trimmedValue.slice(-4)}`;
 }
 
-function buildOpenSkyTokenStatus(token: CachedOpenSkyToken | null, cacheSource: OpenSkyTokenStatus['cacheSource']): OpenSkyTokenStatus {
+function buildOpenSkyTokenStatus(
+  token: CachedOpenSkyToken | null,
+  cacheSource: OpenSkyTokenStatus['cacheSource'],
+  includeAccessToken = false,
+): OpenSkyTokenStatus {
   const expiresInMs = token ? token.expiresAt - Date.now() : null;
 
   return {
@@ -196,6 +201,7 @@ function buildOpenSkyTokenStatus(token: CachedOpenSkyToken | null, cacheSource: 
     cacheSource,
     storageSource: token?.storageSource ?? null,
     tokenPreview: maskOpenSkyToken(token?.accessToken),
+    accessToken: includeAccessToken ? (token?.accessToken ?? null) : null,
     fetchedAt: token?.fetchedAt ?? null,
     expiresAt: token?.expiresAt ?? null,
     expiresInMs,
@@ -313,17 +319,17 @@ async function clearPersistedOpenSkyToken(): Promise<void> {
   }
 }
 
-export async function getOpenSkyTokenStatus(): Promise<OpenSkyTokenStatus> {
+export async function getOpenSkyTokenStatus(includeAccessToken = false): Promise<OpenSkyTokenStatus> {
   if (isOpenSkyTokenValid(tokenCache, true)) {
-    return buildOpenSkyTokenStatus(tokenCache, 'memory');
+    return buildOpenSkyTokenStatus(tokenCache, 'memory', includeAccessToken);
   }
 
   const storedToken = await readStoredOpenSkyToken(true);
   if (storedToken) {
-    return buildOpenSkyTokenStatus(storedToken, 'mongo');
+    return buildOpenSkyTokenStatus(storedToken, 'mongo', includeAccessToken);
   }
 
-  return buildOpenSkyTokenStatus(null, 'none');
+  return buildOpenSkyTokenStatus(null, 'none', includeAccessToken);
 }
 
 export async function setStoredOpenSkyAccessToken(accessToken: string, expiresInSeconds = 1800): Promise<OpenSkyTokenStatus> {

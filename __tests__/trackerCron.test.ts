@@ -255,4 +255,50 @@ describe('tracker cron config and history', () => {
     expect(dashboard.history[1]?.id).toBe(firstRun.id);
     expect(dashboard.history[1]?.results).toHaveLength(2);
   });
+
+  it('marks stale running executions as timed out on the dashboard', async () => {
+    const historyStore = getMockMongoCollection('tracker-test', 'tracker_cron_history');
+    const startedAt = Date.now() - 120_000;
+
+    historyStore.set('tracker-cron:stale-run', {
+      _id: 'tracker-cron:stale-run',
+      id: 'tracker-cron:stale-run',
+      trigger: 'vercel-cron',
+      requestedBy: 'vercel-cron/1.0',
+      status: 'running',
+      startedAt,
+      finishedAt: null,
+      durationMs: null,
+      identifiers: ['AF123'],
+      results: [
+        {
+          identifier: 'AF123',
+          status: 'matched',
+          fetchedAt: startedAt + 5_000,
+          matchedIdentifiers: ['AF123'],
+          notFoundIdentifiers: [],
+          flightCount: 1,
+          cachedIcao24s: ['abc123'],
+          error: null,
+        },
+      ],
+      summary: {
+        totalIdentifiers: 1,
+        matchedIdentifiers: 1,
+        notFoundIdentifiers: 0,
+        errors: 0,
+        flightsFetched: 1,
+      },
+      error: null,
+    });
+
+    const { getTrackerCronDashboard } = await loadTrackerCronModule();
+    const dashboard = await getTrackerCronDashboard(10);
+
+    expect(dashboard.history[0]?.id).toBe('tracker-cron:stale-run');
+    expect(dashboard.history[0]?.status).toBe('error');
+    expect(dashboard.history[0]?.error).toContain('timed out');
+    expect(dashboard.history[0]?.finishedAt).not.toBeNull();
+    expect(dashboard.history[0]?.durationMs).toBeGreaterThan(0);
+  });
 });
