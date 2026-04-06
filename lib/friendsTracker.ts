@@ -175,20 +175,78 @@ function buildDefaultDemoTrip(now = Date.now()): FriendsTrackerTripConfig {
         name: 'Chloe Demo',
         flights: [
           {
-            id: 'demo-leg-3a',
+            id: 'demo-leg-3',
             flightNumber: 'TEST3',
-            departureTime: new Date(now - (5 * 60 * 60 * 1000)).toISOString(),
-            from: 'MEX',
-            to: 'ATL',
-            note: 'Preset demo leg: first hop already completed.',
-          },
-          {
-            id: 'demo-leg-3b',
-            flightNumber: 'DL045',
-            departureTime: new Date(now + (90 * 60 * 1000)).toISOString(),
+            departureTime: new Date(now - (3 * 60 * 60 * 1000)).toISOString(),
             from: 'ATL',
             to: 'JFK',
-            note: 'Preset demo connection into New York.',
+            note: 'Preset demo leg: already arrived at New York JFK.',
+          },
+        ],
+      },
+      {
+        id: 'demo-friend-4',
+        name: 'Diego Demo',
+        flights: [
+          {
+            id: 'demo-leg-4a',
+            flightNumber: 'TEST5',
+            departureTime: new Date(now - (4 * 60 * 60 * 1000)).toISOString(),
+            from: 'BCN',
+            to: 'AMS',
+            note: 'Preset demo leg: landed at the connection stop in Amsterdam.',
+          },
+          {
+            id: 'demo-leg-4b',
+            flightNumber: 'KL641',
+            departureTime: new Date(now + (70 * 60 * 1000)).toISOString(),
+            from: 'AMS',
+            to: 'JFK',
+            note: 'Preset demo leg: upcoming connection from Amsterdam to New York.',
+          },
+        ],
+      },
+      {
+        id: 'demo-friend-5',
+        name: 'Emma Demo',
+        flights: [
+          {
+            id: 'demo-leg-5a',
+            flightNumber: 'UX1153',
+            departureTime: new Date(now - (5 * 60 * 60 * 1000)).toISOString(),
+            from: 'LIS',
+            to: 'MAD',
+            note: 'Preset demo leg: feeder hop already completed into Madrid.',
+          },
+          {
+            id: 'demo-leg-5b',
+            flightNumber: 'TEST4',
+            departureTime: new Date(now - (85 * 60 * 1000)).toISOString(),
+            from: 'MAD',
+            to: 'JFK',
+            note: 'Preset demo leg: currently flying the long-haul connection to New York.',
+          },
+        ],
+      },
+      {
+        id: 'demo-friend-6',
+        name: 'Farah Demo',
+        flights: [
+          {
+            id: 'demo-leg-6a',
+            flightNumber: 'AF1840',
+            departureTime: new Date(now + (7 * 60 * 60 * 1000)).toISOString(),
+            from: 'FCO',
+            to: 'CDG',
+            note: 'Preset demo leg: future feeder flight to Paris.',
+          },
+          {
+            id: 'demo-leg-6b',
+            flightNumber: 'AF022',
+            departureTime: new Date(now + (10 * 60 * 60 * 1000)).toISOString(),
+            from: 'CDG',
+            to: 'JFK',
+            note: 'Preset demo leg: not started yet and still awaiting telemetry.',
           },
         ],
       },
@@ -197,11 +255,19 @@ function buildDefaultDemoTrip(now = Date.now()): FriendsTrackerTripConfig {
 }
 
 function ensureDemoTrip(trips: FriendsTrackerTripConfig[]): FriendsTrackerTripConfig[] {
-  if (trips.some((trip) => trip.id === DEFAULT_DEMO_TRIP_ID)) {
-    return trips;
-  }
+  const freshDemoTrip = buildDefaultDemoTrip();
+  let hasDemoTrip = false;
 
-  return [...trips, buildDefaultDemoTrip()];
+  const refreshedTrips = trips.map((trip) => {
+    if (trip.id !== DEFAULT_DEMO_TRIP_ID) {
+      return trip;
+    }
+
+    hasDemoTrip = true;
+    return freshDemoTrip;
+  });
+
+  return hasDemoTrip ? refreshedTrips : [...refreshedTrips, freshDemoTrip];
 }
 
 export function normalizeFriendFlightLeg(

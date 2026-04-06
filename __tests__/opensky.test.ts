@@ -396,17 +396,17 @@ describe('searchFlights', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
-  it('returns realistic preset demo flights for TEST1, TEST2, and TEST3 searches', async () => {
+  it('returns realistic preset demo flights for TEST1 through TEST5 searches', async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal('fetch', fetchMock);
 
     const searchFlights = await loadSearchFlights();
-    const result = await searchFlights('TEST1,TEST2,TEST3');
+    const result = await searchFlights('TEST1,TEST2,TEST3,TEST4,TEST5');
 
-    expect(result.requestedIdentifiers).toEqual(['TEST1', 'TEST2', 'TEST3']);
-    expect(result.matchedIdentifiers).toEqual(['TEST1', 'TEST2', 'TEST3']);
+    expect(result.requestedIdentifiers).toEqual(['TEST1', 'TEST2', 'TEST3', 'TEST4', 'TEST5']);
+    expect(result.matchedIdentifiers).toEqual(['TEST1', 'TEST2', 'TEST3', 'TEST4', 'TEST5']);
     expect(result.notFoundIdentifiers).toEqual([]);
-    expect(result.flights).toHaveLength(3);
+    expect(result.flights).toHaveLength(5);
     expect(fetchMock).not.toHaveBeenCalled();
 
     expect(result.flights).toEqual(expect.arrayContaining([
@@ -440,17 +440,55 @@ describe('searchFlights', () => {
           onGround: true,
         }),
         route: expect.objectContaining({
-          departureAirport: 'MEX',
-          arrivalAirport: 'ATL',
+          departureAirport: 'ATL',
+          arrivalAirport: 'JFK',
+        }),
+      }),
+      expect.objectContaining({
+        callsign: 'IBE6253',
+        matchedBy: expect.arrayContaining(['TEST4']),
+        onGround: false,
+        route: expect.objectContaining({
+          departureAirport: 'MAD',
+          arrivalAirport: 'JFK',
+        }),
+      }),
+      expect.objectContaining({
+        callsign: 'KLM1698',
+        matchedBy: expect.arrayContaining(['TEST5']),
+        onGround: true,
+        route: expect.objectContaining({
+          departureAirport: 'BCN',
+          arrivalAirport: 'AMS',
         }),
       }),
     ]));
 
     const groundedFlight = result.flights.find((flight) => flight.callsign === 'DAL220');
-    expect(groundedFlight?.originPoint?.longitude).toBeGreaterThan(-100);
-    expect(groundedFlight?.originPoint?.longitude).toBeLessThan(-98);
-    expect(groundedFlight?.originPoint?.latitude).toBeGreaterThan(19);
-    expect(groundedFlight?.originPoint?.latitude).toBeLessThan(20);
+    expect(groundedFlight?.originPoint?.longitude).toBeGreaterThan(-85);
+    expect(groundedFlight?.originPoint?.longitude).toBeLessThan(-84);
+    expect(groundedFlight?.originPoint?.latitude).toBeGreaterThan(33);
+    expect(groundedFlight?.originPoint?.latitude).toBeLessThan(34);
+  });
+
+  it('keeps demo telemetry available when preset and non-preset identifiers are mixed', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    const searchFlights = await loadSearchFlights();
+    const result = await searchFlights('TEST2,DL045');
+
+    expect(result.requestedIdentifiers).toEqual(['TEST2', 'DL045']);
+    expect(result.matchedIdentifiers).toEqual(['TEST2']);
+    expect(result.notFoundIdentifiers).toEqual(['DL045']);
+    expect(result.flights).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        callsign: 'BAW117',
+        matchedBy: expect.arrayContaining(['TEST2']),
+        onGround: false,
+      }),
+    ]));
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 
   it('lets the provider allowlist disable OpenSky before any network call', async () => {

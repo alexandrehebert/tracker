@@ -40,6 +40,7 @@ const AUTO_REFRESH_MS = 60_000;
 const MIN_MAP_LOADING_MS = 2_000;
 const TIMELINE_MIN_SEGMENT_DISTANCE_KM = 600;
 const TIMELINE_FALLBACK_SEGMENT_DISTANCE_KM = 1_200;
+const TIMELINE_NODE_SIZE_PX = 14;
 
 interface FriendsTrackerClientProps {
   map: WorldMapPayload;
@@ -125,6 +126,23 @@ function computeAirportDistanceKm(from: FlightMapAirportMarker, to: FlightMapAir
   return earthRadiusKm * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 }
 
+function normalizeHeadingDegrees(value: number): number {
+  const normalized = value % 360;
+  return normalized < 0 ? normalized + 360 : normalized;
+}
+
+function computeAirportBearingDegrees(from: FlightMapAirportMarker, to: FlightMapAirportMarker): number {
+  const fromLatitude = toRadians(from.latitude);
+  const toLatitude = toRadians(to.latitude);
+  const longitudeDelta = toRadians(to.longitude - from.longitude);
+
+  const y = Math.sin(longitudeDelta) * Math.cos(toLatitude);
+  const x = Math.cos(fromLatitude) * Math.sin(toLatitude)
+    - Math.sin(fromLatitude) * Math.cos(toLatitude) * Math.cos(longitudeDelta);
+
+  return normalizeHeadingDegrees((Math.atan2(y, x) * 180) / Math.PI);
+}
+
 function estimateTimelineSegmentWeight(distanceKm: number | null): number {
   const normalizedDistanceKm = Math.max(
     distanceKm ?? TIMELINE_FALLBACK_SEGMENT_DISTANCE_KM,
@@ -173,7 +191,7 @@ function computeTimelineCursorPosition(
     return null;
   }
 
-  // Find the first active (matched) leg in the current trip.
+  // Find the first matched leg that still looks actively in motion.
   for (let i = 0; i < currentTripLegs.length; i++) {
     const leg = currentTripLegs[i]!;
     const status = friendStatuses.find((s) => s.leg.id === leg.id);
@@ -183,21 +201,28 @@ function computeTimelineCursorPosition(
     }
 
     const flight = status.flight;
-    // Estimate progress within the leg using firstSeen → lastContact timestamps.
     const firstSeenMs = flight.route.firstSeen != null ? flight.route.firstSeen * 1000 : null;
     const lastSeenMs = flight.route.lastSeen != null ? flight.route.lastSeen * 1000 : null;
 
-    let progress = 0.5; // default: mid-flight
-    if (firstSeenMs != null && lastSeenMs != null && lastSeenMs > firstSeenMs) {
-      progress = Math.min(Math.max((now - firstSeenMs) / (lastSeenMs - firstSeenMs), 0.1), 0.9);
+    if (flight.onGround) {
+      if (lastSeenMs != null) {
+        return i + 1;
+      }
+
+      return i;
     }
 
-    // Cursor position: leg index i maps to airport segment [i, i+1].
+    let progress = 0.5;
+    if (firstSeenMs != null) {
+      const effectiveEndMs = lastSeenMs ?? now;
+      if (effectiveEndMs > firstSeenMs) {
+        progress = Math.min(Math.max((now - firstSeenMs) / (effectiveEndMs - firstSeenMs), 0.1), 0.9);
+      }
+    }
+
     return i + progress;
   }
 
-  // No active leg — derive position from departure times.
-  // Find the last leg whose departure is in the past.
   let lastPastLegIndex = -1;
   for (let i = 0; i < currentTripLegs.length; i++) {
     const dep = Date.parse(currentTripLegs[i]!.departureTime);
@@ -207,7 +232,6 @@ function computeTimelineCursorPosition(
   }
 
   if (lastPastLegIndex >= 0) {
-    // Cursor at the arrival airport of the last completed leg (= airport index lastPastLegIndex + 1).
     return lastPastLegIndex + 1;
   }
 
@@ -267,12 +291,22 @@ function FriendTimelineCard({
   // Airport at index j is completed if leg j-1 is done and not currently active.
   const activeLegIndex = currentTripLegs.findIndex((leg) => {
     const s = friendStatuses.find((st) => st.leg.id === leg.id);
-    return s?.status === 'matched';
+    return s?.status === 'matched' && !s.flight?.onGround;
   });
 
   const completedAirportCount = activeLegIndex >= 0
     ? activeLegIndex // airports 0..activeLegIndex-1 are fully done; activeLegIndex is departure of current leg
     : (cursorRaw != null ? Math.floor(cursorRaw) : 0);
+
+  const clampedCursorFraction = cursorFraction == null
+    ? null
+    : Math.min(Math.max(cursorFraction, 0), 1);
+
+  const cursorLeft = clampedCursorFraction == null
+    ? null
+    : `calc(${TIMELINE_NODE_SIZE_PX / 2}px + ${clampedCursorFraction} * (100% - ${TIMELINE_NODE_SIZE_PX}px))`;
+
+  const cursorRotationDegrees = activeLegIndex >= 0 ? 45 : -45;
 
   // Last seen: latest lastContact among all matched legs for this friend.
   const lastContactSeconds = friendStatuses.reduce<number | null>((best, s) => {
@@ -285,6 +319,38 @@ function FriendTimelineCard({
   const activeLegFlightNumber = activeLegIndex >= 0
     ? currentTripLegs[activeLegIndex]?.flightNumber ?? null
     : null;
+  const cursorLegIndex = cursorRaw == null || currentTripLegs.length === 0
+    ? null
+    : Math.min(Math.max(Math.floor(cursorRaw), 0), currentTripLegs.length - 1);
+  const cursorFlightNumber = cursorLegIndex != null
+    ? currentTripLegs[cursorLegIndex]?.flightNumber ?? activeLegFlightNumber
+    : activeLegFlightNumber;
+
+  const normalizedDestinationAirport = destinationAirport?.toUpperCase().trim() ?? null;
+  const hasArrivedAtDestination = normalizedDestinationAirport != null
+    && airports.length > 0
+    && airports[airports.length - 1] === normalizedDestinationAirport
+    && cursorRaw != null
+    && cursorRaw >= airports.length - 1;
+  const hasStartedTrip = currentTripLegs.some((leg) => {
+    const departureMs = Date.parse(leg.departureTime);
+    return !Number.isNaN(departureMs) && departureMs <= now;
+  });
+  const hasFutureLeg = currentTripLegs.some((leg) => {
+    const departureMs = Date.parse(leg.departureTime);
+    return !Number.isNaN(departureMs) && departureMs > now;
+  });
+  const hasNotStartedTrip = !hasArrivedAtDestination && activeLegIndex < 0 && !hasStartedTrip;
+  const isOnConnectionStop = !hasArrivedAtDestination && activeLegIndex < 0 && hasStartedTrip && hasFutureLeg;
+  const tripProgressLabel = hasArrivedAtDestination
+    ? 'arrived'
+    : activeLegIndex >= 0
+    ? 'in flight'
+    : hasNotStartedTrip
+    ? 'not started'
+    : isOnConnectionStop
+    ? 'connection'
+    : 'outbound';
 
   const initials = getFriendInitials(friend.name);
   const hasAnyMatch = friendStatuses.some((s) => s.status === 'matched');
@@ -323,7 +389,7 @@ function FriendTimelineCard({
             {currentTripLegs.length} leg{currentTripLegs.length === 1 ? '' : 's'}
             {destinationAirport ? (
               <span className="ml-1 text-slate-500">
-                · {activeLegIndex >= 0 ? 'in flight' : (cursorRaw != null && cursorRaw >= airports.length - 1 && airports[airports.length - 1] === destinationAirport ? 'arrived' : 'outbound')}
+                · {tripProgressLabel}
               </span>
             ) : null}
           </div>
@@ -366,7 +432,7 @@ function FriendTimelineCard({
                       ? `${segment.fromAirport} to ${segment.toAirport} · ~${Math.round(segment.distanceKm).toLocaleString()} km`
                       : `${segment.fromAirport} to ${segment.toAirport}`}
                   >
-                    <div className="flex shrink-0 flex-col items-center" style={{ minWidth: 0 }}>
+                    <div className="relative h-8 w-[14px] shrink-0" style={{ minWidth: `${TIMELINE_NODE_SIZE_PX}px` }}>
                       <div
                         className={`h-3.5 w-3.5 rounded-full border transition-colors ${
                           isDest
@@ -377,7 +443,7 @@ function FriendTimelineCard({
                         }`}
                       />
                       <span
-                        className={`mt-1 max-w-[40px] truncate text-center text-[9px] leading-none ${
+                        className={`absolute left-1/2 top-[18px] w-10 -translate-x-1/2 truncate text-center text-[9px] leading-none ${
                           isDest
                             ? 'font-semibold text-amber-300'
                             : isCompleted || isActive
@@ -410,7 +476,7 @@ function FriendTimelineCard({
                   : (cursorRaw != null && airports.length - 1 <= cursorRaw);
 
                 return (
-                  <div className="flex shrink-0 flex-col items-center" style={{ minWidth: 0 }}>
+                  <div className="relative h-8 w-[14px] shrink-0" style={{ minWidth: `${TIMELINE_NODE_SIZE_PX}px` }}>
                     <div
                       className={`h-3.5 w-3.5 rounded-full border transition-colors ${
                         isDest
@@ -421,7 +487,7 @@ function FriendTimelineCard({
                       }`}
                     />
                     <span
-                      className={`mt-1 max-w-[40px] truncate text-center text-[9px] leading-none ${
+                      className={`absolute left-1/2 top-[18px] w-10 -translate-x-1/2 truncate text-center text-[9px] leading-none ${
                         isDest
                           ? 'font-semibold text-amber-300'
                           : isCompleted
@@ -436,18 +502,21 @@ function FriendTimelineCard({
                 );
               })()}
 
-              {/* Cursor (plane icon) — floats above the track */}
-              {cursorFraction != null && (
+              {/* Cursor (plane icon) — anchored directly on the current timeline position */}
+              {cursorLeft != null && (
                 <div
-                  className="pointer-events-none absolute top-0"
+                  className="pointer-events-none absolute z-10 flex h-5 w-5 items-center justify-center rounded-full border border-cyan-300/80 bg-slate-950/90 shadow-[0_0_0_2px_rgba(8,47,73,0.45)]"
                   style={{
-                    left: `calc(${Math.min(cursorFraction * 100, 100)}% - 6px)`,
+                    left: cursorLeft,
+                    top: '7px',
+                    transform: 'translate(-50%, -50%)',
                     transition: 'left 0.5s ease',
                   }}
                 >
                   <Plane
-                    className="h-3 w-3 -rotate-45 text-cyan-300 drop-shadow-[0_0_4px_rgba(103,232,249,0.8)]"
-                    aria-label={activeLegFlightNumber ? `Flight ${activeLegFlightNumber}` : 'Current position'}
+                    className="h-3 w-3 text-cyan-200 drop-shadow-[0_0_4px_rgba(103,232,249,0.75)]"
+                    style={{ transform: `rotate(${cursorRotationDegrees}deg)` }}
+                    aria-label={cursorFlightNumber ? `Flight ${cursorFlightNumber}` : 'Current position'}
                   />
                 </div>
               )}
@@ -455,15 +524,17 @@ function FriendTimelineCard({
           </div>
 
           {/* Flight number label under cursor */}
-          {activeLegFlightNumber ? (
-            <div
-              className="mt-1 text-[10px] text-cyan-400"
-              style={{
-                marginLeft: `calc(${Math.min((cursorFraction ?? 0) * 100, 95)}% - 14px)`,
-                transition: 'margin-left 0.5s ease',
-              }}
-            >
-              {activeLegFlightNumber}
+          {cursorFlightNumber && cursorLeft != null ? (
+            <div className="relative mt-1 h-3">
+              <div
+                className="absolute -translate-x-1/2 text-[10px] text-cyan-400"
+                style={{
+                  left: cursorLeft,
+                  transition: 'left 0.5s ease',
+                }}
+              >
+                {cursorFlightNumber}
+              </div>
             </div>
           ) : null}
         </div>

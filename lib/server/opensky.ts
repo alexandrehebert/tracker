@@ -98,10 +98,14 @@ type SearchFlightsOptions = {
   forceRefresh?: boolean;
 };
 
-type DemoFlightIdentifier = 'TEST1' | 'TEST2' | 'TEST3';
+type DemoFlightIdentifier = 'TEST1' | 'TEST2' | 'TEST3' | 'TEST4' | 'TEST5';
 
 function isDemoFlightIdentifier(value: string): value is DemoFlightIdentifier {
-  return value === 'TEST1' || value === 'TEST2' || value === 'TEST3';
+  return value === 'TEST1'
+    || value === 'TEST2'
+    || value === 'TEST3'
+    || value === 'TEST4'
+    || value === 'TEST5';
 }
 
 function createDemoFlightPoint(params: {
@@ -307,73 +311,57 @@ function createDemoTrackedFlight(identifier: DemoFlightIdentifier, nowSeconds = 
     case 'TEST3': {
       const track = [
         createDemoFlightPoint({
-          time: nowSeconds - 13_800,
-          latitude: 19.4361,
-          longitude: -99.0719,
+          time: nowSeconds - 4_800,
+          latitude: 33.6407,
+          longitude: -84.4277,
           altitude: 0,
-          heading: 40,
+          heading: 45,
           onGround: true,
         }),
         createDemoFlightPoint({
-          time: nowSeconds - 13_500,
-          latitude: 19.593,
-          longitude: -98.804,
-          altitude: 2_400,
-          heading: 42,
+          time: nowSeconds - 4_200,
+          latitude: 33.92,
+          longitude: -83.56,
+          altitude: 2_100,
+          heading: 48,
           onGround: false,
         }),
         createDemoFlightPoint({
-          time: nowSeconds - 10_800,
-          latitude: 22.156,
-          longitude: -100.987,
-          altitude: 10_200,
-          heading: 53,
+          time: nowSeconds - 3_000,
+          latitude: 35.84,
+          longitude: -80.52,
+          altitude: 9_600,
+          heading: 51,
           onGround: false,
         }),
         createDemoFlightPoint({
-          time: nowSeconds - 7_200,
-          latitude: 27.542,
-          longitude: -99.486,
-          altitude: 10_950,
-          heading: 61,
-          onGround: false,
-        }),
-        createDemoFlightPoint({
-          time: nowSeconds - 3_600,
-          latitude: 31.204,
-          longitude: -95.614,
-          altitude: 10_700,
-          heading: 79,
-          onGround: false,
-        }),
-        createDemoFlightPoint({
-          time: nowSeconds - 1_200,
-          latitude: 33.991,
-          longitude: -85.114,
-          altitude: 3_200,
-          heading: 119,
+          time: nowSeconds - 1_800,
+          latitude: 38.22,
+          longitude: -77.34,
+          altitude: 8_400,
+          heading: 56,
           onGround: false,
         }),
         createDemoFlightPoint({
           time: nowSeconds - 600,
-          latitude: 33.774,
-          longitude: -84.742,
-          altitude: 1_050,
-          heading: 121,
+          latitude: 40.31,
+          longitude: -74.62,
+          altitude: 2_300,
+          heading: 67,
           onGround: false,
         }),
         createDemoFlightPoint({
-          time: nowSeconds - 240,
-          latitude: 33.648,
-          longitude: -84.44,
-          altitude: 0,
-          heading: 95,
-          onGround: true,
+          time: nowSeconds - 180,
+          latitude: 40.598,
+          longitude: -73.91,
+          altitude: 350,
+          heading: 80,
+          onGround: false,
         }),
         createDemoFlightPoint({
           time: nowSeconds - 90,
-          latitude: 33.6407,
-          longitude: -84.4277,
+          latitude: 40.6413,
+          longitude: -73.7781,
           altitude: 0,
           heading: 89,
           onGround: true,
@@ -400,9 +388,9 @@ function createDemoTrackedFlight(identifier: DemoFlightIdentifier, nowSeconds = 
         squawk: '1453',
         category: 1,
         route: {
-          departureAirport: 'MEX',
-          arrivalAirport: 'ATL',
-          firstSeen: nowSeconds - 13_800,
+          departureAirport: 'ATL',
+          arrivalAirport: 'JFK',
+          firstSeen: nowSeconds - 4_800,
           lastSeen: nowSeconds - 120,
         },
         flightNumber: 'DL 220',
@@ -424,13 +412,223 @@ function createDemoTrackedFlight(identifier: DemoFlightIdentifier, nowSeconds = 
             'opensky',
             'used',
             true,
-            'Built-in demo result for TEST3: Delta DAL220 has completed its flight from Mexico City to Atlanta and is now grounded after landing.',
+            'Built-in demo result for TEST3: Delta DAL220 has completed its flight from Atlanta to New York JFK and is now grounded at the destination.',
             {
               demoIdentifier: identifier,
               scenario: 'landed',
               route: {
-                departureAirport: 'MEX',
-                arrivalAirport: 'ATL',
+                departureAirport: 'ATL',
+                arrivalAirport: 'JFK',
+              },
+            },
+          ),
+        ],
+      };
+    }
+    case 'TEST4': {
+      const track = [
+        createDemoFlightPoint({
+          time: nowSeconds - 5_400,
+          latitude: 40.4722,
+          longitude: -3.5608,
+          altitude: 0,
+          heading: 86,
+          onGround: true,
+        }),
+        createDemoFlightPoint({
+          time: nowSeconds - 4_900,
+          latitude: 40.83,
+          longitude: -4.22,
+          altitude: 2_300,
+          heading: 88,
+          onGround: false,
+        }),
+        createDemoFlightPoint({
+          time: nowSeconds - 3_600,
+          latitude: 42.75,
+          longitude: -11.8,
+          altitude: 9_800,
+          heading: 291,
+          onGround: false,
+        }),
+        createDemoFlightPoint({
+          time: nowSeconds - 1_800,
+          latitude: 43.92,
+          longitude: -24.4,
+          altitude: 10_700,
+          heading: 293,
+          onGround: false,
+        }),
+        createDemoFlightPoint({
+          time: nowSeconds - 90,
+          latitude: 44.31,
+          longitude: -35.9,
+          altitude: 10_650,
+          heading: 295,
+          onGround: false,
+        }),
+      ];
+      const current = track.at(-1) ?? null;
+
+      return {
+        icao24: 'demo-test4',
+        callsign: 'IBE6253',
+        originCountry: 'Spain',
+        matchedBy: [identifier],
+        lastContact: current?.time ?? nowSeconds - 90,
+        current,
+        originPoint: track[0] ?? current,
+        track,
+        rawTrack: track,
+        onGround: false,
+        velocity: 241,
+        heading: current?.heading ?? 295,
+        verticalRate: 0,
+        geoAltitude: current?.altitude ?? 10_650,
+        baroAltitude: (current?.altitude ?? 10_650) + 35,
+        squawk: '5124',
+        category: 1,
+        route: {
+          departureAirport: 'MAD',
+          arrivalAirport: 'JFK',
+          firstSeen: nowSeconds - 5_400,
+          lastSeen: null,
+        },
+        flightNumber: 'IB 6253',
+        airline: {
+          name: 'Iberia',
+          iata: 'IB',
+          icao: 'IBE',
+        },
+        aircraft: {
+          registration: 'EC-NBX',
+          iata: 'A333',
+          icao: 'A333',
+          icao24: 'demo-test4',
+          model: 'Airbus A330-300',
+        },
+        dataSource: 'opensky',
+        sourceDetails: [
+          createSourceDetail(
+            'opensky',
+            'used',
+            true,
+            'Built-in demo result for TEST4: Iberia IBE6253 is currently flying the long-haul connection from Madrid to New York JFK.',
+            {
+              demoIdentifier: identifier,
+              scenario: 'connection-airborne',
+              route: {
+                departureAirport: 'MAD',
+                arrivalAirport: 'JFK',
+              },
+            },
+          ),
+        ],
+      };
+    }
+    case 'TEST5': {
+      const track = [
+        createDemoFlightPoint({
+          time: nowSeconds - 7_200,
+          latitude: 41.2971,
+          longitude: 2.0785,
+          altitude: 0,
+          heading: 36,
+          onGround: true,
+        }),
+        createDemoFlightPoint({
+          time: nowSeconds - 6_900,
+          latitude: 41.62,
+          longitude: 2.24,
+          altitude: 1_900,
+          heading: 38,
+          onGround: false,
+        }),
+        createDemoFlightPoint({
+          time: nowSeconds - 4_800,
+          latitude: 44.12,
+          longitude: 2.64,
+          altitude: 9_700,
+          heading: 24,
+          onGround: false,
+        }),
+        createDemoFlightPoint({
+          time: nowSeconds - 2_400,
+          latitude: 49.48,
+          longitude: 3.22,
+          altitude: 8_400,
+          heading: 18,
+          onGround: false,
+        }),
+        createDemoFlightPoint({
+          time: nowSeconds - 600,
+          latitude: 52.12,
+          longitude: 4.55,
+          altitude: 650,
+          heading: 15,
+          onGround: false,
+        }),
+        createDemoFlightPoint({
+          time: nowSeconds - 120,
+          latitude: 52.3105,
+          longitude: 4.7683,
+          altitude: 0,
+          heading: 12,
+          onGround: true,
+        }),
+      ];
+      const current = track.at(-1) ?? null;
+
+      return {
+        icao24: 'demo-test5',
+        callsign: 'KLM1698',
+        originCountry: 'Netherlands',
+        matchedBy: [identifier],
+        lastContact: current?.time ?? nowSeconds - 120,
+        current,
+        originPoint: track[0] ?? current,
+        track,
+        rawTrack: track,
+        onGround: true,
+        velocity: 4,
+        heading: current?.heading ?? 12,
+        verticalRate: 0,
+        geoAltitude: 0,
+        baroAltitude: 0,
+        squawk: '2731',
+        category: 1,
+        route: {
+          departureAirport: 'BCN',
+          arrivalAirport: 'AMS',
+          firstSeen: nowSeconds - 7_200,
+          lastSeen: nowSeconds - 120,
+        },
+        flightNumber: 'KL 1698',
+        airline: {
+          name: 'KLM Royal Dutch Airlines',
+          iata: 'KL',
+          icao: 'KLM',
+        },
+        aircraft: {
+          registration: 'PH-BXO',
+          iata: 'B738',
+          icao: 'B738',
+          icao24: 'demo-test5',
+          model: 'Boeing 737-800',
+        },
+        dataSource: 'opensky',
+        sourceDetails: [
+          createSourceDetail(
+            'opensky',
+            'used',
+            true,
+            'Built-in demo result for TEST5: KLM KLM1698 has landed in Amsterdam and is waiting at the connection stop before the final hop to New York.',
+            {
+              demoIdentifier: identifier,
+              scenario: 'layover',
+              route: {
+                departureAirport: 'BCN',
+                arrivalAirport: 'AMS',
               },
             },
           ),
@@ -459,6 +657,51 @@ function createPresetDemoSearchPayload(query: string, requestedIdentifiers: stri
     notFoundIdentifiers: requestedIdentifiers.filter((identifier) => !isDemoFlightIdentifier(normalizeIdentifier(identifier))),
     fetchedAt: Date.now(),
     flights: matchedEntries.map((entry) => createDemoTrackedFlight(entry.demoIdentifier)),
+  };
+}
+
+function buildTrackedFlightMergeKey(flight: TrackedFlight, index: number): string {
+  const baseIdentifier = normalizeIdentifier(
+    flight.icao24 || flight.callsign || flight.flightNumber || '',
+  );
+  if (baseIdentifier) {
+    return baseIdentifier;
+  }
+
+  const matchedByIdentifier = (flight.matchedBy ?? [])
+    .map((value) => normalizeIdentifier(value))
+    .filter(Boolean)
+    .join(',');
+
+  return matchedByIdentifier || `flight-${index}`;
+}
+
+function mergeTrackerApiResponses(
+  primary: TrackerApiResponse,
+  overlay: TrackerApiResponse,
+  query: string,
+  requestedIdentifiers: string[],
+): TrackerApiResponse {
+  const matchedIdentifierSet = new Set([
+    ...primary.matchedIdentifiers,
+    ...overlay.matchedIdentifiers,
+  ]);
+
+  const mergedFlights = new Map<string, TrackedFlight>();
+  [...primary.flights, ...overlay.flights].forEach((flight, index) => {
+    mergedFlights.set(buildTrackedFlightMergeKey(flight, index), flight);
+  });
+
+  const flights = Array.from(mergedFlights.values());
+  flights.sort((first, second) => first.callsign.localeCompare(second.callsign));
+
+  return {
+    query,
+    requestedIdentifiers,
+    matchedIdentifiers: requestedIdentifiers.filter((identifier) => matchedIdentifierSet.has(identifier)),
+    notFoundIdentifiers: requestedIdentifiers.filter((identifier) => !matchedIdentifierSet.has(identifier)),
+    fetchedAt: Math.max(primary.fetchedAt, overlay.fetchedAt),
+    flights,
   };
 }
 
@@ -1316,12 +1559,32 @@ export async function searchFlights(query: string, options: SearchFlightsOptions
     return demoPayload;
   }
 
+  const remainingIdentifiers = demoPayload
+    ? requestedIdentifiers.filter((identifier) => !demoPayload.matchedIdentifiers.includes(identifier))
+    : requestedIdentifiers;
+
+  const mergeWithDemoPayload = (payload: TrackerApiResponse): TrackerApiResponse => demoPayload
+    ? mergeTrackerApiResponses(payload, demoPayload, trimmedQuery, requestedIdentifiers)
+    : payload;
+
+  if (remainingIdentifiers.length === 0) {
+    return mergeWithDemoPayload({
+      query: trimmedQuery,
+      requestedIdentifiers,
+      matchedIdentifiers: [],
+      notFoundIdentifiers: requestedIdentifiers,
+      fetchedAt: Date.now(),
+      flights: [],
+    });
+  }
+
+  const remainingQuery = remainingIdentifiers.join(',');
   const cacheKey = buildSearchCacheKey(requestedIdentifiers);
 
   const inFlightKey = options.forceRefresh ? `${cacheKey}:force` : cacheKey;
   const cachedResult = options.forceRefresh ? null : await readFlightSearchCache(cacheKey);
   if (cachedResult && payloadHasRawTrackData(cachedResult)) {
-    return cachedResult;
+    return mergeWithDemoPayload(cachedResult);
   }
 
   const existingSearch = inFlightSearches.get(inFlightKey);
@@ -1331,37 +1594,37 @@ export async function searchFlights(query: string, options: SearchFlightsOptions
 
   const pendingSearch = (async () => {
     try {
-      const freshResult = await fetchFreshFlights(trimmedQuery, requestedIdentifiers);
+      const freshResult = await fetchFreshFlights(remainingQuery, remainingIdentifiers);
       const enrichedResult = await enrichSearchResultWithExternalSources(freshResult);
       const cachedResult = await writeFlightSearchCache(
         cacheKey,
-        enrichedResult,
+        mergeWithDemoPayload(enrichedResult),
         options.forceRefresh ? 'manual-refresh' : 'search',
       );
-      return cachedResult;
+      return mergeWithDemoPayload(cachedResult);
     } catch (error) {
       if (!isAviationstackConfigured() && !isFlightAwareConfigured()) {
         const historicalOnlyResult = await writeFlightSearchCache(
           cacheKey,
-          {
+          mergeWithDemoPayload({
             query: trimmedQuery,
             requestedIdentifiers,
             matchedIdentifiers: [],
             notFoundIdentifiers: requestedIdentifiers,
             fetchedAt: Date.now(),
             flights: [],
-          },
+          }),
           options.forceRefresh ? 'manual-refresh' : 'search',
         );
 
         if (historicalOnlyResult.flights.length > 0 || historicalOnlyResult.matchedIdentifiers.length > 0) {
-          return historicalOnlyResult;
+          return mergeWithDemoPayload(historicalOnlyResult);
         }
 
         throw error;
       }
 
-      const fallbackResult = await searchFlightsFromExternalSourcesOnly(trimmedQuery, requestedIdentifiers);
+      const fallbackResult = await searchFlightsFromExternalSourcesOnly(remainingQuery, remainingIdentifiers);
       const openSkyErrorReason = error instanceof Error ? error.message : 'OpenSky search failed unexpectedly.';
       const openSkyDiagnostics = getOpenSkyErrorDiagnostics(error);
 
@@ -1372,8 +1635,10 @@ export async function searchFlights(query: string, options: SearchFlightsOptions
         diagnostics: openSkyDiagnostics,
       });
 
-      const fallbackWithDiagnostics = {
+      const fallbackWithDiagnostics = mergeWithDemoPayload({
         ...fallbackResult,
+        query: trimmedQuery,
+        requestedIdentifiers,
         flights: fallbackResult.flights.map((flight) => ({
           ...flight,
           sourceDetails: mergeSourceDetails(flight.sourceDetails, [
@@ -1384,7 +1649,7 @@ export async function searchFlights(query: string, options: SearchFlightsOptions
             }),
           ]),
         })),
-      } satisfies TrackerApiResponse;
+      } satisfies TrackerApiResponse);
 
       const cachedFallbackResult = await writeFlightSearchCache(
         cacheKey,
@@ -1396,7 +1661,7 @@ export async function searchFlights(query: string, options: SearchFlightsOptions
         throw error;
       }
 
-      return cachedFallbackResult;
+      return mergeWithDemoPayload(cachedFallbackResult);
     }
   })().finally(() => {
     inFlightSearches.delete(inFlightKey);

@@ -204,9 +204,48 @@ describe('friends tracker helpers', () => {
 
     const demoTrip = config.trips.find((trip) => trip.id === 'demo-test-trip');
     expect(demoTrip).toBeTruthy();
-    expect(demoTrip?.friends).toHaveLength(3);
+    expect(demoTrip?.friends.length ?? 0).toBeGreaterThanOrEqual(6);
+    expect(demoTrip?.friends.filter((friend) => friend.flights.length > 1).length ?? 0).toBeGreaterThanOrEqual(3);
     expect(demoTrip?.friends.flatMap((friend) => friend.flights.map((leg) => leg.flightNumber))).toEqual(
-      expect.arrayContaining(['TEST1', 'TEST2', 'TEST3']),
+      expect.arrayContaining(['TEST1', 'TEST2', 'TEST3', 'TEST4', 'TEST5']),
+    );
+  });
+
+  it('refreshes the built-in demo trip when a stale saved copy exists', () => {
+    const config = normalizeFriendsTrackerConfig({
+      currentTripId: 'demo-test-trip',
+      trips: [
+        {
+          id: 'demo-test-trip',
+          name: 'Old demo trip',
+          destinationAirport: 'LAX',
+          isDemo: true,
+          friends: [
+            {
+              id: 'old-friend',
+              name: 'Old Demo',
+              flights: [
+                {
+                  id: 'old-leg',
+                  flightNumber: 'OLD1',
+                  departureTime: '2026-04-14T09:30:00.000Z',
+                  from: 'SFO',
+                  to: 'LAX',
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    } as Partial<FriendsTrackerConfig>);
+
+    const demoTrip = config.trips.find((trip) => trip.id === 'demo-test-trip');
+    expect(demoTrip?.destinationAirport).toBe('JFK');
+    expect(demoTrip?.friends.map((friend) => friend.name)).toEqual(
+      expect.arrayContaining(['Alice Demo', 'Bruno Demo', 'Chloe Demo', 'Diego Demo', 'Emma Demo', 'Farah Demo']),
+    );
+    expect(demoTrip?.friends.flatMap((friend) => friend.flights.map((leg) => leg.flightNumber))).toEqual(
+      expect.arrayContaining(['TEST1', 'TEST2', 'TEST3', 'TEST4', 'TEST5']),
     );
   });
 

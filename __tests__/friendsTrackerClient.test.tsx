@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useEffect, type ReactNode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -124,6 +124,305 @@ describe('FriendsTrackerClient', () => {
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith('/api/tracker?q=AF123&refresh=1', { cache: 'no-store' });
     });
+  });
+
+  it('renders the active flight cursor inline with the timeline and rotates it to the live heading', async () => {
+    const nowSeconds = Math.floor(Date.now() / 1000);
+
+    vi.spyOn(window, 'fetch').mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          query: 'AF123',
+          requestedIdentifiers: ['AF123'],
+          matchedIdentifiers: ['AF123'],
+          notFoundIdentifiers: [],
+          fetchedAt: Date.now(),
+          flights: [
+            {
+              icao24: 'abc123',
+              callsign: 'AF123',
+              originCountry: 'France',
+              matchedBy: ['AF123'],
+              lastContact: nowSeconds,
+              current: {
+                time: nowSeconds,
+                latitude: 53.94,
+                longitude: -31.25,
+                x: 0,
+                y: 0,
+                altitude: 10650,
+                heading: 290,
+                onGround: false,
+              },
+              originPoint: {
+                time: nowSeconds - 3600,
+                latitude: 51.47,
+                longitude: -0.45,
+                x: 0,
+                y: 0,
+                altitude: 0,
+                heading: 290,
+                onGround: true,
+              },
+              track: [],
+              rawTrack: [],
+              onGround: false,
+              velocity: 247,
+              heading: 290,
+              verticalRate: 0,
+              geoAltitude: 10650,
+              baroAltitude: 10690,
+              squawk: '2201',
+              category: 1,
+              route: {
+                departureAirport: 'LHR',
+                arrivalAirport: 'JFK',
+                firstSeen: nowSeconds - 5400,
+                lastSeen: null,
+              },
+              dataSource: 'opensky',
+              sourceDetails: [],
+            },
+          ],
+        }),
+        {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        },
+      ),
+    );
+
+    const liveConfig: FriendsTrackerConfig = {
+      ...initialConfig,
+      destinationAirport: 'JFK',
+      friends: [
+        {
+          ...initialConfig.friends[0]!,
+          flights: [
+            {
+              id: 'leg-1',
+              flightNumber: 'AF123',
+              departureTime: new Date(Date.now() - 45 * 60 * 1000).toISOString(),
+              from: 'LHR',
+              to: 'JFK',
+            },
+          ],
+        },
+      ],
+    };
+
+    render(
+      <FriendsTrackerClient
+        map={map}
+        initialConfig={liveConfig}
+        airportMarkers={[
+          { id: 'lhr', code: 'LHR', label: 'London Heathrow', latitude: 51.47, longitude: -0.4543, usage: 'both' },
+          { id: 'jfk', code: 'JFK', label: 'New York JFK', latitude: 40.6413, longitude: -73.7781, usage: 'both' },
+        ]}
+      />,
+    );
+
+    const plane = await screen.findByLabelText(/flight af123/i);
+
+    expect(plane).toHaveStyle({ transform: 'rotate(45deg)' });
+    expect(plane.parentElement).toHaveStyle({ transform: 'translate(-50%, -50%)' });
+  });
+
+  it('shows not-started, in-flight, and arrived states across demo-style friends', async () => {
+    const nowSeconds = Math.floor(Date.now() / 1000);
+
+    vi.spyOn(window, 'fetch').mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          query: 'TEST1,TEST2,TEST3',
+          requestedIdentifiers: ['TEST1', 'TEST2', 'TEST3'],
+          matchedIdentifiers: ['TEST1', 'TEST2', 'TEST3'],
+          notFoundIdentifiers: [],
+          fetchedAt: Date.now(),
+          flights: [
+            {
+              icao24: 'demo-test1',
+              callsign: 'AFR006',
+              originCountry: 'France',
+              matchedBy: ['TEST1'],
+              lastContact: nowSeconds - 45,
+              current: { time: nowSeconds - 45, latitude: 49.01, longitude: 2.55, x: 0, y: 0, altitude: 0, heading: 95, onGround: true },
+              originPoint: { time: nowSeconds - 240, latitude: 49.0088, longitude: 2.5486, x: 0, y: 0, altitude: 0, heading: 90, onGround: true },
+              track: [], rawTrack: [], onGround: true, velocity: 12, heading: 95, verticalRate: 0, geoAltitude: 0, baroAltitude: 0,
+              squawk: '1001', category: 0,
+              route: { departureAirport: 'CDG', arrivalAirport: 'JFK', firstSeen: null, lastSeen: null },
+              dataSource: 'opensky', sourceDetails: [],
+            },
+            {
+              icao24: 'demo-test2',
+              callsign: 'BAW117',
+              originCountry: 'United Kingdom',
+              matchedBy: ['TEST2'],
+              lastContact: nowSeconds - 75,
+              current: { time: nowSeconds - 75, latitude: 53.94, longitude: -31.25, x: 0, y: 0, altitude: 10650, heading: 291, onGround: false },
+              originPoint: { time: nowSeconds - 4200, latitude: 52.62, longitude: -8.41, x: 0, y: 0, altitude: 7200, heading: 287, onGround: false },
+              track: [], rawTrack: [], onGround: false, velocity: 247, heading: 291, verticalRate: 0, geoAltitude: 10650, baroAltitude: 10690,
+              squawk: '2201', category: 1,
+              route: { departureAirport: 'LHR', arrivalAirport: 'JFK', firstSeen: nowSeconds - 5400, lastSeen: null },
+              dataSource: 'opensky', sourceDetails: [],
+            },
+            {
+              icao24: 'demo-test3',
+              callsign: 'DAL220',
+              originCountry: 'United States',
+              matchedBy: ['TEST3'],
+              lastContact: nowSeconds - 90,
+              current: { time: nowSeconds - 90, latitude: 40.6413, longitude: -73.7781, x: 0, y: 0, altitude: 0, heading: 89, onGround: true },
+              originPoint: { time: nowSeconds - 3600, latitude: 33.6407, longitude: -84.4277, x: 0, y: 0, altitude: 0, heading: 45, onGround: true },
+              track: [], rawTrack: [], onGround: true, velocity: 6, heading: 89, verticalRate: 0, geoAltitude: 0, baroAltitude: 0,
+              squawk: '1453', category: 1,
+              route: { departureAirport: 'ATL', arrivalAirport: 'JFK', firstSeen: nowSeconds - 4800, lastSeen: nowSeconds - 120 },
+              dataSource: 'opensky', sourceDetails: [],
+            },
+          ],
+        }),
+        {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        },
+      ),
+    );
+
+    const demoConfig: FriendsTrackerConfig = {
+      ...initialConfig,
+      destinationAirport: 'JFK',
+      friends: [
+        {
+          id: 'friend-1',
+          name: 'Alice Demo',
+          flights: [{ id: 'leg-1', flightNumber: 'TEST1', departureTime: new Date(Date.now() + 45 * 60 * 1000).toISOString(), from: 'CDG', to: 'JFK' }],
+        },
+        {
+          id: 'friend-2',
+          name: 'Bruno Demo',
+          flights: [{ id: 'leg-2', flightNumber: 'TEST2', departureTime: new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString(), from: 'LHR', to: 'JFK' }],
+        },
+        {
+          id: 'friend-3',
+          name: 'Chloe Demo',
+          flights: [{ id: 'leg-3', flightNumber: 'TEST3', departureTime: new Date(Date.now() - 3 * 60 * 60 * 1000).toISOString(), from: 'ATL', to: 'JFK' }],
+        },
+      ],
+    };
+
+    render(
+      <FriendsTrackerClient
+        map={map}
+        initialConfig={demoConfig}
+        airportMarkers={[
+          { id: 'cdg', code: 'CDG', label: 'Paris Charles de Gaulle', latitude: 49.0097, longitude: 2.5479, usage: 'both' },
+          { id: 'lhr', code: 'LHR', label: 'London Heathrow', latitude: 51.47, longitude: -0.4543, usage: 'both' },
+          { id: 'atl', code: 'ATL', label: 'Atlanta', latitude: 33.6407, longitude: -84.4277, usage: 'both' },
+          { id: 'jfk', code: 'JFK', label: 'New York JFK', latitude: 40.6413, longitude: -73.7781, usage: 'both' },
+        ]}
+      />,
+    );
+
+    expect(await screen.findByText(/alice demo/i)).toBeInTheDocument();
+    expect(screen.getByText(/not started/i)).toBeInTheDocument();
+    expect(screen.getByText(/in flight/i)).toBeInTheDocument();
+    expect(screen.getByText(/arrived/i)).toBeInTheDocument();
+
+    const aliceCard = screen.getByText(/alice demo/i).closest('article');
+    const chloeCard = screen.getByText(/chloe demo/i).closest('article');
+
+    const alicePlane = within(aliceCard!).getByLabelText(/flight test1/i);
+    const chloePlane = within(chloeCard!).getByLabelText(/flight test3/i);
+
+    expect(alicePlane.parentElement).toHaveStyle({
+      left: 'calc(7px + 0 * (100% - 14px))',
+    });
+    expect(alicePlane).toHaveStyle({ transform: 'rotate(-45deg)' });
+
+    expect(chloePlane.parentElement).toHaveStyle({
+      left: 'calc(7px + 1 * (100% - 14px))',
+    });
+    expect(chloePlane).toHaveStyle({ transform: 'rotate(-45deg)' });
+  });
+
+  it('anchors a connection-stop cursor directly on the middle airport dot', async () => {
+    const nowSeconds = Math.floor(Date.now() / 1000);
+
+    vi.spyOn(window, 'fetch').mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          query: 'TEST5,KL641',
+          requestedIdentifiers: ['TEST5', 'KL641'],
+          matchedIdentifiers: ['TEST5'],
+          notFoundIdentifiers: ['KL641'],
+          fetchedAt: Date.now(),
+          flights: [
+            {
+              icao24: 'demo-test5',
+              callsign: 'KLM1698',
+              originCountry: 'Netherlands',
+              matchedBy: ['TEST5'],
+              lastContact: nowSeconds - 120,
+              current: { time: nowSeconds - 120, latitude: 52.3086, longitude: 4.7639, x: 0, y: 0, altitude: 0, heading: 88, onGround: true },
+              originPoint: { time: nowSeconds - 5400, latitude: 41.2974, longitude: 2.0833, x: 0, y: 0, altitude: 0, heading: 45, onGround: true },
+              track: [], rawTrack: [], onGround: true, velocity: 8, heading: 88, verticalRate: 0, geoAltitude: 0, baroAltitude: 0,
+              squawk: '4521', category: 0,
+              route: { departureAirport: 'BCN', arrivalAirport: 'AMS', firstSeen: nowSeconds - 5400, lastSeen: nowSeconds - 900 },
+              dataSource: 'opensky', sourceDetails: [],
+            },
+          ],
+        }),
+        {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        },
+      ),
+    );
+
+    const connectionConfig: FriendsTrackerConfig = {
+      ...initialConfig,
+      destinationAirport: 'JFK',
+      friends: [
+        {
+          ...initialConfig.friends[0]!,
+          name: 'Diego Demo',
+          flights: [
+            {
+              id: 'leg-1',
+              flightNumber: 'TEST5',
+              departureTime: new Date(Date.now() - 4 * 60 * 60 * 1000).toISOString(),
+              from: 'BCN',
+              to: 'AMS',
+            },
+            {
+              id: 'leg-2',
+              flightNumber: 'KL641',
+              departureTime: new Date(Date.now() + 70 * 60 * 1000).toISOString(),
+              from: 'AMS',
+              to: 'JFK',
+            },
+          ],
+        },
+      ],
+    };
+
+    render(
+      <FriendsTrackerClient
+        map={map}
+        initialConfig={connectionConfig}
+        airportMarkers={[
+          { id: 'bcn', code: 'BCN', label: 'Barcelona', latitude: 41.2974, longitude: 2.0833, usage: 'both' },
+          { id: 'ams', code: 'AMS', label: 'Amsterdam Schiphol', latitude: 52.3086, longitude: 4.7639, usage: 'both' },
+          { id: 'jfk', code: 'JFK', label: 'New York JFK', latitude: 40.6413, longitude: -73.7781, usage: 'both' },
+        ]}
+      />,
+    );
+
+    expect(await screen.findByText(/diego demo/i)).toBeInTheDocument();
+
+    const plane = screen.getByLabelText(/flight kl641/i).parentElement;
+
+    expect(plane?.getAttribute('style')).toMatch(/left:\s*calc\(7px \+ .* \* \(100% - 14px\)\)/);
   });
 
   it('sizes timeline legs from airport distance while keeping short hops readable', async () => {
