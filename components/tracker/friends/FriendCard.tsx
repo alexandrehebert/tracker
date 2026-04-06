@@ -98,7 +98,7 @@ export function FriendCard({ friend, friendIndex }: FriendCardProps) {
 
         <button
           type="button"
-          onClick={() => updateSelectedTripFriends((currentFriends) => currentFriends.filter((f) => f.id !== friend.id))}
+          onClick={() => updateSelectedTripFriends((currentFriends) => currentFriends.filter((currentFriend) => currentFriend.id !== friend.id))}
           className="inline-flex items-center gap-2 self-start rounded-full border border-rose-400/30 bg-rose-500/10 px-3 py-2 text-sm font-medium text-rose-100 transition hover:bg-rose-500/20"
         >
           <Trash2 className="h-4 w-4" />
