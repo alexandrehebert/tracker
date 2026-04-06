@@ -199,6 +199,13 @@ describe('buildAirportChain', () => {
     expect(buildAirportChain(legs)).toEqual(['AMS']);
   });
 
+  it('returns empty array when all airports are null', () => {
+    const legs = [
+      { id: 'l1', flightNumber: 'AF1', departureTime: '', from: null, to: null },
+    ];
+    expect(buildAirportChain(legs)).toEqual([]);
+  });
+
   it('avoids consecutive duplicates', () => {
     const legs = [
       { id: 'l1', flightNumber: 'AF1', departureTime: '', from: 'CDG', to: 'CDG' },

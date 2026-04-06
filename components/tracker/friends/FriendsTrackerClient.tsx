@@ -174,10 +174,11 @@ function FriendTimelineCard({
     : (cursorRaw != null ? Math.floor(cursorRaw) : 0);
 
   // Last seen: latest lastContact among all matched legs for this friend.
-  const lastContactSeconds = friendStatuses
-    .filter((s) => s.friend.id === friend.id && s.flight?.lastContact != null)
-    .map((s) => s.flight!.lastContact!)
-    .sort((a, b) => b - a)[0] ?? null;
+  const lastContactSeconds = friendStatuses.reduce<number | null>((best, s) => {
+    const contact = s.flight?.lastContact ?? null;
+    if (contact == null) return best;
+    return best == null || contact > best ? contact : best;
+  }, null);
 
   // Active leg flight number to show next to cursor.
   const activeLegFlightNumber = activeLegIndex >= 0
@@ -185,7 +186,7 @@ function FriendTimelineCard({
     : null;
 
   const initials = getFriendInitials(friend.name);
-  const hasAnyMatch = friendStatuses.some((s) => s.friend.id === friend.id && s.status === 'matched');
+  const hasAnyMatch = friendStatuses.some((s) => s.status === 'matched');
 
   return (
     <article className="rounded-2xl border border-white/10 bg-slate-950/55 p-3">
