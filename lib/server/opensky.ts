@@ -1341,14 +1341,27 @@ export async function searchFlights(query: string, options: SearchFlightsOptions
       return cachedResult;
     } catch (error) {
       if (!isAviationstackConfigured() && !isFlightAwareConfigured()) {
+        const historicalOnlyResult = await writeFlightSearchCache(
+          cacheKey,
+          {
+            query: trimmedQuery,
+            requestedIdentifiers,
+            matchedIdentifiers: [],
+            notFoundIdentifiers: requestedIdentifiers,
+            fetchedAt: Date.now(),
+            flights: [],
+          },
+          options.forceRefresh ? 'manual-refresh' : 'search',
+        );
+
+        if (historicalOnlyResult.flights.length > 0 || historicalOnlyResult.matchedIdentifiers.length > 0) {
+          return historicalOnlyResult;
+        }
+
         throw error;
       }
 
       const fallbackResult = await searchFlightsFromExternalSourcesOnly(trimmedQuery, requestedIdentifiers);
-      if (fallbackResult.flights.length === 0 && fallbackResult.matchedIdentifiers.length === 0) {
-        throw error;
-      }
-
       const openSkyErrorReason = error instanceof Error ? error.message : 'OpenSky search failed unexpectedly.';
       const openSkyDiagnostics = getOpenSkyErrorDiagnostics(error);
 
@@ -1378,6 +1391,11 @@ export async function searchFlights(query: string, options: SearchFlightsOptions
         fallbackWithDiagnostics,
         options.forceRefresh ? 'manual-refresh' : 'search',
       );
+
+      if (cachedFallbackResult.flights.length === 0 && cachedFallbackResult.matchedIdentifiers.length === 0) {
+        throw error;
+      }
+
       return cachedFallbackResult;
     }
   })().finally(() => {

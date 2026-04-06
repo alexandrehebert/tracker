@@ -40,11 +40,14 @@ interface FlightMap3DProps {
   selectedFlightDetails?: SelectedFlightDetails | null;
   onSelectFlight?: (icao24: string) => void;
   onInitialZoomEnd?: () => void;
+  selectionMode?: 'single' | 'all';
+  flightLabels?: Record<string, string>;
 }
 
 interface GlobePointDatum {
   icao24: string;
   callsign: string;
+  label: string;
   lat: number;
   lng: number;
   altitude: number;
@@ -586,6 +589,8 @@ export default function FlightMap3D({
   selectedFlightDetails,
   onSelectFlight,
   onInitialZoomEnd,
+  selectionMode = 'single',
+  flightLabels,
 }: FlightMap3DProps) {
   const { isMobile } = useTrackerLayout();
   const { setGlobeRef } = useTrackerMap();
@@ -601,30 +606,43 @@ export default function FlightMap3D({
           return null;
         }
 
-        const selected = flight.icao24 === selectedIcao24;
-        const flightAltitude = getAltitudeRatio(currentPoint) + (selected ? SELECTED_POINT_ALTITUDE_OFFSET : POINT_ALTITUDE_OFFSET);
+        const selected = selectionMode === 'single' && flight.icao24 === selectedIcao24;
+        const highlighted = selectionMode === 'all' || selected;
+        const flightAltitude = getAltitudeRatio(currentPoint) + (highlighted ? SELECTED_POINT_ALTITUDE_OFFSET : POINT_ALTITUDE_OFFSET);
 
         return {
           icao24: flight.icao24,
           callsign: flight.callsign,
+          label: flightLabels?.[flight.icao24]?.trim() || flight.callsign,
           lat: currentPoint.latitude,
           lng: currentPoint.longitude,
-          altitude: selected ? SELECTED_POINT_MARKER_ALTITUDE : POINT_MARKER_ALTITUDE,
+          altitude: highlighted ? SELECTED_POINT_MARKER_ALTITUDE : POINT_MARKER_ALTITUDE,
           flightAltitude,
           color: selected ? SELECTED_FLIGHT_COLOR : getFlightMapColor(index, false),
-          selected,
+          selected: highlighted,
         } satisfies GlobePointDatum;
       })
       .filter((point): point is GlobePointDatum => Boolean(point));
-  }, [flights, selectedIcao24]);
+  }, [flightLabels, flights, selectedIcao24, selectionMode]);
 
   const activeRouteIcao24 = useMemo(() => {
+    if (selectionMode !== 'single') {
+      return null;
+    }
+
     return flights.find((flight) => flight.icao24 === selectedIcao24)?.icao24
       ?? flights[0]?.icao24
       ?? null;
-  }, [flights, selectedIcao24]);
+  }, [flights, selectedIcao24, selectionMode]);
 
   const pathData = useMemo(() => {
+    if (selectionMode === 'all') {
+      return flights.flatMap((flight, index) => {
+        const matchingDetails = selectedFlightDetails?.icao24 === flight.icao24 ? selectedFlightDetails : null;
+        return buildFlightPathData(flight, matchingDetails, true, getFlightMapColor(index, false));
+      });
+    }
+
     if (!activeRouteIcao24) {
       return [];
     }
@@ -636,24 +654,26 @@ export default function FlightMap3D({
 
     const colorIndex = Math.max(0, flights.findIndex((flight) => flight.icao24 === activeRouteIcao24));
     return buildFlightPathData(activeFlight, selectedFlightDetails, true, SELECTED_FLIGHT_COLOR || getFlightMapColor(colorIndex, true));
-  }, [activeRouteIcao24, flights, selectedFlightDetails]);
+  }, [activeRouteIcao24, flights, selectedFlightDetails, selectionMode]);
 
   const labelData = useMemo(() => {
-    const labels = pointData.filter((point) => point.selected || pointData.length === 1);
+    const labels = selectionMode === 'all'
+      ? pointData
+      : pointData.filter((point) => point.selected || pointData.length === 1);
 
     return labels.map((point) => ({
       type: 'label' as const,
       lat: point.lat,
       lng: point.lng,
       altitude: Math.max(0.035, point.flightAltitude + 0.012),
-      text: point.callsign,
+      text: point.label,
       color: point.color,
     })) satisfies GlobeLabelDatum[];
-  }, [pointData]);
+  }, [pointData, selectionMode]);
 
   const departureMarkerData = useMemo(() => {
     return flights.flatMap((flight) => {
-      const selected = flight.icao24 === selectedIcao24;
+      const selected = selectionMode === 'all' || flight.icao24 === selectedIcao24;
       const matchingDetails = selectedFlightDetails?.icao24 === flight.icao24 ? selectedFlightDetails : null;
       const departurePoint = createAirportPoint(matchingDetails?.departureAirport, flight.route.firstSeen ?? null) ?? flight.originPoint;
       const currentPoint = flight.current ?? flight.track.at(-1) ?? flight.originPoint;
@@ -680,7 +700,7 @@ export default function FlightMap3D({
         selected,
       }] satisfies GlobeDepartureMarkerDatum[];
     });
-  }, [flights, selectedFlightDetails, selectedIcao24]);
+  }, [flights, selectedFlightDetails, selectedIcao24, selectionMode]);
 
   const planeMarkerData = useMemo(() => {
     return pointData.map((point) => ({
@@ -868,7 +888,9 @@ export default function FlightMap3D({
         }
       });
 
-    const selectedPoint = pointData.find((point) => point.selected) ?? null;
+    const selectedPoint = selectionMode === 'single'
+      ? pointData.find((point) => point.selected) ?? null
+      : null;
     const ringData: GlobeRingDatum[] = selectedPoint
       ? [{
           lat: selectedPoint.lat,
@@ -948,14 +970,16 @@ export default function FlightMap3D({
         element.style.transform = 'translate(-50%, -120%)';
         return element;
       });
-  }, [globeReady, htmlOverlayData, onSelectFlight, pathData, pointData]);
+  }, [globeReady, htmlOverlayData, onSelectFlight, pathData, pointData, selectionMode]);
 
   useEffect(() => {
     if (!globeReady || !globeRef.current) {
       return;
     }
 
-    const focusPoint = pointData.find((point) => point.selected) ?? pointData[0] ?? null;
+    const focusPoint = selectionMode === 'single'
+      ? pointData.find((point) => point.selected) ?? pointData[0] ?? null
+      : pointData[0] ?? null;
     const globe = globeRef.current as any;
 
     if (!focusPoint) {
@@ -967,11 +991,11 @@ export default function FlightMap3D({
       {
         lat: focusPoint.lat,
         lng: focusPoint.lng,
-        altitude: focusPoint.selected ? FOCUS_ALT : (isMobile ? MOBILE_ALT : DEFAULT_ALT),
+        altitude: selectionMode === 'single' && focusPoint.selected ? FOCUS_ALT : (isMobile ? MOBILE_ALT : DEFAULT_ALT),
       },
       800,
     );
-  }, [globeReady, isMobile, pointData, selectedIcao24]);
+  }, [globeReady, isMobile, pointData, selectedIcao24, selectionMode]);
 
   return (
     <div className="absolute inset-0 z-10">

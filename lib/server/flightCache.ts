@@ -106,6 +106,50 @@ function normalizeHistoryIdentifier(value: string | null | undefined): string {
   return typeof value === 'string' ? value.replace(/\s+/g, '').trim().toUpperCase() : '';
 }
 
+async function mergeTrackerPayloadWithHistoricalFlights(payload: TrackerApiResponse): Promise<TrackerApiResponse> {
+  const unresolvedIdentifiers = Array.from(
+    new Set(payload.notFoundIdentifiers.map((identifier) => normalizeHistoryIdentifier(identifier)).filter(Boolean)),
+  );
+
+  if (unresolvedIdentifiers.length === 0) {
+    return payload;
+  }
+
+  const historicalMatches = await Promise.all(
+    unresolvedIdentifiers.map(async (identifier) => [identifier, await readSharedFlightCache(identifier)] as const),
+  );
+  const matchedPairs = historicalMatches.filter((entry): entry is readonly [string, TrackedFlight] => Boolean(entry[1]));
+
+  if (matchedPairs.length === 0) {
+    return payload;
+  }
+
+  const flightsByIcao24 = new Map(
+    payload.flights.map((flight) => [normalizeHistoryIdentifier(flight.icao24).toLowerCase(), flight] as const),
+  );
+
+  for (const [, historicalFlight] of matchedPairs) {
+    const key = normalizeHistoryIdentifier(historicalFlight.icao24).toLowerCase();
+    const currentFlight = flightsByIcao24.get(key);
+    flightsByIcao24.set(
+      key,
+      currentFlight ? reconcileTrackedFlightForCache(historicalFlight, currentFlight) : historicalFlight,
+    );
+  }
+
+  const matchedLookup = new Set([
+    ...payload.matchedIdentifiers.map((identifier) => normalizeHistoryIdentifier(identifier)),
+    ...matchedPairs.map(([identifier]) => identifier),
+  ]);
+
+  return {
+    ...payload,
+    matchedIdentifiers: payload.requestedIdentifiers.filter((identifier) => matchedLookup.has(normalizeHistoryIdentifier(identifier))),
+    notFoundIdentifiers: payload.requestedIdentifiers.filter((identifier) => !matchedLookup.has(normalizeHistoryIdentifier(identifier))),
+    flights: Array.from(flightsByIcao24.values()).sort((first, second) => first.callsign.localeCompare(second.callsign)),
+  };
+}
+
 function mergeUniqueStrings(...lists: Array<string[] | undefined>): string[] {
   return Array.from(
     new Set(
@@ -867,7 +911,8 @@ export async function writeFlightSearchCache(
   const expiresAt = new Date(Date.now() + ttlMs);
   const previousPayload = await readFlightSearchCache(cacheKey);
   const mergedPayload = mergeTrackerPayloadForSharedCache(previousPayload, payload, trigger);
-  const persistedPayload = await persistTrackerPayloadToSharedFlights(mergedPayload);
+  const mergedHistoricalPayload = await mergeTrackerPayloadWithHistoricalFlights(mergedPayload);
+  const persistedPayload = await persistTrackerPayloadToSharedFlights(mergedHistoricalPayload);
 
   const collection = await getCacheCollection();
   if (!collection) {

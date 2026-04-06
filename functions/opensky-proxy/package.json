@@ -1,0 +1,10 @@
+{
+  "name": "opensky-proxy-scaleway",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Scaleway Serverless Function proxy for OpenSky",
+  "main": "handler.js",
+  "engines": {
+    "node": ">=20"
+  }
+}

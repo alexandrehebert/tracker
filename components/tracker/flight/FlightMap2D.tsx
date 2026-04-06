@@ -16,6 +16,8 @@ interface FlightMap2DProps {
   selectedFlightDetails?: SelectedFlightDetails | null;
   onSelectFlight?: (icao24: string) => void;
   onInitialZoomEnd?: () => void;
+  selectionMode?: 'single' | 'all';
+  flightLabels?: Record<string, string>;
 }
 
 const OCEAN_FILL = '#071a31';
@@ -657,6 +659,8 @@ export default function FlightMap2D({
   selectedFlightDetails,
   onSelectFlight,
   onInitialZoomEnd,
+  selectionMode = 'single',
+  flightLabels,
 }: FlightMap2DProps) {
   const { isMobile } = useTrackerLayout();
   const { svgRef, mapTransform, focusBounds } = useTrackerMap();
@@ -669,8 +673,12 @@ export default function FlightMap2D({
   );
 
   const selectedFlight = useMemo(() => {
+    if (selectionMode !== 'single') {
+      return null;
+    }
+
     return flights.find((flight) => flight.icao24 === selectedIcao24) ?? flights[0] ?? null;
-  }, [flights, selectedIcao24]);
+  }, [flights, selectedIcao24, selectionMode]);
 
   const selectedRoutePoints = useMemo(() => {
     if (!selectedFlight) {
@@ -726,7 +734,7 @@ export default function FlightMap2D({
   }, [onInitialZoomEnd]);
 
   useEffect(() => {
-    if (!selectedFlight || !focusBounds) {
+    if (selectionMode !== 'single' || !selectedFlight || !focusBounds) {
       lastAutoFocusedFlightRef.current = null;
       return;
     }
@@ -742,7 +750,7 @@ export default function FlightMap2D({
 
     focusBounds(bounds);
     lastAutoFocusedFlightRef.current = selectedFlight.icao24;
-  }, [focusBounds, selectedFlight, selectedRoutePoints]);
+  }, [focusBounds, selectedFlight, selectedRoutePoints, selectionMode]);
 
   return (
     <div className="absolute inset-0">
@@ -801,17 +809,21 @@ export default function FlightMap2D({
           ))}
 
           {renderedFlights.map((flight, index) => {
-            const isSelected = flight.icao24 === selectedFlight?.icao24;
+            const isSelected = selectionMode === 'single' && flight.icao24 === selectedFlight?.icao24;
+            const isHighlighted = selectionMode === 'all' || isSelected;
             const visibleRoutePoints = getVisibleRoutePoints(flight);
             const routePoints = isSelected ? selectedRoutePoints : visibleRoutePoints;
-            const routePath = isSelected ? buildRoutePath(routePoints) : '';
+            const routePath = buildRoutePath(routePoints);
             const routeStartPoint = routePoints[0] ?? flight.originPoint;
+            const groundFallbackPoint = flight.onGround ? (routePoints.at(-1) ?? null) : null;
             const routeCurrentPoint = flight.current
               ?? visibleRoutePoints.at(-1)
-              ?? (flight.onGround ? routePoints.at(-1) ?? null : null)
+              ?? groundFallbackPoint
               ?? routeStartPoint;
             const colorIndex = flightColorIndexes.get(flight.icao24) ?? index;
-            const strokeColor = getFlightMapColor(colorIndex, isSelected);
+            const strokeColor = selectionMode === 'all'
+              ? getFlightMapColor(colorIndex, false)
+              : getFlightMapColor(colorIndex, isSelected);
             const activeSelectedFlightDetails = isSelected && selectedFlightDetails?.icao24 === flight.icao24
               ? selectedFlightDetails
               : null;
@@ -831,10 +843,10 @@ export default function FlightMap2D({
             const markerTransform = routeCurrentPoint ? getFixedSizeTransform(routeCurrentPoint, mapTransform.k) : null;
             const originTransform = routeStartPoint ? getFixedSizeTransform(routeStartPoint, mapTransform.k) : null;
             const labelTransform = labelPoint ? getFixedSizeTransform(labelPoint, mapTransform.k) : null;
-            const displayCallsign = flight.callsign.trim() || flight.icao24.toUpperCase();
+            const displayCallsign = flightLabels?.[flight.icao24]?.trim() || flight.callsign.trim() || flight.icao24.toUpperCase();
             const labelWidth = getCallsignLabelWidth(displayCallsign);
             const labelHeight = 26;
-            const labelPlacement = isSelected && labelPoint
+            const labelPlacement = isHighlighted && labelPoint
               ? getSelectedLabelPlacement({
                   point: labelPoint,
                   labelWidth,
@@ -853,12 +865,12 @@ export default function FlightMap2D({
                     d={routePath}
                     fill="none"
                     stroke={strokeColor}
-                    strokeOpacity={isSelected ? 0.95 : 0.68}
-                    strokeWidth={isSelected ? 3.5 : 2.2}
+                    strokeOpacity={isHighlighted ? 0.95 : 0.68}
+                    strokeWidth={isHighlighted ? 3.5 : 2.2}
                     vectorEffect="non-scaling-stroke"
                     strokeLinecap="round"
                     strokeLinejoin="round"
-                    filter={isSelected ? 'url(#tracker-map-glow)' : undefined}
+                    filter={isHighlighted ? 'url(#tracker-map-glow)' : undefined}
                     className="cursor-pointer"
                     onClick={() => onSelectFlight?.(flight.icao24)}
                   />
@@ -929,7 +941,7 @@ export default function FlightMap2D({
                     <circle
                       cx="0"
                       cy="0"
-                      r={isSelected ? 5.5 : 4.2}
+                      r={isHighlighted ? 5.5 : 4.2}
                       fill="#f59e0b"
                       stroke="rgba(255,255,255,0.85)"
                       strokeWidth="1.3"
@@ -947,7 +959,7 @@ export default function FlightMap2D({
                     <circle
                       cx="0"
                       cy="0"
-                      r={isSelected ? 8.5 : 6.6}
+                      r={isHighlighted ? 8.5 : 6.6}
                       fill={strokeColor}
                       fillOpacity={0.22}
                       stroke="none"
@@ -955,7 +967,7 @@ export default function FlightMap2D({
                     <circle
                       cx="0"
                       cy="0"
-                      r={isSelected ? 4.8 : 3.8}
+                      r={isHighlighted ? 4.8 : 3.8}
                       fill={strokeColor}
                       stroke="rgba(255,255,255,0.95)"
                       strokeWidth="1.3"
@@ -964,7 +976,7 @@ export default function FlightMap2D({
                   </g>
                 ) : null}
 
-                {isSelected && labelPoint && labelTransform && labelPlacement ? (
+                {isHighlighted && labelPoint && labelTransform && labelPlacement ? (
                   <g transform={labelTransform} pointerEvents="none">
                     <line
                       x1="0"

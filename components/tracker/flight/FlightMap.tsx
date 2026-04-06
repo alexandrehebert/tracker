@@ -21,6 +21,8 @@ interface FlightMapProps {
   selectedFlightDetails?: SelectedFlightDetails | null;
   onSelectFlight?: (icao24: string) => void;
   onInitialZoomEnd?: () => void;
+  selectionMode?: 'single' | 'all';
+  flightLabels?: Record<string, string>;
 }
 
 export default function FlightMap({
@@ -31,6 +33,8 @@ export default function FlightMap({
   selectedFlightDetails,
   onSelectFlight,
   onInitialZoomEnd,
+  selectionMode = 'single',
+  flightLabels,
 }: FlightMapProps) {
   const [renderedMapView, setRenderedMapView] = useState(mapView);
   const switchTimeoutRef = useRef<number | null>(null);
@@ -85,6 +89,8 @@ export default function FlightMap({
         selectedFlightDetails={selectedFlightDetails}
         onSelectFlight={onSelectFlight}
         onInitialZoomEnd={handleMapReady}
+        selectionMode={selectionMode}
+        flightLabels={flightLabels}
       />
     );
   }
@@ -96,6 +102,8 @@ export default function FlightMap({
       selectedFlightDetails={selectedFlightDetails}
       onSelectFlight={onSelectFlight}
       onInitialZoomEnd={handleMapReady}
+      selectionMode={selectionMode}
+      flightLabels={flightLabels}
     />
   );
 }

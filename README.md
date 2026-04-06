@@ -116,3 +116,24 @@ OPENSKY_PROXY_SECRET=choose-a-long-random-secret
 ```
 
 Once `OPENSKY_PROXY_URL` is set, the app sends OpenSky auth and API traffic through that relay instead of calling OpenSky directly from the Vercel function.
+
+#### Scaleway Serverless Functions option
+
+A Scaleway-ready function is included in `scaleway/opensky-proxy/`.
+
+- runtime: **Node.js 20**
+- handler: `handler.handler`
+- recommended region: `fr-par`
+
+After deployment, set:
+
+```bash
+OPENSKY_PROXY_URL=https://<your-scaleway-function-url>
+OPENSKY_PROXY_SECRET=choose-a-long-random-secret
+```
+
+Then verify with:
+
+```bash
+curl -H "x-opensky-proxy-secret: <your-secret>" https://<your-scaleway-function-url>/health
+```
