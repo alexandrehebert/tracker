@@ -1,16 +1,19 @@
 'use client';
 
 import { useRef, useState, type ChangeEvent } from 'react';
-import { ArrowRight, Download, PlaneTakeoff, Plus, RefreshCw, Save, Settings2, Trash2, Upload, Users } from 'lucide-react';
+import { useLocale } from 'next-intl';
+import { ArrowRight, Clock3, Download, PlaneTakeoff, Play, Plus, RefreshCw, Save, Settings2, Trash2, Upload, Users } from 'lucide-react';
 import { Link } from '~/i18n/navigation';
 import {
   createEmptyFriendConfig,
   createEmptyFriendFlightLeg,
+  extractFriendTrackerIdentifiers,
   normalizeFriendsTrackerConfig,
   type FriendFlightLeg,
   type FriendTravelConfig,
   type FriendsTrackerConfig,
 } from '~/lib/friendsTracker';
+import type { TrackerCronDashboard, TrackerCronRun } from '~/lib/server/trackerCron';
 
 function createClientId(prefix: string): string {
   return `${prefix}-${Math.random().toString(36).slice(2, 10)}`;
@@ -35,6 +38,18 @@ function fromDateTimeLocalValue(value: string): string {
   return value ? new Date(value).toISOString() : '';
 }
 
+function formatDateTime(value: number | null, locale: string): string {
+  if (!value) {
+    return '—';
+  }
+
+  return new Intl.DateTimeFormat(locale, {
+    dateStyle: 'medium',
+    timeStyle: 'short',
+    timeZone: 'UTC',
+  }).format(value);
+}
+
 function createDraftFriend(): FriendTravelConfig {
   const friend = createEmptyFriendConfig();
   return {
@@ -55,13 +70,38 @@ function createDraftLeg(): FriendFlightLeg {
   };
 }
 
-export function FriendsConfigClient({ initialConfig }: { initialConfig: FriendsTrackerConfig }) {
+export function FriendsConfigClient({
+  initialConfig,
+  initialCronDashboard,
+}: {
+  initialConfig: FriendsTrackerConfig;
+  initialCronDashboard: TrackerCronDashboard;
+}) {
+  const locale = useLocale();
   const normalizedConfig = normalizeFriendsTrackerConfig(initialConfig);
   const [friends, setFriends] = useState(normalizedConfig.friends);
+  const [cronEnabled, setCronEnabled] = useState(normalizedConfig.cronEnabled ?? initialCronDashboard.config.enabled);
+  const [cronDashboard, setCronDashboard] = useState(initialCronDashboard);
   const [isSaving, setIsSaving] = useState(false);
+  const [isRunningCron, setIsRunningCron] = useState(false);
   const [notice, setNotice] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [lastSavedAt, setLastSavedAt] = useState<number | null>(normalizedConfig.updatedAt);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const trackedIdentifiers = extractFriendTrackerIdentifiers({ ...normalizedConfig, cronEnabled, friends });
+  const latestCronRun = cronDashboard.history[0] ?? null;
+
+  async function refreshCronDashboard() {
+    const response = await fetch('/api/tracker/cron/config', { cache: 'no-store' });
+    const payload = await response.json() as TrackerCronDashboard & { error?: string };
+
+    if (!response.ok) {
+      throw new Error(payload.error || 'Unable to refresh the background cron status.');
+    }
+
+    setCronDashboard(payload);
+    setCronEnabled(payload.config.enabled);
+    return payload;
+  }
 
   function updateFriend(friendId: string, updater: (friend: FriendTravelConfig) => FriendTravelConfig) {
     setFriends((currentFriends) => currentFriends.map((friend) => friend.id === friendId ? updater(friend) : friend));
@@ -71,8 +111,46 @@ export function FriendsConfigClient({ initialConfig }: { initialConfig: FriendsT
     return normalizeFriendsTrackerConfig({
       updatedAt: lastSavedAt,
       updatedBy: normalizedConfig.updatedBy ?? 'chantal config page',
+      cronEnabled,
       friends,
     });
+  }
+
+  async function handleRunCronNow() {
+    setIsRunningCron(true);
+    setNotice(null);
+
+    try {
+      const response = await fetch('/api/tracker/cron', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          trigger: 'manual-admin',
+          identifiers: trackedIdentifiers,
+          requestedBy: 'chantal config page',
+        }),
+      });
+
+      const payload = await response.json() as TrackerCronRun & { error?: string };
+      if (!response.ok) {
+        throw new Error(payload.error || 'Unable to run the background prefetch cron.');
+      }
+
+      await refreshCronDashboard();
+      setNotice({
+        type: 'success',
+        text: `Background prefetch finished with status: ${payload.status}.`,
+      });
+    } catch (error) {
+      setNotice({
+        type: 'error',
+        text: error instanceof Error ? error.message : 'Unable to run the background prefetch cron.',
+      });
+    } finally {
+      setIsRunningCron(false);
+    }
   }
 
   function handleExport() {
@@ -115,6 +193,7 @@ export function FriendsConfigClient({ initialConfig }: { initialConfig: FriendsT
       );
 
       setFriends(importedConfig.friends);
+      setCronEnabled(importedConfig.cronEnabled ?? true);
       setLastSavedAt(importedConfig.updatedAt);
       setNotice({
         type: 'success',
@@ -140,6 +219,7 @@ export function FriendsConfigClient({ initialConfig }: { initialConfig: FriendsT
         },
         body: JSON.stringify({
           updatedBy: 'chantal config page',
+          cronEnabled,
           friends,
         }),
       });
@@ -151,7 +231,18 @@ export function FriendsConfigClient({ initialConfig }: { initialConfig: FriendsT
 
       const nextConfig = normalizeFriendsTrackerConfig(payload);
       setFriends(nextConfig.friends);
+      setCronEnabled(nextConfig.cronEnabled ?? true);
       setLastSavedAt(nextConfig.updatedAt);
+      setCronDashboard((currentDashboard) => ({
+        ...currentDashboard,
+        config: {
+          ...currentDashboard.config,
+          enabled: nextConfig.cronEnabled ?? true,
+          identifiers: extractFriendTrackerIdentifiers(nextConfig),
+          updatedAt: nextConfig.updatedAt,
+          updatedBy: nextConfig.updatedBy,
+        },
+      }));
       setNotice({ type: 'success', text: 'Friends tracker config saved and synced to the background prefetch cron.' });
     } catch (error) {
       setNotice({
@@ -178,7 +269,7 @@ export function FriendsConfigClient({ initialConfig }: { initialConfig: FriendsT
               You can also import a JSON backup or export the full crew config at any time.
             </p>
             <div className="mt-3 text-xs text-slate-400">
-              Last saved: {lastSavedAt ? new Intl.DateTimeFormat(undefined, { dateStyle: 'medium', timeStyle: 'short' }).format(lastSavedAt) : 'not yet saved'}
+              Last saved (UTC): {formatDateTime(lastSavedAt, locale)}
             </div>
           </div>
 
@@ -233,6 +324,72 @@ export function FriendsConfigClient({ initialConfig }: { initialConfig: FriendsT
             {notice.text}
           </div>
         ) : null}
+      </section>
+
+      <section className="rounded-3xl border border-white/10 bg-slate-950/55 p-5 backdrop-blur-sm">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div>
+            <div className="flex items-center gap-2 text-sky-200">
+              <Clock3 className="h-4 w-4" />
+              <p className="text-xs uppercase tracking-[0.24em]">Background prefetch cron</p>
+            </div>
+            <p className="mt-3 max-w-3xl text-sm text-slate-300">
+              Reuse the same shared cron as `/tracker/cron` to precompute crew telemetry and keep completed legs visible on the map.
+              You can turn it on or off here, then save the crew config to sync the setting.
+            </p>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <label className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-slate-900/80 px-3 py-2 text-sm text-slate-200">
+              <input
+                type="checkbox"
+                className="h-4 w-4 rounded border-slate-500 bg-slate-950"
+                checked={cronEnabled}
+                onChange={(event) => setCronEnabled(event.target.checked)}
+              />
+              Enabled
+            </label>
+            <button
+              type="button"
+              onClick={handleRunCronNow}
+              disabled={isRunningCron || trackedIdentifiers.length === 0}
+              className="inline-flex items-center gap-2 rounded-full border border-white/12 bg-slate-950/80 px-4 py-2 text-sm font-medium text-slate-100 transition hover:border-white/20 hover:bg-slate-900 disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {isRunningCron ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
+              {isRunningCron ? 'Running…' : 'Run now'}
+            </button>
+            <Link
+              href="/tracker/cron"
+              className="inline-flex items-center gap-2 rounded-full border border-sky-400/40 bg-sky-500/10 px-4 py-2 text-sm font-medium text-sky-100 transition hover:bg-sky-500/20"
+            >
+              Full cron admin
+            </Link>
+          </div>
+        </div>
+
+        {!cronDashboard.mongoConfigured ? (
+          <div className="mt-4 rounded-2xl border border-amber-400/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
+            MongoDB is not configured, so cron state and history cannot be persisted.
+          </div>
+        ) : null}
+
+        <div className="mt-4 grid gap-3 md:grid-cols-3">
+          <div className="rounded-2xl border border-white/10 bg-slate-950/70 p-3 text-sm text-slate-200">
+            <div className="text-xs uppercase tracking-[0.2em] text-slate-400">Schedule</div>
+            <div className="mt-1 font-semibold text-white">Every 15 minutes</div>
+            <div className="mt-1 text-xs text-slate-400">{cronDashboard.config.schedule}</div>
+          </div>
+          <div className="rounded-2xl border border-white/10 bg-slate-950/70 p-3 text-sm text-slate-200">
+            <div className="text-xs uppercase tracking-[0.2em] text-slate-400">Tracked identifiers</div>
+            <div className="mt-1 font-semibold text-white">{trackedIdentifiers.length}</div>
+            <div className="mt-1 text-xs text-slate-400">{cronEnabled ? 'Cron ready for crew flight refreshes.' : 'Cron currently paused.'}</div>
+          </div>
+          <div className="rounded-2xl border border-white/10 bg-slate-950/70 p-3 text-sm text-slate-200">
+            <div className="text-xs uppercase tracking-[0.2em] text-slate-400">Latest run</div>
+            <div className="mt-1 font-semibold text-white">{formatDateTime(latestCronRun?.startedAt ?? null, locale)}</div>
+            <div className="mt-1 text-xs text-slate-400">{latestCronRun ? latestCronRun.status : 'No runs yet'}</div>
+          </div>
+        </div>
       </section>
 
       <div className="flex flex-wrap items-center justify-between gap-3">

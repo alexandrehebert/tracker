@@ -1,6 +1,6 @@
 'use client';
 
-import { createContext, useContext, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
+import { createContext, useContext, useEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from 'react';
 import { useIsMobile } from '../hooks/useIsMobile';
 
 interface TrackerLayoutContextValue {
@@ -21,6 +21,16 @@ export function TrackerLayoutProvider({ children }: { children: ReactNode }) {
   const sidebarRef = useRef<HTMLDivElement | null>(null);
   const sidebarToggleRef = useRef<HTMLButtonElement | null>(null);
   const topBarRef = useRef<HTMLDivElement | null>(null);
+  const sidebarInitialisedRef = useRef(false);
+
+  useEffect(() => {
+    if (!isResolved || sidebarInitialisedRef.current) {
+      return;
+    }
+
+    setSidebarOpen(!isMobile);
+    sidebarInitialisedRef.current = true;
+  }, [isMobile, isResolved]);
 
   const value = useMemo<TrackerLayoutContextValue>(() => ({
     isMobile,

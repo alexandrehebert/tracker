@@ -109,6 +109,17 @@ export interface AirportMapEntry extends AirportDetails {
   y: number | null;
 }
 
+export type FlightMapAirportUsage = 'departure' | 'arrival' | 'both';
+
+export interface FlightMapAirportMarker {
+  id: string;
+  code: string;
+  label: string;
+  latitude: number;
+  longitude: number;
+  usage: FlightMapAirportUsage;
+}
+
 export interface AirportDirectoryResponse {
   fetchedAt: number;
   total: number;

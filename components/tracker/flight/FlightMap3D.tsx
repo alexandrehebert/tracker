@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTrackerLayout } from '../contexts/TrackerLayoutContext';
 import { useTrackerMap } from '../contexts/TrackerMapContext';
 import { getFlightMapColor, SELECTED_FLIGHT_COLOR } from './colors';
-import type { FlightMapPoint, SelectedFlightDetails, TrackedFlight } from './types';
+import type { FlightMapAirportMarker, FlightMapPoint, SelectedFlightDetails, TrackedFlight } from './types';
 
 const DEFAULT_ALT = 1.65;
 const MOBILE_ALT = 1.95;
@@ -16,6 +16,8 @@ const COUNTRY_ALTITUDE = 0.0035;
 const ROUTE_SHADOW_COLOR = '#081120';
 const ROUTE_SHADOW_ALTITUDE = COUNTRY_ALTITUDE + 0.0008;
 const DEPARTURE_MARKER_COLOR = '#f59e0b';
+const ARRIVAL_MARKER_COLOR = '#22d3ee';
+const SHARED_AIRPORT_MARKER_COLOR = '#a855f7';
 const DEPARTURE_MARKER_ALTITUDE = COUNTRY_ALTITUDE + 0.006;
 const PATH_ALTITUDE_OFFSET = 0.006;
 const FORECAST_PATH_ALTITUDE = COUNTRY_ALTITUDE + 0.0016;
@@ -38,6 +40,7 @@ interface FlightMap3DProps {
   flights: TrackedFlight[];
   selectedIcao24: string | null;
   selectedFlightDetails?: SelectedFlightDetails | null;
+  airportMarkers?: FlightMapAirportMarker[];
   onSelectFlight?: (icao24: string) => void;
   onInitialZoomEnd?: () => void;
   selectionMode?: 'single' | 'all';
@@ -93,7 +96,19 @@ interface GlobePlaneMarkerDatum {
   selected: boolean;
 }
 
-type GlobeHtmlDatum = GlobeLabelDatum | GlobeDepartureMarkerDatum | GlobePlaneMarkerDatum;
+interface GlobeAirportMarkerDatum {
+  type: 'airport';
+  id: string;
+  code: string;
+  label: string;
+  lat: number;
+  lng: number;
+  altitude: number;
+  color: string;
+  usage: FlightMapAirportMarker['usage'];
+}
+
+type GlobeHtmlDatum = GlobeLabelDatum | GlobeDepartureMarkerDatum | GlobePlaneMarkerDatum | GlobeAirportMarkerDatum;
 
 interface GlobeRingDatum {
   lat: number;
@@ -158,6 +173,17 @@ function getHeadingDeltaDegrees(first: number, second: number): number {
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
+}
+
+function getSharedAirportMarkerColor(usage: FlightMapAirportMarker['usage']): string {
+  switch (usage) {
+    case 'departure':
+      return DEPARTURE_MARKER_COLOR;
+    case 'arrival':
+      return ARRIVAL_MARKER_COLOR;
+    default:
+      return SHARED_AIRPORT_MARKER_COLOR;
+  }
 }
 
 function unwrapLongitude(value: number, reference: number): number {
@@ -587,6 +613,7 @@ export default function FlightMap3D({
   flights,
   selectedIcao24,
   selectedFlightDetails,
+  airportMarkers = [],
   onSelectFlight,
   onInitialZoomEnd,
   selectionMode = 'single',
@@ -671,7 +698,25 @@ export default function FlightMap3D({
     })) satisfies GlobeLabelDatum[];
   }, [pointData, selectionMode]);
 
+  const sharedAirportMarkerData = useMemo(() => {
+    return airportMarkers.map((airport) => ({
+      type: 'airport' as const,
+      id: airport.id,
+      code: airport.code,
+      label: airport.label,
+      lat: airport.latitude,
+      lng: airport.longitude,
+      altitude: DEPARTURE_MARKER_ALTITUDE + (airport.usage === 'both' ? 0.004 : airport.usage === 'arrival' ? 0.003 : 0.002),
+      color: getSharedAirportMarkerColor(airport.usage),
+      usage: airport.usage,
+    })) satisfies GlobeAirportMarkerDatum[];
+  }, [airportMarkers]);
+
   const departureMarkerData = useMemo(() => {
+    if (selectionMode === 'all' && sharedAirportMarkerData.length) {
+      return [];
+    }
+
     return flights.flatMap((flight) => {
       const selected = selectionMode === 'all' || flight.icao24 === selectedIcao24;
       const matchingDetails = selectedFlightDetails?.icao24 === flight.icao24 ? selectedFlightDetails : null;
@@ -700,7 +745,7 @@ export default function FlightMap3D({
         selected,
       }] satisfies GlobeDepartureMarkerDatum[];
     });
-  }, [flights, selectedFlightDetails, selectedIcao24, selectionMode]);
+  }, [flights, selectedFlightDetails, selectedIcao24, selectionMode, sharedAirportMarkerData.length]);
 
   const planeMarkerData = useMemo(() => {
     return pointData.map((point) => ({
@@ -715,8 +760,8 @@ export default function FlightMap3D({
   }, [pointData]);
 
   const htmlOverlayData = useMemo(() => {
-    return [...departureMarkerData, ...planeMarkerData, ...labelData] satisfies GlobeHtmlDatum[];
-  }, [departureMarkerData, labelData, planeMarkerData]);
+    return [...sharedAirportMarkerData, ...departureMarkerData, ...planeMarkerData, ...labelData] satisfies GlobeHtmlDatum[];
+  }, [departureMarkerData, labelData, planeMarkerData, sharedAirportMarkerData]);
 
   useEffect(() => {
     if (!containerRef.current) {
@@ -917,6 +962,75 @@ export default function FlightMap3D({
       .htmlAltitude((item: GlobeHtmlDatum) => item.altitude)
       .htmlElement((item: GlobeHtmlDatum) => {
         const element = document.createElement('div');
+
+        if (item.type === 'airport') {
+          element.style.pointerEvents = 'auto';
+          element.style.position = 'relative';
+          element.style.width = '0';
+          element.style.height = '0';
+          element.style.cursor = 'default';
+          element.style.transform = 'translate(-50%, -50%)';
+          element.title = `${item.label} (${item.code})`;
+
+          const marker = document.createElement('div');
+          marker.style.position = 'absolute';
+          marker.style.left = '0';
+          marker.style.top = '0';
+          marker.style.width = item.usage === 'both' ? '12px' : '10px';
+          marker.style.height = item.usage === 'both' ? '12px' : '10px';
+          marker.style.display = 'grid';
+          marker.style.placeItems = 'center';
+          marker.style.background = item.color;
+          marker.style.border = '2px solid rgba(255,255,255,0.9)';
+          marker.style.boxShadow = '0 0 0 4px rgba(14,116,144,0.14), 0 6px 16px rgba(2,6,23,0.35)';
+          marker.style.borderRadius = item.usage === 'arrival' ? '2px' : '999px';
+          marker.style.transform = item.usage === 'arrival'
+            ? 'translate(-50%, -50%) rotate(45deg)'
+            : 'translate(-50%, -50%)';
+
+          if (item.usage === 'both') {
+            const center = document.createElement('div');
+            center.style.width = '5px';
+            center.style.height = '5px';
+            center.style.background = ARRIVAL_MARKER_COLOR;
+            center.style.border = '1px solid rgba(255,255,255,0.9)';
+            center.style.borderRadius = '1px';
+            center.style.transform = 'rotate(45deg)';
+            marker.append(center);
+          }
+
+          const badge = document.createElement('div');
+          badge.textContent = item.code;
+          badge.style.pointerEvents = 'none';
+          badge.style.position = 'absolute';
+          badge.style.left = '0';
+          badge.style.top = '-12px';
+          badge.style.whiteSpace = 'nowrap';
+          badge.style.padding = '2px 8px';
+          badge.style.borderRadius = '999px';
+          badge.style.fontSize = '10px';
+          badge.style.fontWeight = '700';
+          badge.style.color = 'rgba(226,232,240,0.96)';
+          badge.style.background = 'rgba(2,6,23,0.84)';
+          badge.style.border = `1px solid ${item.color}`;
+          badge.style.boxShadow = '0 6px 16px rgba(2,6,23,0.28)';
+          badge.style.transform = 'translate(-50%, -100%) scale(0.96)';
+          badge.style.transformOrigin = 'center bottom';
+          badge.style.opacity = '0';
+          badge.style.transition = 'opacity 140ms ease, transform 140ms ease';
+
+          element.addEventListener('mouseenter', () => {
+            badge.style.opacity = '1';
+            badge.style.transform = 'translate(-50%, -100%) scale(1)';
+          });
+          element.addEventListener('mouseleave', () => {
+            badge.style.opacity = '0';
+            badge.style.transform = 'translate(-50%, -100%) scale(0.96)';
+          });
+
+          element.append(marker, badge);
+          return element;
+        }
 
         if (item.type === 'departure') {
           element.style.pointerEvents = 'auto';

@@ -6,7 +6,7 @@ import {
   normalizeFriendsTrackerConfig,
   type FriendsTrackerConfig,
 } from '~/lib/friendsTracker';
-import { writeTrackerCronConfig } from './trackerCron';
+import { readTrackerCronConfig, writeTrackerCronConfig } from './trackerCron';
 
 const DEFAULT_DB_NAME = 'tracker';
 const FRIENDS_TRACKER_CONFIG_COLLECTION_NAME = 'friends_tracker_config';
@@ -14,6 +14,7 @@ const FRIENDS_TRACKER_CONFIG_COLLECTION_NAME = 'friends_tracker_config';
 const DEFAULT_CONFIG: FriendsTrackerConfig = {
   updatedAt: null,
   updatedBy: null,
+  cronEnabled: true,
   friends: [],
 };
 
@@ -88,7 +89,7 @@ async function syncFriendsTrackerCron(config: FriendsTrackerConfig): Promise<voi
     const identifiers = extractFriendTrackerIdentifiers(config);
     await writeTrackerCronConfig({
       identifiers,
-      enabled: identifiers.length > 0,
+      enabled: typeof config.cronEnabled === 'boolean' ? config.cronEnabled : true,
       updatedBy: config.updatedBy ?? 'chantal-config',
     });
   } catch (error) {
@@ -97,17 +98,30 @@ async function syncFriendsTrackerCron(config: FriendsTrackerConfig): Promise<voi
 }
 
 export async function readFriendsTrackerConfig(): Promise<FriendsTrackerConfig> {
-  const collection = await getFriendsTrackerConfigCollection();
+  const [collection, trackerCronConfig] = await Promise.all([
+    getFriendsTrackerConfigCollection(),
+    readTrackerCronConfig(),
+  ]);
+
   if (!collection) {
-    return { ...DEFAULT_CONFIG };
+    return normalizeFriendsTrackerConfig({
+      ...DEFAULT_CONFIG,
+      cronEnabled: trackerCronConfig.enabled,
+    });
   }
 
   try {
     const document = await collection.findOne({ _id: 'default' } as Parameters<typeof collection.findOne>[0]);
-    return normalizeFriendsTrackerConfig(document);
+    return normalizeFriendsTrackerConfig({
+      ...document,
+      cronEnabled: trackerCronConfig.enabled,
+    });
   } catch (error) {
     logMongoWarning(error);
-    return { ...DEFAULT_CONFIG };
+    return normalizeFriendsTrackerConfig({
+      ...DEFAULT_CONFIG,
+      cronEnabled: trackerCronConfig.enabled,
+    });
   }
 }
 

@@ -3,6 +3,7 @@ import { FriendsConfigClient } from '~/components/tracker/friends/FriendsConfigC
 import { Link } from '~/i18n/navigation';
 import { isValidLocale } from '~/i18n/routing';
 import { readFriendsTrackerConfig } from '~/lib/server/friendsTracker';
+import { getTrackerCronDashboard } from '~/lib/server/trackerCron';
 
 export const dynamic = 'force-dynamic';
 
@@ -17,7 +18,10 @@ export default async function ChantalConfigPage({ params }: ChantalConfigPagePro
     notFound();
   }
 
-  const initialConfig = await readFriendsTrackerConfig();
+  const [initialConfig, initialCronDashboard] = await Promise.all([
+    readFriendsTrackerConfig(),
+    getTrackerCronDashboard(5),
+  ]);
 
   return (
     <div className="min-h-[100dvh] bg-slate-950 text-slate-100">
@@ -41,13 +45,13 @@ export default async function ChantalConfigPage({ params }: ChantalConfigPagePro
           <p className="text-xs uppercase tracking-[0.24em] text-sky-300">Friends config</p>
           <h1 className="mt-2 text-3xl font-semibold text-white">Crew itinerary setup</h1>
           <p className="mt-2 max-w-3xl text-sm text-slate-300">
-            Add each friend, their flight numbers, and any connections. Saving here also syncs the shared tracker cron list
-            so completed routes stay visible on the map after landing.
+            Add each friend, their flight numbers, and any connections. Saving here also syncs the shared tracker cron list,
+            and you can now enable or disable that background prefetch directly from this page.
           </p>
         </div>
 
         <div className="mt-6">
-          <FriendsConfigClient initialConfig={initialConfig} />
+          <FriendsConfigClient initialConfig={initialConfig} initialCronDashboard={initialCronDashboard} />
         </div>
       </div>
     </div>

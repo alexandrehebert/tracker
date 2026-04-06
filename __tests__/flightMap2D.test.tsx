@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { WorldMapPayload } from '~/lib/server/worldMap';
 import { TrackerMapProvider, type TrackerMapContextValue } from '~/components/tracker/contexts/TrackerMapContext';
 import FlightMap2D from '~/components/tracker/flight/FlightMap2D';
-import type { SelectedFlightDetails, TrackedFlight } from '~/components/tracker/flight/types';
+import type { FlightMapAirportMarker, SelectedFlightDetails, TrackedFlight } from '~/components/tracker/flight/types';
 
 const mockUseTrackerLayout = vi.fn();
 
@@ -170,6 +170,25 @@ const selectedFlightDetails: SelectedFlightDetails = {
   },
 };
 
+const airportMarkers: FlightMapAirportMarker[] = [
+  {
+    id: 'lfbo-departure',
+    code: 'TLS',
+    latitude: 43.6293,
+    longitude: 1.363,
+    label: 'Toulouse-Blagnac Airport',
+    usage: 'departure',
+  },
+  {
+    id: 'lfpg-arrival',
+    code: 'CDG',
+    latitude: 49.0097,
+    longitude: 2.5479,
+    label: 'Paris Charles de Gaulle Airport',
+    usage: 'arrival',
+  },
+];
+
 type FocusBoundsHandler = NonNullable<TrackerMapContextValue['focusBounds']>;
 
 describe('FlightMap2D', () => {
@@ -183,12 +202,14 @@ describe('FlightMap2D', () => {
       flights = [],
       selectedIcao24 = null,
       selectedFlightDetails: selectionDetails = null,
+      airportMarkers: mapAirportMarkers = [],
       mapTransform = zoomIdentity,
       focusBounds = vi.fn() as FocusBoundsHandler,
     }: {
       flights?: TrackedFlight[];
       selectedIcao24?: string | null;
       selectedFlightDetails?: SelectedFlightDetails | null;
+      airportMarkers?: FlightMapAirportMarker[];
       mapTransform?: typeof zoomIdentity;
       focusBounds?: FocusBoundsHandler;
     } = {},
@@ -220,6 +241,7 @@ describe('FlightMap2D', () => {
           flights={flights}
           selectedIcao24={selectedIcao24}
           selectedFlightDetails={selectionDetails}
+          airportMarkers={mapAirportMarkers}
         />
       </TrackerMapProvider>,
     );
@@ -265,6 +287,16 @@ describe('FlightMap2D', () => {
       'transform',
       `translate(${trackedFlight.current?.x} ${trackedFlight.current?.y}) scale(0.5)`,
     );
+  });
+
+  it('shows labeled departure and arrival airports on the shared map', () => {
+    renderMap(false, {
+      flights: [trackedFlight],
+      airportMarkers,
+    });
+
+    expect(screen.getByText('TLS')).toBeInTheDocument();
+    expect(screen.getByText('CDG')).toBeInTheDocument();
   });
 
   it('does not refocus the map when the same selected flight refreshes with new live data', () => {

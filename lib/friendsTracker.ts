@@ -23,6 +23,7 @@ export interface FriendTravelConfig {
 export interface FriendsTrackerConfig {
   updatedAt: number | null;
   updatedBy: string | null;
+  cronEnabled?: boolean | null;
   friends: FriendTravelConfig[];
 }
 
@@ -145,6 +146,7 @@ export function normalizeFriendsTrackerConfig(
   return {
     updatedAt: typeof input?.updatedAt === 'number' && Number.isFinite(input.updatedAt) ? input.updatedAt : null,
     updatedBy: normalizeOptionalText(input?.updatedBy),
+    cronEnabled: typeof input?.cronEnabled === 'boolean' ? input.cronEnabled : true,
     friends: Array.isArray(input?.friends)
       ? input.friends.map((friend, friendIndex) => normalizeFriendConfig(friend, friendIndex))
       : [],

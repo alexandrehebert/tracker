@@ -5,7 +5,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { WorldMapPayload } from '~/lib/server/worldMap';
 import FlightMap2D from './FlightMap2D';
 import type { TrackerMapView } from './FlightMapViewToggle';
-import type { SelectedFlightDetails, TrackedFlight } from './types';
+import type { FlightMapAirportMarker, SelectedFlightDetails, TrackedFlight } from './types';
 
 const FlightMap3D = dynamic(() => import('./FlightMap3D'), {
   ssr: false,
@@ -19,10 +19,12 @@ interface FlightMapProps {
   mapView: TrackerMapView;
   selectedIcao24: string | null;
   selectedFlightDetails?: SelectedFlightDetails | null;
+  airportMarkers?: FlightMapAirportMarker[];
   onSelectFlight?: (icao24: string) => void;
   onInitialZoomEnd?: () => void;
   selectionMode?: 'single' | 'all';
   flightLabels?: Record<string, string>;
+  emptyOverlayMessage?: string | null;
 }
 
 export default function FlightMap({
@@ -31,10 +33,12 @@ export default function FlightMap({
   mapView,
   selectedIcao24,
   selectedFlightDetails,
+  airportMarkers = [],
   onSelectFlight,
   onInitialZoomEnd,
   selectionMode = 'single',
   flightLabels,
+  emptyOverlayMessage,
 }: FlightMapProps) {
   const [renderedMapView, setRenderedMapView] = useState(mapView);
   const switchTimeoutRef = useRef<number | null>(null);
@@ -87,10 +91,12 @@ export default function FlightMap({
         flights={flights}
         selectedIcao24={selectedIcao24}
         selectedFlightDetails={selectedFlightDetails}
+        airportMarkers={airportMarkers}
         onSelectFlight={onSelectFlight}
         onInitialZoomEnd={handleMapReady}
         selectionMode={selectionMode}
         flightLabels={flightLabels}
+        emptyOverlayMessage={emptyOverlayMessage}
       />
     );
   }
@@ -100,6 +106,7 @@ export default function FlightMap({
       flights={flights}
       selectedIcao24={selectedIcao24}
       selectedFlightDetails={selectedFlightDetails}
+      airportMarkers={airportMarkers}
       onSelectFlight={onSelectFlight}
       onInitialZoomEnd={handleMapReady}
       selectionMode={selectionMode}

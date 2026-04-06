@@ -1,23 +1,25 @@
 'use client';
 
 import { geoNaturalEarth1 } from 'd3-geo';
-import { useEffect, useMemo, useRef } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { buildSmoothRoutePath } from '~/lib/utils/routePath';
 import type { WorldMapPayload } from '~/lib/server/worldMap';
 import { useTrackerLayout } from '../contexts/TrackerLayoutContext';
 import { useTrackerMap } from '../contexts/TrackerMapContext';
 import { getFlightMapColor } from './colors';
-import type { FlightMapPoint, SelectedFlightDetails, TrackedFlight } from './types';
+import type { FlightMapAirportMarker, FlightMapPoint, SelectedFlightDetails, TrackedFlight } from './types';
 
 interface FlightMap2DProps {
   map: WorldMapPayload;
   flights: TrackedFlight[];
   selectedIcao24: string | null;
   selectedFlightDetails?: SelectedFlightDetails | null;
+  airportMarkers?: FlightMapAirportMarker[];
   onSelectFlight?: (icao24: string) => void;
   onInitialZoomEnd?: () => void;
   selectionMode?: 'single' | 'all';
   flightLabels?: Record<string, string>;
+  emptyOverlayMessage?: string | null;
 }
 
 const OCEAN_FILL = '#071a31';
@@ -25,6 +27,9 @@ const GRID_STROKE = 'rgba(203,213,225,0.08)';
 const COUNTRY_FILL = 'rgba(30,41,59,0.84)';
 const COUNTRY_STROKE = 'rgba(203,213,225,0.32)';
 const FORECAST_SHADOW_COLOR = 'rgba(8,17,32,0.7)';
+const DEPARTURE_AIRPORT_COLOR = '#f59e0b';
+const ARRIVAL_AIRPORT_COLOR = '#22d3ee';
+const SHARED_AIRPORT_COLOR = '#a855f7';
 
 function getPointDistanceKm(first: FlightMapPoint, second: FlightMapPoint): number {
   const earthRadiusKm = 6371;
@@ -457,6 +462,10 @@ interface LabelObstacle {
   radius: number;
 }
 
+interface ProjectedAirportMarker extends FlightMapAirportMarker {
+  point: FlightMapPoint;
+}
+
 interface LabelPlacement {
   offsetX: number;
   offsetY: number;
@@ -657,15 +666,18 @@ export default function FlightMap2D({
   flights,
   selectedIcao24,
   selectedFlightDetails,
+  airportMarkers = [],
   onSelectFlight,
   onInitialZoomEnd,
   selectionMode = 'single',
   flightLabels,
+  emptyOverlayMessage = 'Search one or more live flight identifiers to draw their route, origin, and current position on the map.',
 }: FlightMap2DProps) {
   const { isMobile } = useTrackerLayout();
   const { svgRef, mapTransform, focusBounds } = useTrackerMap();
   const preserveAspectRatio = 'xMidYMid slice';
   const lastAutoFocusedFlightRef = useRef<string | null>(null);
+  const [hoveredAirportId, setHoveredAirportId] = useState<string | null>(null);
 
   const projectPoint = useMemo(
     () => createFlightMapPointProjector(map.viewBox),
@@ -692,6 +704,18 @@ export default function FlightMap2D({
     });
   }, [projectPoint, selectedFlight, selectedFlightDetails]);
 
+  const projectedAirportMarkers = useMemo(() => {
+    return airportMarkers.flatMap<ProjectedAirportMarker>((airport) => {
+      const point = projectPoint({
+        latitude: airport.latitude,
+        longitude: airport.longitude,
+        altitude: 0,
+        onGround: true,
+      });
+
+      return point ? [{ ...airport, point }] : [];
+    });
+  }, [airportMarkers, projectPoint]);
 
   const renderedFlights = useMemo(() => {
     if (!selectedFlight) {
@@ -808,11 +832,105 @@ export default function FlightMap2D({
             />
           ))}
 
+          {projectedAirportMarkers.map((airport) => {
+            const markerTransform = getFixedSizeTransform(airport.point, mapTransform.k);
+            const labelWidth = Math.max(34, Math.ceil(airport.code.length * 7.5) + 14);
+            const markerColor = airport.usage === 'departure'
+              ? DEPARTURE_AIRPORT_COLOR
+              : airport.usage === 'arrival'
+                ? ARRIVAL_AIRPORT_COLOR
+                : SHARED_AIRPORT_COLOR;
+            const airportTitle = `${airport.label} (${airport.code}) • ${airport.usage === 'both' ? 'departure and arrival airport' : `${airport.usage} airport`}`;
+
+            const labelOffsetX = -(labelWidth / 2);
+
+            return (
+              <g
+                key={airport.id}
+                transform={markerTransform}
+                opacity="0.98"
+                onMouseEnter={() => setHoveredAirportId(airport.id)}
+                onMouseLeave={() => setHoveredAirportId((current) => (current === airport.id ? null : current))}
+              >
+                <title>{airportTitle}</title>
+                {airport.usage === 'arrival' ? (
+                  <rect
+                    x="-4.5"
+                    y="-4.5"
+                    width="9"
+                    height="9"
+                    rx="2"
+                    transform="rotate(45)"
+                    fill={markerColor}
+                    stroke="rgba(255,255,255,0.92)"
+                    strokeWidth="1.2"
+                    vectorEffect="non-scaling-stroke"
+                  />
+                ) : (
+                  <circle
+                    cx="0"
+                    cy="0"
+                    r={airport.usage === 'both' ? 5.4 : 4.8}
+                    fill={markerColor}
+                    stroke="rgba(255,255,255,0.92)"
+                    strokeWidth="1.2"
+                    vectorEffect="non-scaling-stroke"
+                  />
+                )}
+                {airport.usage === 'both' ? (
+                  <rect
+                    x="-2.1"
+                    y="-2.1"
+                    width="4.2"
+                    height="4.2"
+                    rx="1"
+                    transform="rotate(45)"
+                    fill={ARRIVAL_AIRPORT_COLOR}
+                    stroke="rgba(255,255,255,0.92)"
+                    strokeWidth="0.9"
+                    vectorEffect="non-scaling-stroke"
+                  />
+                ) : null}
+                <g
+                  transform={`translate(${labelOffsetX} -24)`}
+                  pointerEvents="none"
+                  opacity={hoveredAirportId === airport.id ? 1 : 0}
+                  style={{ transition: 'opacity 150ms ease' }}
+                >
+                  <rect
+                    x="0"
+                    y="0"
+                    width={labelWidth}
+                    height="18"
+                    rx="9"
+                    fill="rgba(2,6,23,0.84)"
+                    stroke={markerColor}
+                    strokeWidth="0.9"
+                    vectorEffect="non-scaling-stroke"
+                  />
+                  <text
+                    x={labelWidth / 2}
+                    y="9"
+                    fill="#e2e8f0"
+                    fontSize="9.5"
+                    fontWeight="700"
+                    fontFamily="ui-sans-serif, system-ui, sans-serif"
+                    textAnchor="middle"
+                    dominantBaseline="middle"
+                  >
+                    {airport.code}
+                  </text>
+                </g>
+              </g>
+            );
+          })}
+
           {renderedFlights.map((flight, index) => {
             const isSelected = selectionMode === 'single' && flight.icao24 === selectedFlight?.icao24;
             const isHighlighted = selectionMode === 'all' || isSelected;
+            const shouldShowRoute = selectionMode === 'all' || isSelected;
             const visibleRoutePoints = getVisibleRoutePoints(flight);
-            const routePoints = isSelected ? selectedRoutePoints : visibleRoutePoints;
+            const routePoints = shouldShowRoute ? (isSelected ? selectedRoutePoints : visibleRoutePoints) : [];
             const routePath = buildRoutePath(routePoints);
             const routeStartPoint = routePoints[0] ?? flight.originPoint;
             const groundFallbackPoint = flight.onGround ? (routePoints.at(-1) ?? null) : null;
@@ -942,7 +1060,7 @@ export default function FlightMap2D({
                       cx="0"
                       cy="0"
                       r={isHighlighted ? 5.5 : 4.2}
-                      fill="#f59e0b"
+                      fill={DEPARTURE_AIRPORT_COLOR}
                       stroke="rgba(255,255,255,0.85)"
                       strokeWidth="1.3"
                       vectorEffect="non-scaling-stroke"
@@ -1021,10 +1139,10 @@ export default function FlightMap2D({
         </g>
       </svg>
 
-      {flights.length === 0 ? (
+      {flights.length === 0 && emptyOverlayMessage ? (
         <div className="pointer-events-none absolute inset-0 flex items-center justify-center px-6">
           <div className="max-w-md rounded-2xl border border-white/10 bg-slate-950/70 px-5 py-4 text-center text-sm text-slate-300 backdrop-blur-sm">
-            Search one or more live flight identifiers to draw their route, origin, and current position on the map.
+            {emptyOverlayMessage}
           </div>
         </div>
       ) : null}

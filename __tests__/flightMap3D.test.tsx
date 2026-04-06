@@ -2,7 +2,7 @@ import { render, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { TrackerMapProvider } from '~/components/tracker/contexts/TrackerMapContext';
 import FlightMap3D from '~/components/tracker/flight/FlightMap3D';
-import type { SelectedFlightDetails, TrackedFlight } from '~/components/tracker/flight/types';
+import type { FlightMapAirportMarker, SelectedFlightDetails, TrackedFlight } from '~/components/tracker/flight/types';
 
 const mockUseTrackerLayout = vi.fn();
 const globeFactory = vi.fn();
@@ -206,6 +206,25 @@ const selectedFlightDetails: SelectedFlightDetails = {
     longitude: 2.5479,
   },
 };
+
+const airportMarkers: FlightMapAirportMarker[] = [
+  {
+    id: 'lfbo-departure',
+    code: 'TLS',
+    latitude: 43.6293,
+    longitude: 1.363,
+    label: 'Toulouse-Blagnac Airport',
+    usage: 'departure',
+  },
+  {
+    id: 'lfpg-arrival',
+    code: 'CDG',
+    latitude: 49.0097,
+    longitude: 2.5479,
+    label: 'Paris Charles de Gaulle Airport',
+    usage: 'arrival',
+  },
+];
 
 function createGlobeMock() {
   const globeMaterial = {
@@ -608,6 +627,40 @@ describe('FlightMap3D', () => {
 
     expect(onSelectFlight).toHaveBeenCalledWith(trackedFlight.icao24);
     expect(onSelectFlight).toHaveBeenCalledTimes(2);
+  });
+
+  it('renders shared departure and arrival airport overlays in all-flight mode', async () => {
+    const { globe } = createGlobeMock();
+    globeFactory.mockReturnValue(() => globe);
+
+    render(
+      <TrackerMapProvider
+        value={{
+          globeRef: { current: null },
+          setGlobeRef: vi.fn(),
+          svgRef: { current: null },
+          mapTransform: { x: 0, y: 0, k: 1, apply: vi.fn(), applyX: vi.fn(), applyY: vi.fn(), invert: vi.fn(), invertX: vi.fn(), invertY: vi.fn(), rescaleX: vi.fn(), rescaleY: vi.fn(), scale: vi.fn(), translate: vi.fn(), toString: vi.fn(() => 'translate(0,0) scale(1)') },
+          zoomBy: vi.fn(),
+          resetZoom: vi.fn(),
+        }}
+      >
+        <FlightMap3D
+          flights={[trackedFlight]}
+          selectedIcao24={null}
+          selectionMode="all"
+          airportMarkers={airportMarkers}
+        />
+      </TrackerMapProvider>,
+    );
+
+    await waitFor(() => {
+      expect(globe.htmlElementsData).toHaveBeenCalled();
+    });
+
+    const renderedHtmlElements = globe.htmlElementsData.mock.calls.at(-1)?.[0] ?? [];
+
+    expect(renderedHtmlElements.some((item: { type?: string; usage?: string; code?: string }) => item.type === 'airport' && item.usage === 'departure' && item.code === 'TLS')).toBe(true);
+    expect(renderedHtmlElements.some((item: { type?: string; usage?: string; code?: string }) => item.type === 'airport' && item.usage === 'arrival' && item.code === 'CDG')).toBe(true);
   });
 
   it('renders an orange departure marker for the selected route like the 2D map', async () => {

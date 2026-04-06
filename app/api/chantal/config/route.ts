@@ -28,11 +28,13 @@ export async function PUT(request: Request) {
   try {
     const body = await request.json().catch(() => ({})) as {
       updatedBy?: string | null;
+      cronEnabled?: boolean;
       friends?: unknown;
     };
 
     const payload = await writeFriendsTrackerConfig({
       updatedBy: typeof body.updatedBy === 'string' ? body.updatedBy : null,
+      cronEnabled: typeof body.cronEnabled === 'boolean' ? body.cronEnabled : undefined,
       friends: Array.isArray(body.friends) ? body.friends : [],
     });
 

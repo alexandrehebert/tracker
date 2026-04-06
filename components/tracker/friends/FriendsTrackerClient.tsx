@@ -1,5 +1,6 @@
 'use client';
 
+import { useLocale } from 'next-intl';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
   CalendarClock,
@@ -31,7 +32,7 @@ import { getFlightMapColor } from '../flight/colors';
 import FlightMap from '../flight/FlightMap';
 import { FlightMapProvider } from '../flight/contexts/FlightMapProvider';
 import FlightMapViewToggle, { type TrackerMapView } from '../flight/FlightMapViewToggle';
-import type { TrackerApiResponse, TrackedFlight } from '../flight/types';
+import type { FlightMapAirportMarker, TrackerApiResponse, TrackedFlight } from '../flight/types';
 
 const AUTO_REFRESH_MS = 60_000;
 const MIN_MAP_LOADING_MS = 2_000;
@@ -39,6 +40,7 @@ const MIN_MAP_LOADING_MS = 2_000;
 interface FriendsTrackerClientProps {
   map: WorldMapPayload;
   initialConfig: FriendsTrackerConfig;
+  airportMarkers: FlightMapAirportMarker[];
 }
 
 interface FriendsTrackerDashboardProps extends FriendsTrackerClientProps {
@@ -68,18 +70,19 @@ function formatRelativeSeconds(timestampSeconds: number | null): string {
   return `${hours}h ago`;
 }
 
-function formatDateTimeMillis(timestampMs: number | null): string {
+function formatDateTimeMillis(timestampMs: number | null, locale: string): string {
   if (!timestampMs) {
     return '—';
   }
 
-  return new Intl.DateTimeFormat(undefined, {
+  return new Intl.DateTimeFormat(locale, {
     dateStyle: 'medium',
     timeStyle: 'short',
+    timeZone: 'UTC',
   }).format(timestampMs);
 }
 
-function formatScheduledDateTime(value: string): string {
+function formatScheduledDateTime(value: string, locale: string): string {
   if (!value) {
     return 'Time not set';
   }
@@ -89,9 +92,10 @@ function formatScheduledDateTime(value: string): string {
     return value;
   }
 
-  return new Intl.DateTimeFormat(undefined, {
+  return new Intl.DateTimeFormat(locale, {
     dateStyle: 'medium',
     timeStyle: 'short',
+    timeZone: 'UTC',
   }).format(parsedTime);
 }
 
@@ -127,6 +131,7 @@ function FriendsTrackerTopBar({
   mapView: TrackerMapView;
   onMapViewChange: (nextView: TrackerMapView) => void;
 }) {
+  const locale = useLocale();
   const { topBarRef } = useTrackerLayout();
 
   return (
@@ -138,7 +143,7 @@ function FriendsTrackerTopBar({
           <span className="text-slate-500">•</span>
           <span>{trackedCount} flights on the map</span>
         </div>
-        <div className="mt-1 text-xs text-slate-400">Updated {formatDateTimeMillis(lastUpdated)}</div>
+        <div className="mt-1 text-xs text-slate-400">Updated {formatDateTimeMillis(lastUpdated, locale)} UTC</div>
       </div>
 
       <div className="pointer-events-auto flex flex-wrap items-center justify-end gap-2">
@@ -167,12 +172,15 @@ function FriendsTrackerTopBar({
 function FriendsTrackerDashboard({
   map,
   initialConfig,
+  airportMarkers,
   mapView,
   onMapViewChange,
   mapReady,
   loadingTargetView,
   onMapReady,
 }: FriendsTrackerDashboardProps) {
+  const locale = useLocale();
+  const { isMobile, sidebarOpen } = useTrackerLayout();
   const [config, setConfig] = useState(() => normalizeFriendsTrackerConfig(initialConfig));
   const [data, setData] = useState<TrackerApiResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -322,6 +330,9 @@ function FriendsTrackerDashboard({
 
   const totalFriends = config.friends.length;
   const totalLegs = statuses.length;
+  const desktopMapWidth = !isMobile && sidebarOpen
+    ? 'calc(100% - clamp(20rem, 32vw, 34rem))'
+    : '100%';
 
   const sidebarContent = (
     <div className="space-y-4">
@@ -343,6 +354,27 @@ function FriendsTrackerDashboard({
             <div className="mt-1 text-lg font-semibold text-white">{totalLegs}</div>
           </div>
         </div>
+        {airportMarkers.length ? (
+          <div className="mt-4 space-y-2">
+            <div className="text-[11px] uppercase tracking-[0.2em] text-slate-400">Airport markers</div>
+            <div className="flex flex-wrap gap-2 text-[11px] text-slate-200">
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-400/25 bg-amber-500/10 px-2.5 py-1">
+                <span className="h-2.5 w-2.5 rounded-full bg-amber-400" />
+                Departure
+              </span>
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-cyan-400/25 bg-cyan-500/10 px-2.5 py-1">
+                <span className="h-2.5 w-2.5 rotate-45 rounded-[2px] bg-cyan-400" />
+                Arrival
+              </span>
+              <span className="inline-flex items-center gap-1.5 rounded-full border border-fuchsia-400/25 bg-fuchsia-500/10 px-2.5 py-1">
+                <span className="relative inline-flex h-2.5 w-2.5 items-center justify-center rounded-full bg-fuchsia-400">
+                  <span className="h-1.5 w-1.5 rotate-45 rounded-[1px] bg-cyan-200" />
+                </span>
+                Both
+              </span>
+            </div>
+          </div>
+        ) : null}
       </section>
 
       {!identifiers.length ? (
@@ -416,7 +448,7 @@ function FriendsTrackerDashboard({
                           </div>
                           <div className="mt-1 flex items-center gap-2 text-xs text-slate-400">
                             <CalendarClock className="h-3.5 w-3.5" />
-                            <span>{formatScheduledDateTime(status.leg.departureTime)}</span>
+                            <span>{formatScheduledDateTime(status.leg.departureTime, locale)} UTC</span>
                           </div>
                           {status.leg.from || status.leg.to ? (
                             <div className="mt-1 text-xs text-slate-400">
@@ -485,7 +517,10 @@ function FriendsTrackerDashboard({
       }
       showBackgroundGrid
       mapContent={
-        <div className="relative h-[100dvh] w-full">
+        <div
+          className="relative h-[100dvh] transition-[width] duration-300 ease-out"
+          style={{ width: desktopMapWidth }}
+        >
           <FlightMap
             map={map}
             flights={visibleFlights}
@@ -493,6 +528,8 @@ function FriendsTrackerDashboard({
             selectedIcao24={null}
             selectionMode="all"
             flightLabels={flightLabels}
+            airportMarkers={airportMarkers}
+            emptyOverlayMessage={null}
             onInitialZoomEnd={onMapReady}
           />
         </div>
@@ -508,7 +545,7 @@ function FriendsTrackerDashboard({
   );
 }
 
-export default function FriendsTrackerClient({ map, initialConfig }: FriendsTrackerClientProps) {
+export default function FriendsTrackerClient({ map, initialConfig, airportMarkers }: FriendsTrackerClientProps) {
   const [mapView, setMapView] = useState<TrackerMapView>('flat');
   const [mapReady, setMapReady] = useState(false);
   const [loadingTargetView, setLoadingTargetView] = useState<TrackerMapView>('flat');
@@ -593,6 +630,7 @@ export default function FriendsTrackerClient({ map, initialConfig }: FriendsTrac
         <FriendsTrackerDashboard
           map={map}
           initialConfig={initialConfig}
+          airportMarkers={airportMarkers}
           mapView={mapView}
           onMapViewChange={handleMapViewChange}
           mapReady={mapReady}

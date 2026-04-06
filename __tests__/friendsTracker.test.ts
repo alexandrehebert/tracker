@@ -139,6 +139,7 @@ describe('friends tracker helpers', () => {
 
   it('normalizes imported JSON configs with missing ids and casing differences', () => {
     const config = normalizeFriendsTrackerConfig({
+      cronEnabled: false,
       friends: [
         {
           name: 'Alice',
@@ -154,6 +155,7 @@ describe('friends tracker helpers', () => {
     } as Partial<FriendsTrackerConfig>);
 
     expect(config.friends).toHaveLength(1);
+    expect(config.cronEnabled).toBe(false);
     expect(config.friends[0]?.id).toBeTruthy();
     expect(config.friends[0]?.flights[0]?.id).toBeTruthy();
     expect(config.friends[0]?.flights[0]?.flightNumber).toBe('AF123');
