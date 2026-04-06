@@ -710,32 +710,6 @@ function FriendsTrackerDashboard({
 
   const statuses = useMemo(() => buildFriendFlightStatuses(config, data?.flights ?? []), [config, data?.flights]);
 
-  const visibleFlights = useMemo(() => {
-    const flightsByIcao24 = new Map<string, TrackedFlight>();
-
-    for (const status of statuses) {
-      if (status.flight) {
-        flightsByIcao24.set(status.flight.icao24, status.flight);
-      }
-    }
-
-    for (const flight of data?.flights ?? []) {
-      if (!flightsByIcao24.has(flight.icao24)) {
-        flightsByIcao24.set(flight.icao24, flight);
-      }
-    }
-
-    return Array.from(flightsByIcao24.values());
-  }, [data?.flights, statuses]);
-
-  const flightLabels = useMemo(() => {
-    return Object.fromEntries(
-      statuses
-        .filter((status) => status.flight)
-        .map((status) => [status.flight!.icao24, status.label]),
-    ) satisfies Record<string, string>;
-  }, [statuses]);
-
   const mapStatuses = useMemo(() => {
     return config.friends.flatMap((friend) => {
       const friendStatuses = statuses.filter((status) => status.friend.id === friend.id);
@@ -743,6 +717,26 @@ function FriendsTrackerDashboard({
       return preferredStatus ? [preferredStatus] : [];
     });
   }, [config.friends, statuses]);
+
+  const visibleFlights = useMemo(() => {
+    const flightsByIcao24 = new Map<string, TrackedFlight>();
+
+    for (const status of mapStatuses) {
+      if (status.flight && !flightsByIcao24.has(status.flight.icao24)) {
+        flightsByIcao24.set(status.flight.icao24, status.flight);
+      }
+    }
+
+    return Array.from(flightsByIcao24.values());
+  }, [mapStatuses]);
+
+  const flightLabels = useMemo(() => {
+    return Object.fromEntries(
+      mapStatuses
+        .filter((status) => status.flight)
+        .map((status) => [status.flight!.icao24, status.label]),
+    ) satisfies Record<string, string>;
+  }, [mapStatuses]);
 
   const flightColorIndexMap = useMemo(() => {
     return new Map(

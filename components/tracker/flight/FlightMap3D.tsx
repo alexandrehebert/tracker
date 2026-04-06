@@ -35,6 +35,7 @@ const SELECTED_POINT_MARKER_ALTITUDE = COUNTRY_ALTITUDE + 0.0016;
 const POINT_ALTITUDE_OFFSET = 0.018;
 const SELECTED_POINT_ALTITUDE_OFFSET = 0.03;
 const ALTITUDE_GUIDE_STROKE = 0.14;
+const PATH_POINT_DUPLICATE_DISTANCE_KM = 12;
 const GROUND_RING_ALTITUDE = COUNTRY_ALTITUDE + 0.001;
 const FRIEND_AVATAR_CLUSTER_DEGREES = 2.5;
 const FRIEND_AVATAR_ALTITUDE = DEPARTURE_MARKER_ALTITUDE + 0.006;
@@ -502,26 +503,31 @@ function getForecastPathPoints({
     });
 }
 
+function getFlightPointVisitKey(point: FlightMapPoint): string {
+  return `${point.latitude.toFixed(2)}:${point.longitude.toFixed(2)}:${point.onGround ? 'g' : 'a'}`;
+}
+
 function dedupeFlightPoints(points: Array<FlightMapPoint | null>): FlightMapPoint[] {
+  const orderedPoints = points.filter((point): point is FlightMapPoint => Boolean(point));
   const deduped: FlightMapPoint[] = [];
+  const seenVisitKeys = new Set<string>();
 
-  for (const point of points) {
-    if (!point) {
-      continue;
-    }
-
+  orderedPoints.forEach((point, index) => {
+    const isEndpoint = index === 0 || index === orderedPoints.length - 1;
     const previous = deduped.at(-1) ?? null;
-    if (
-      previous
-      && Math.abs(previous.latitude - point.latitude) <= 0.00001
-      && Math.abs(previous.longitude - point.longitude) <= 0.00001
-      && (previous.time ?? null) === (point.time ?? null)
-    ) {
-      continue;
+
+    if (!isEndpoint && previous && getPointDistanceKm(previous, point) <= PATH_POINT_DUPLICATE_DISTANCE_KM) {
+      return;
     }
 
+    const visitKey = getFlightPointVisitKey(point);
+    if (!isEndpoint && seenVisitKeys.has(visitKey)) {
+      return;
+    }
+
+    seenVisitKeys.add(visitKey);
     deduped.push(point);
-  }
+  });
 
   return deduped;
 }

@@ -159,6 +159,7 @@ function mergeUniqueStrings(...lists: Array<string[] | undefined>): string[] {
 }
 
 const MAX_RECONCILED_TRACK_POINTS = 120;
+const TRACK_POINT_BUCKET_DECIMALS = 2;
 
 function chooseMostRecentPoint(next: FlightMapPoint | null, previous: FlightMapPoint | null): FlightMapPoint | null {
   if (!next) {
@@ -198,6 +199,10 @@ function chooseEarliestPoint(next: FlightMapPoint | null, previous: FlightMapPoi
   }
 
   return previous.time != null ? previous : next;
+}
+
+function getTrackSpatialKey(point: FlightMapPoint): string {
+  return `${point.latitude.toFixed(TRACK_POINT_BUCKET_DECIMALS)}:${point.longitude.toFixed(TRACK_POINT_BUCKET_DECIMALS)}:${point.onGround ? 'g' : 'a'}`;
 }
 
 function limitTrackPoints(points: FlightMapPoint[]): FlightMapPoint[] {
@@ -241,7 +246,20 @@ function mergeTrackPoints(previous: FlightMapPoint[] = [], next: FlightMapPoint[
       return first.time - second.time;
     });
 
-  return limitTrackPoints(sortedPoints);
+  const dedupedPoints: FlightMapPoint[] = [];
+  const seenSpatialKeys = new Set<string>();
+
+  for (const point of sortedPoints) {
+    const spatialKey = getTrackSpatialKey(point);
+    if (seenSpatialKeys.has(spatialKey)) {
+      continue;
+    }
+
+    seenSpatialKeys.add(spatialKey);
+    dedupedPoints.push(point);
+  }
+
+  return limitTrackPoints(dedupedPoints);
 }
 
 function mergeRouteValues(

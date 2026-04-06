@@ -107,10 +107,55 @@ describe('FriendsTrackerClient', () => {
         JSON.stringify({
           query: 'UX1153,TEST4',
           requestedIdentifiers: ['UX1153', 'TEST4'],
-          matchedIdentifiers: ['TEST4'],
-          notFoundIdentifiers: ['UX1153'],
+          matchedIdentifiers: ['UX1153', 'TEST4'],
+          notFoundIdentifiers: [],
           fetchedAt: Date.now(),
           flights: [
+            {
+              icao24: 'landed-ux1153',
+              callsign: 'AEA1153',
+              originCountry: 'Portugal',
+              matchedBy: ['UX1153'],
+              lastContact: nowSeconds - 4 * 60 * 60,
+              current: {
+                time: nowSeconds - 4 * 60 * 60,
+                latitude: 40.4983,
+                longitude: -3.5676,
+                x: 380,
+                y: 240,
+                altitude: 0,
+                heading: 70,
+                onGround: true,
+              },
+              originPoint: {
+                time: nowSeconds - 5 * 60 * 60,
+                latitude: 38.7742,
+                longitude: -9.1342,
+                x: 350,
+                y: 250,
+                altitude: 0,
+                heading: 70,
+                onGround: true,
+              },
+              track: [],
+              rawTrack: [],
+              onGround: true,
+              velocity: 0,
+              heading: 70,
+              verticalRate: 0,
+              geoAltitude: 0,
+              baroAltitude: 0,
+              squawk: '1101',
+              category: 1,
+              route: {
+                departureAirport: 'LIS',
+                arrivalAirport: 'MAD',
+                firstSeen: nowSeconds - 5 * 60 * 60,
+                lastSeen: nowSeconds - 4 * 60 * 60,
+              },
+              dataSource: 'opensky',
+              sourceDetails: [],
+            },
             {
               icao24: 'live-test4',
               callsign: 'IBE004',
@@ -207,9 +252,11 @@ describe('FriendsTrackerClient', () => {
     expect(await screen.findByText(/chantal crew tracker/i)).toBeInTheDocument();
 
     await waitFor(() => {
+      const flights = latestFlightMapProps?.flights as Array<{ icao24: string }> | undefined;
       const flightAvatars = latestFlightMapProps?.flightAvatars as Record<string, Array<{ friendId: string }>> | undefined;
       const staticFriendMarkers = latestFlightMapProps?.staticFriendMarkers as Array<{ id: string }> | undefined;
 
+      expect(flights?.map((flight) => flight.icao24)).toEqual(['live-test4']);
       expect(flightAvatars?.['live-test4']?.map((entry) => entry.friendId)).toEqual(['friend-1']);
       expect(staticFriendMarkers?.some((marker) => marker.id === 'friend-1')).toBe(false);
     });

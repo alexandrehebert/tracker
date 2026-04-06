@@ -34,6 +34,7 @@ const COUNTRY_STROKE = 'rgba(147,197,253,0.24)';
 const FORECAST_SHADOW_COLOR = 'rgba(8,17,32,0.7)';
 const DEPARTURE_AIRPORT_COLOR = '#f59e0b';
 const AIRPORT_MARKER_COLOR = '#a855f7';
+const ROUTE_POINT_DUPLICATE_DISTANCE_KM = 12;
 
 function getPointDistanceKm(first: FlightMapPoint, second: FlightMapPoint): number {
   const earthRadiusKm = 6371;
@@ -47,6 +48,10 @@ function getPointDistanceKm(first: FlightMapPoint, second: FlightMapPoint): numb
     + Math.cos(startLatitude) * Math.cos(endLatitude) * Math.sin(longitudeDelta / 2) ** 2;
 
   return 2 * earthRadiusKm * Math.atan2(Math.sqrt(haversine), Math.sqrt(1 - haversine));
+}
+
+function getRoutePointVisitKey(point: FlightMapPoint): string {
+  return `${point.latitude.toFixed(2)}:${point.longitude.toFixed(2)}:${point.onGround ? 'g' : 'a'}`;
 }
 
 function buildRoutePath(points: FlightMapPoint[]): string {
@@ -93,34 +98,7 @@ function buildRoutePath(points: FlightMapPoint[]): string {
 }
 
 function getVisibleRoutePoints(flight: TrackedFlight): FlightMapPoint[] {
-  const seen = new Set<string>();
-
-  return [flight.originPoint, ...flight.track, flight.current]
-    .filter((point): point is FlightMapPoint => Boolean(point))
-    .sort((first, second) => {
-      if (first.time == null && second.time == null) {
-        return 0;
-      }
-
-      if (first.time == null) {
-        return 1;
-      }
-
-      if (second.time == null) {
-        return -1;
-      }
-
-      return first.time - second.time;
-    })
-    .filter((point) => {
-      const key = `${point.time ?? 'na'}:${point.x.toFixed(2)}:${point.y.toFixed(2)}`;
-      if (seen.has(key)) {
-        return false;
-      }
-
-      seen.add(key);
-      return true;
-    });
+  return dedupeRoutePoints([flight.originPoint, ...flight.track, flight.current]);
 }
 
 function getAirportRoutePoint({
@@ -146,25 +124,26 @@ function getAirportRoutePoint({
 }
 
 function dedupeRoutePoints(points: Array<FlightMapPoint | null>): FlightMapPoint[] {
+  const orderedPoints = points.filter((point): point is FlightMapPoint => Boolean(point));
   const deduped: FlightMapPoint[] = [];
+  const seenVisitKeys = new Set<string>();
 
-  for (const point of points) {
-    if (!point) {
-      continue;
-    }
-
+  orderedPoints.forEach((point, index) => {
+    const isEndpoint = index === 0 || index === orderedPoints.length - 1;
     const previous = deduped.at(-1) ?? null;
-    if (
-      previous
-      && Math.abs(previous.x - point.x) <= 0.01
-      && Math.abs(previous.y - point.y) <= 0.01
-      && (previous.time ?? null) === (point.time ?? null)
-    ) {
-      continue;
+
+    if (!isEndpoint && previous && getPointDistanceKm(previous, point) <= ROUTE_POINT_DUPLICATE_DISTANCE_KM) {
+      return;
     }
 
+    const visitKey = getRoutePointVisitKey(point);
+    if (!isEndpoint && seenVisitKeys.has(visitKey)) {
+      return;
+    }
+
+    seenVisitKeys.add(visitKey);
     deduped.push(point);
-  }
+  });
 
   return deduped;
 }

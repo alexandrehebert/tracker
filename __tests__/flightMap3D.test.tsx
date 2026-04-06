@@ -518,6 +518,103 @@ describe('FlightMap3D', () => {
     });
   });
 
+  it('collapses repeated cached route samples into a forward globe path', async () => {
+    const { globe } = createGlobeMock();
+    globeFactory.mockReturnValue(() => globe);
+
+    const cachedHistoryFlight: TrackedFlight = {
+      ...airborneFlight,
+      icao24: 'cachedup3d',
+      callsign: 'CCH456',
+      originPoint: {
+        ...airborneFlight.originPoint!,
+        time: 1_700_000_000,
+        latitude: 52.62,
+        longitude: -8.41,
+        altitude: 0,
+        onGround: false,
+      },
+      track: [
+        {
+          ...airborneFlight.current!,
+          time: 1_700_000_010,
+          latitude: 53.46,
+          longitude: -16.8,
+          altitude: 9_200,
+          onGround: false,
+        },
+        {
+          ...airborneFlight.current!,
+          time: 1_700_000_020,
+          latitude: 52.62,
+          longitude: -8.41,
+          altitude: 9_100,
+          onGround: false,
+        },
+        {
+          ...airborneFlight.current!,
+          time: 1_700_000_030,
+          latitude: 53.46,
+          longitude: -16.8,
+          altitude: 9_300,
+          onGround: false,
+        },
+        {
+          ...airborneFlight.current!,
+          time: 1_700_000_040,
+          latitude: 53.88,
+          longitude: -24.7,
+          altitude: 10_100,
+          onGround: false,
+        },
+      ],
+      current: {
+        ...airborneFlight.current!,
+        time: 1_700_000_050,
+        latitude: 53.94,
+        longitude: -31.25,
+        altitude: 11_000,
+        onGround: false,
+      },
+      route: {
+        departureAirport: 'EGLL',
+        arrivalAirport: 'KJFK',
+        firstSeen: 1_700_000_000,
+        lastSeen: 1_700_000_050,
+      },
+    };
+
+    render(
+      <TrackerMapProvider
+        value={{
+          globeRef: { current: null },
+          setGlobeRef: vi.fn(),
+          svgRef: { current: null },
+          mapTransform: { x: 0, y: 0, k: 1, apply: vi.fn(), applyX: vi.fn(), applyY: vi.fn(), invert: vi.fn(), invertX: vi.fn(), invertY: vi.fn(), rescaleX: vi.fn(), rescaleY: vi.fn(), scale: vi.fn(), translate: vi.fn(), toString: vi.fn(() => 'translate(0,0) scale(1)') },
+          zoomBy: vi.fn(),
+          resetZoom: vi.fn(),
+        }}
+      >
+        <FlightMap3D
+          flights={[cachedHistoryFlight]}
+          selectedIcao24={cachedHistoryFlight.icao24}
+          selectedFlightDetails={{ ...selectedFlightDetails, icao24: cachedHistoryFlight.icao24, callsign: cachedHistoryFlight.callsign }}
+        />
+      </TrackerMapProvider>,
+    );
+
+    await waitFor(() => {
+      expect(globe.pathsData).toHaveBeenCalled();
+    });
+
+    const renderedPaths = globe.pathsData.mock.calls.at(-1)?.[0] ?? [];
+    const mainPath = renderedPaths.find((path: { variant?: string }) => path.variant === 'main');
+    const pointKeys = mainPath?.points.map((point: { lat: number; lng: number }) => `${point.lat.toFixed(2)}:${point.lng.toFixed(2)}`) ?? [];
+
+    expect(mainPath).toBeDefined();
+    expect(new Set(pointKeys).size).toBe(pointKeys.length);
+  });
+
   it('keeps the other plane location dots visible when a flight is selected', async () => {
     const { globe } = createGlobeMock();
     globeFactory.mockReturnValue(() => globe);

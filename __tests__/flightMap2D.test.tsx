@@ -649,6 +649,95 @@ describe('FlightMap2D', () => {
     expect(routePath?.getAttribute('d')).toMatch(/[CQ]/);
   });
 
+  it('collapses repeated cached route samples so the path does not zig-zag between the same checkpoints', () => {
+    const cachedHistoryFlight: TrackedFlight = {
+      ...trackedFlight,
+      icao24: 'cachedup2d',
+      callsign: 'CCH123',
+      originPoint: {
+        ...trackedFlight.originPoint!,
+        latitude: 52.62,
+        longitude: -8.41,
+        x: 425.79,
+        y: 107.19,
+      },
+      track: [
+        {
+          ...trackedFlight.track[0]!,
+          time: 1_700_000_010,
+          latitude: 53.46,
+          longitude: -16.8,
+          x: 441.32,
+          y: 107.37,
+        },
+        {
+          ...trackedFlight.track[0]!,
+          time: 1_700_000_020,
+          latitude: 52.62,
+          longitude: -8.41,
+          x: 425.79,
+          y: 107.19,
+        },
+        {
+          ...trackedFlight.track[0]!,
+          time: 1_700_000_030,
+          latitude: 53.46,
+          longitude: -16.8,
+          x: 441.32,
+          y: 107.37,
+        },
+        {
+          ...trackedFlight.track[0]!,
+          time: 1_700_000_040,
+          latitude: 53.88,
+          longitude: -24.7,
+          x: 459.98,
+          y: 108.66,
+        },
+      ],
+      current: {
+        ...trackedFlight.current!,
+        time: 1_700_000_050,
+        latitude: 53.94,
+        longitude: -31.25,
+        x: 479.86,
+        y: 111.23,
+      },
+      route: {
+        departureAirport: 'EGLL',
+        arrivalAirport: 'KJFK',
+        firstSeen: 1_700_000_000,
+        lastSeen: 1_700_000_050,
+      },
+    };
+
+    const { container } = renderMap(false, {
+      flights: [cachedHistoryFlight],
+      selectedIcao24: cachedHistoryFlight.icao24,
+      selectedFlightDetails: {
+        ...selectedFlightDetails,
+        icao24: cachedHistoryFlight.icao24,
+        callsign: cachedHistoryFlight.callsign,
+      },
+    });
+
+    const routePath = Array.from(container.querySelectorAll('path.cursor-pointer')).find((path) => {
+      if (path.getAttribute('stroke-dasharray') === '8 8') {
+        return false;
+      }
+
+      const value = path.getAttribute('d') ?? '';
+      return value.includes(`${cachedHistoryFlight.originPoint?.x.toFixed(2)} ${cachedHistoryFlight.originPoint?.y.toFixed(2)}`)
+        && value.includes(`${cachedHistoryFlight.current?.x.toFixed(2)} ${cachedHistoryFlight.current?.y.toFixed(2)}`);
+    });
+
+    const routeValue = routePath?.getAttribute('d') ?? '';
+    const originOccurrences = routeValue.split(`${cachedHistoryFlight.originPoint?.x.toFixed(2)} ${cachedHistoryFlight.originPoint?.y.toFixed(2)}`).length - 1;
+
+    expect(routePath).not.toBeNull();
+    expect(originOccurrences).toBeLessThanOrEqual(2);
+  });
+
   it('uses the resolved departure airport as the selected route start when live track history begins mid-flight', () => {
     const departureAirportDetails: SelectedFlightDetails = {
       ...selectedFlightDetails,
