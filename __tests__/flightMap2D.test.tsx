@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { geoNaturalEarth1 } from 'd3-geo';
 import { zoomIdentity } from 'd3-zoom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
@@ -435,6 +435,59 @@ describe('FlightMap2D', () => {
     expect(splitFourCluster?.querySelector('text')).toBeNull();
     expect(countCluster).not.toBeNull();
     expect(countCluster?.querySelector('text')?.textContent).toBe('5');
+  });
+
+  it('renders the hovered friend cluster last so its label stays above the other markers', () => {
+    const { container } = renderMap(false, {
+      staticFriendMarkers: [
+        {
+          id: 'hover-a-1',
+          name: 'Alice',
+          avatarUrl: null,
+          color: '#ef4444',
+          latitude: -33.8688,
+          longitude: 151.2093,
+        },
+        {
+          id: 'hover-a-2',
+          name: 'Bob',
+          avatarUrl: null,
+          color: '#22c55e',
+          latitude: -33.8688,
+          longitude: 151.2093,
+        },
+        {
+          id: 'hover-b-1',
+          name: 'Cara',
+          avatarUrl: null,
+          color: '#3b82f6',
+          latitude: 34.0522,
+          longitude: -118.2437,
+        },
+        {
+          id: 'hover-b-2',
+          name: 'Dan',
+          avatarUrl: null,
+          color: '#f59e0b',
+          latitude: 34.0522,
+          longitude: -118.2437,
+        },
+      ],
+    });
+
+    const firstCluster = Array.from(container.querySelectorAll('g[data-cluster-layout="split-2"]')).find(
+      (group) => group.querySelector('title')?.textContent?.includes('Alice, Bob'),
+    );
+    const hoverTarget = firstCluster?.querySelector('circle[fill="transparent"]');
+
+    expect(firstCluster).not.toBeNull();
+    expect(hoverTarget).not.toBeNull();
+
+    fireEvent.mouseEnter(hoverTarget!);
+
+    const clusterGroups = Array.from(container.querySelectorAll('g[data-cluster-layout="split-2"]'));
+    expect(clusterGroups.at(-1)?.querySelector('title')?.textContent).toContain('Alice, Bob');
+    expect(container.textContent).toContain('Alice, Bob');
   });
 
   it('does not refocus the map when the same selected flight refreshes with new live data', () => {

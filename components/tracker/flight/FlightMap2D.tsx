@@ -876,6 +876,27 @@ export default function FlightMap2D({
     return clusterFriendSvgMarkers(allFriendSvgMarkers, FRIEND_CLUSTER_RADIUS_PX, mapTransform.k);
   }, [allFriendSvgMarkers, mapTransform.k]);
 
+  const orderedFriendSvgClusters = useMemo(() => {
+    const clustersWithKeys = friendSvgClusters.map((cluster) => ({
+      cluster,
+      clusterKey: cluster.members.map((member) => member.key).join('|'),
+    }));
+
+    if (!hoveredClusterKey) {
+      return clustersWithKeys;
+    }
+
+    const hoveredCluster = clustersWithKeys.find((entry) => entry.clusterKey === hoveredClusterKey);
+    if (!hoveredCluster) {
+      return clustersWithKeys;
+    }
+
+    return [
+      ...clustersWithKeys.filter((entry) => entry.clusterKey !== hoveredClusterKey),
+      hoveredCluster,
+    ];
+  }, [friendSvgClusters, hoveredClusterKey]);
+
   const friendIcao24Set = useMemo(() => {
     return new Set(allFriendSvgMarkers.map((m) => m.icao24).filter(Boolean) as string[]);
   }, [allFriendSvgMarkers]);
@@ -1280,8 +1301,7 @@ export default function FlightMap2D({
             );
           })}
 
-          {friendSvgClusters.map((cluster) => {
-            const clusterKey = cluster.members.map((m) => m.key).join('|');
+          {orderedFriendSvgClusters.map(({ cluster, clusterKey }) => {
             const safeClusterKey = clusterKey.replace(/[^a-zA-Z0-9_-]/g, '-');
             const isHovered = hoveredClusterKey === clusterKey;
             const isSingle = cluster.members.length === 1;
