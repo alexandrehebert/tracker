@@ -493,7 +493,7 @@ export function TrackerCronAdminClient({ initialDashboard }: { initialDashboard:
         </div>
       </div>
 
-      <div className="grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]">
+      <div className="grid gap-6 lg:items-start lg:grid-cols-[minmax(0,1fr)_minmax(0,1.2fr)]">
         <div className="space-y-6">
           <form onSubmit={handleSave} className="rounded-3xl border border-white/10 bg-slate-900/70 p-5 shadow-[0_18px_50px_rgba(2,6,23,0.25)]">
             <div className="flex items-start justify-between gap-4">
@@ -662,7 +662,7 @@ export function TrackerCronAdminClient({ initialDashboard }: { initialDashboard:
           </section>
         </div>
 
-        <section className="rounded-3xl border border-white/10 bg-slate-900/70 p-5 shadow-[0_18px_50px_rgba(2,6,23,0.25)]">
+        <section className="self-start rounded-3xl border border-white/10 bg-slate-900/70 p-5 shadow-[0_18px_50px_rgba(2,6,23,0.25)]">
           <h2 className="text-lg font-semibold text-white">Execution history</h2>
           <p className="mt-1 text-sm text-slate-300">
             Mongo keeps the full run history. Showing the latest {visibleHistory.length} of {dashboard.history.length} executions{hasMoreHistory ? ' — scroll to the bottom to load 10 more.' : '.'}
