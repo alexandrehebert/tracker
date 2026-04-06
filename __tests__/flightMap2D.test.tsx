@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { WorldMapPayload } from '~/lib/server/worldMap';
 import { TrackerMapProvider, type TrackerMapContextValue } from '~/components/tracker/contexts/TrackerMapContext';
 import FlightMap2D from '~/components/tracker/flight/FlightMap2D';
-import type { FlightMapAirportMarker, SelectedFlightDetails, TrackedFlight } from '~/components/tracker/flight/types';
+import type { FlightMapAirportMarker, FriendAvatarMarker, SelectedFlightDetails, TrackedFlight } from '~/components/tracker/flight/types';
 
 const mockUseTrackerLayout = vi.fn();
 
@@ -204,6 +204,7 @@ describe('FlightMap2D', () => {
       selectedIcao24 = null,
       selectedFlightDetails: selectionDetails = null,
       airportMarkers: mapAirportMarkers = [],
+      staticFriendMarkers = [],
       mapTransform = zoomIdentity,
       focusBounds = vi.fn() as FocusBoundsHandler,
     }: {
@@ -211,6 +212,7 @@ describe('FlightMap2D', () => {
       selectedIcao24?: string | null;
       selectedFlightDetails?: SelectedFlightDetails | null;
       airportMarkers?: FlightMapAirportMarker[];
+      staticFriendMarkers?: FriendAvatarMarker[];
       mapTransform?: typeof zoomIdentity;
       focusBounds?: FocusBoundsHandler;
     } = {},
@@ -243,6 +245,7 @@ describe('FlightMap2D', () => {
           selectedIcao24={selectedIcao24}
           selectedFlightDetails={selectionDetails}
           airportMarkers={mapAirportMarkers}
+          staticFriendMarkers={staticFriendMarkers}
         />
       </TrackerMapProvider>,
     );
@@ -326,6 +329,112 @@ describe('FlightMap2D', () => {
 
     expect(screen.getByText('TLS')).toBeInTheDocument();
     expect(screen.getByText('CDG')).toBeInTheDocument();
+  });
+
+  it('renders small friend clusters as split backgrounds and larger ones as counts', () => {
+    const { container } = renderMap(false, {
+      staticFriendMarkers: [
+        {
+          id: 'pair-1',
+          name: 'Alice',
+          avatarUrl: null,
+          color: '#ef4444',
+          latitude: -33.8688,
+          longitude: 151.2093,
+        },
+        {
+          id: 'pair-2',
+          name: 'Bob',
+          avatarUrl: null,
+          color: '#22c55e',
+          latitude: -33.8688,
+          longitude: 151.2093,
+        },
+        {
+          id: 'quad-1',
+          name: 'Cara',
+          avatarUrl: null,
+          color: '#3b82f6',
+          latitude: 40.4168,
+          longitude: -3.7038,
+        },
+        {
+          id: 'quad-2',
+          name: 'Dan',
+          avatarUrl: null,
+          color: '#f59e0b',
+          latitude: 40.4168,
+          longitude: -3.7038,
+        },
+        {
+          id: 'quad-3',
+          name: 'Eve',
+          avatarUrl: null,
+          color: '#a855f7',
+          latitude: 40.4168,
+          longitude: -3.7038,
+        },
+        {
+          id: 'quad-4',
+          name: 'Finn',
+          avatarUrl: null,
+          color: '#14b8a6',
+          latitude: 40.4168,
+          longitude: -3.7038,
+        },
+        {
+          id: 'count-1',
+          name: 'Gia',
+          avatarUrl: null,
+          color: '#ec4899',
+          latitude: 34.0522,
+          longitude: -118.2437,
+        },
+        {
+          id: 'count-2',
+          name: 'Hugo',
+          avatarUrl: null,
+          color: '#84cc16',
+          latitude: 34.0522,
+          longitude: -118.2437,
+        },
+        {
+          id: 'count-3',
+          name: 'Iris',
+          avatarUrl: null,
+          color: '#06b6d4',
+          latitude: 34.0522,
+          longitude: -118.2437,
+        },
+        {
+          id: 'count-4',
+          name: 'Jules',
+          avatarUrl: null,
+          color: '#f97316',
+          latitude: 34.0522,
+          longitude: -118.2437,
+        },
+        {
+          id: 'count-5',
+          name: 'Kira',
+          avatarUrl: null,
+          color: '#8b5cf6',
+          latitude: 34.0522,
+          longitude: -118.2437,
+        },
+      ],
+    });
+
+    const splitTwoCluster = container.querySelector('[data-cluster-layout="split-2"]');
+    const splitFourCluster = container.querySelector('[data-cluster-layout="split-4"]');
+    const countCluster = container.querySelector('[data-cluster-layout="count"]');
+
+    expect(splitTwoCluster).not.toBeNull();
+    expect(splitTwoCluster?.querySelector('text')).toBeNull();
+    expect(splitFourCluster).not.toBeNull();
+    expect(splitFourCluster?.querySelector('text')).toBeNull();
+    expect(countCluster).not.toBeNull();
+    expect(countCluster?.querySelector('text')?.textContent).toBe('5');
   });
 
   it('does not refocus the map when the same selected flight refreshes with new live data', () => {

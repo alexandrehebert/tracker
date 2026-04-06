@@ -451,6 +451,28 @@ interface FriendSvgCluster {
 }
 
 const FRIEND_CLUSTER_RADIUS_PX = 40;
+const FRIEND_CLUSTER_FALLBACK_FILL = 'rgba(15,23,42,0.94)';
+const FRIEND_CLUSTER_DIVIDER_STROKE = 'rgba(255,255,255,0.42)';
+
+function getFriendClusterLayout(memberCount: number): 'single' | 'split-2' | 'split-4' | 'count' {
+  if (memberCount <= 1) {
+    return 'single';
+  }
+
+  if (memberCount === 2) {
+    return 'split-2';
+  }
+
+  if (memberCount <= 4) {
+    return 'split-4';
+  }
+
+  return 'count';
+}
+
+function getFriendClusterSegmentColors(members: FriendSvgMarker[], slotCount: number): string[] {
+  return Array.from({ length: slotCount }, (_, index) => members[index]?.color ?? FRIEND_CLUSTER_FALLBACK_FILL);
+}
 
 function clusterFriendSvgMarkers(markers: FriendSvgMarker[], clusterRadiusPx: number, zoomScale: number): FriendSvgCluster[] {
   if (markers.length === 0) {
@@ -1260,21 +1282,35 @@ export default function FlightMap2D({
 
           {friendSvgClusters.map((cluster) => {
             const clusterKey = cluster.members.map((m) => m.key).join('|');
+            const safeClusterKey = clusterKey.replace(/[^a-zA-Z0-9_-]/g, '-');
             const isHovered = hoveredClusterKey === clusterKey;
             const isSingle = cluster.members.length === 1;
             const firstMember = cluster.members[0]!;
             const outerRadius = isSingle ? 17 : 20;
             const innerRadius = isSingle ? 14 : 17;
+            const clusterLayout = getFriendClusterLayout(cluster.members.length);
             const clusterTransform = `translate(${cluster.x} ${cluster.y}) scale(${mapTransform.k > 0 ? 1 / mapTransform.k : 1})`;
             const labelText = isSingle
               ? firstMember.name
-              : cluster.members.length <= 3
+              : cluster.members.length <= 4
                 ? cluster.members.map((m) => m.name).join(', ')
                 : `${cluster.members.slice(0, 2).map((m) => m.name).join(', ')} +${cluster.members.length - 2}`;
             const estimatedLabelWidth = Math.max(60, labelText.length * 7 + 20);
+            const clusterFillClipId = `friend-cluster-fill-${safeClusterKey}`;
+            const segmentColors = clusterLayout === 'split-2'
+              ? getFriendClusterSegmentColors(cluster.members, 2)
+              : clusterLayout === 'split-4'
+                ? getFriendClusterSegmentColors(cluster.members, 4)
+                : [];
 
             return (
-              <g key={clusterKey} transform={clusterTransform}>
+              <g
+                key={clusterKey}
+                transform={clusterTransform}
+                data-cluster-layout={clusterLayout}
+                data-cluster-size={cluster.members.length}
+              >
+                <title>{isSingle ? firstMember.name : `${cluster.members.length} friends: ${labelText}`}</title>
                 {isSingle ? (
                   <>
                     <defs>
@@ -1320,80 +1356,113 @@ export default function FlightMap2D({
                   </>
                 ) : (
                   <>
-                    {cluster.members.slice(0, 3).map((member, memberIndex) => {
-                      const memberCount = Math.min(cluster.members.length, 3);
-                      const angle = (memberIndex / memberCount) * 2 * Math.PI - Math.PI / 2;
-                      const offset = memberCount === 2 ? 8 : 10;
-                      const tx = Math.cos(angle) * offset;
-                      const ty = Math.sin(angle) * offset;
-                      const thumbClipId = `friend-cluster-clip-${member.key}`;
-
-                      return (
-                        <g key={member.key} transform={`translate(${tx} ${ty})`}>
-                          <defs>
-                            <clipPath id={thumbClipId}>
-                              <circle cx="0" cy="0" r="7" />
-                            </clipPath>
-                          </defs>
-                          <circle cx="0" cy="0" r="7" fill={member.color} />
-                          {member.avatarUrl && (
-                            <image
-                              href={member.avatarUrl}
-                              x="-7"
-                              y="-7"
-                              width="14"
-                              height="14"
-                              clipPath={`url(#${thumbClipId})`}
-                              preserveAspectRatio="xMidYMid slice"
-                            />
-                          )}
-                          {!member.avatarUrl && (
-                            <text
-                              x="0"
-                              y="0"
-                              textAnchor="middle"
-                              dominantBaseline="middle"
-                              fill="white"
-                              fontSize="7"
-                              fontWeight="700"
-                              fontFamily="ui-sans-serif, system-ui, sans-serif"
-                            >
-                              {getFriendInitials(member.name)}
-                            </text>
-                          )}
-                          <circle
-                            cx="0"
-                            cy="0"
-                            r="7"
-                            fill="none"
-                            stroke="rgba(255,255,255,0.85)"
-                            strokeWidth="1.5"
-                            vectorEffect="non-scaling-stroke"
-                          />
-                        </g>
-                      );
-                    })}
+                    <defs>
+                      <clipPath id={clusterFillClipId}>
+                        <circle cx="0" cy="0" r={innerRadius} />
+                      </clipPath>
+                    </defs>
                     <circle
                       cx="0"
                       cy="0"
-                      r={innerRadius - 2}
-                      fill="rgba(2,6,23,0.88)"
+                      r={outerRadius}
+                      fill={isHovered ? 'rgba(56,189,248,0.24)' : 'rgba(15,23,42,0.24)'}
+                    />
+                    <g clipPath={`url(#${clusterFillClipId})`}>
+                      {clusterLayout === 'split-2' ? (
+                        <>
+                          <rect
+                            x={-innerRadius}
+                            y={-innerRadius}
+                            width={innerRadius}
+                            height={innerRadius * 2}
+                            fill={segmentColors[0]}
+                          />
+                          <rect
+                            x="0"
+                            y={-innerRadius}
+                            width={innerRadius}
+                            height={innerRadius * 2}
+                            fill={segmentColors[1]}
+                          />
+                        </>
+                      ) : clusterLayout === 'split-4' ? (
+                        <>
+                          {segmentColors.map((color, segmentIndex) => {
+                            const x = segmentIndex % 2 === 0 ? -innerRadius : 0;
+                            const y = segmentIndex < 2 ? -innerRadius : 0;
+
+                            return (
+                              <rect
+                                key={`${safeClusterKey}-segment-${segmentIndex}`}
+                                x={x}
+                                y={y}
+                                width={innerRadius}
+                                height={innerRadius}
+                                fill={color}
+                              />
+                            );
+                          })}
+                        </>
+                      ) : (
+                        <circle cx="0" cy="0" r={innerRadius} fill="rgba(2,6,23,0.9)" />
+                      )}
+                    </g>
+
+                    {clusterLayout === 'split-2' ? (
+                      <line
+                        x1="0"
+                        y1={-innerRadius}
+                        x2="0"
+                        y2={innerRadius}
+                        stroke={FRIEND_CLUSTER_DIVIDER_STROKE}
+                        strokeWidth="1.2"
+                        vectorEffect="non-scaling-stroke"
+                      />
+                    ) : clusterLayout === 'split-4' ? (
+                      <>
+                        <line
+                          x1="0"
+                          y1={-innerRadius}
+                          x2="0"
+                          y2={innerRadius}
+                          stroke={FRIEND_CLUSTER_DIVIDER_STROKE}
+                          strokeWidth="1.2"
+                          vectorEffect="non-scaling-stroke"
+                        />
+                        <line
+                          x1={-innerRadius}
+                          y1="0"
+                          x2={innerRadius}
+                          y2="0"
+                          stroke={FRIEND_CLUSTER_DIVIDER_STROKE}
+                          strokeWidth="1.2"
+                          vectorEffect="non-scaling-stroke"
+                        />
+                      </>
+                    ) : (
+                      <text
+                        x="0"
+                        y="0"
+                        textAnchor="middle"
+                        dominantBaseline="middle"
+                        fill="white"
+                        fontSize="10"
+                        fontWeight="700"
+                        fontFamily="ui-sans-serif, system-ui, sans-serif"
+                      >
+                        {cluster.members.length}
+                      </text>
+                    )}
+
+                    <circle
+                      cx="0"
+                      cy="0"
+                      r={innerRadius}
+                      fill="none"
                       stroke="white"
                       strokeWidth="2"
                       vectorEffect="non-scaling-stroke"
                     />
-                    <text
-                      x="0"
-                      y="0"
-                      textAnchor="middle"
-                      dominantBaseline="middle"
-                      fill="white"
-                      fontSize="10"
-                      fontWeight="700"
-                      fontFamily="ui-sans-serif, system-ui, sans-serif"
-                    >
-                      {cluster.members.length}
-                    </text>
                   </>
                 )}
 
@@ -1430,7 +1499,7 @@ export default function FlightMap2D({
                   cy="0"
                   r={outerRadius + 4}
                   fill="transparent"
-                  style={{ cursor: 'pointer' }}
+                  style={{ cursor: firstMember.icao24 ? 'pointer' : 'default' }}
                   onMouseEnter={() => setHoveredClusterKey(clusterKey)}
                   onMouseLeave={() => setHoveredClusterKey(null)}
                   onClick={() => {

@@ -6,6 +6,8 @@ import FriendsTrackerClient from '~/components/tracker/friends/FriendsTrackerCli
 import type { FriendsTrackerConfig } from '~/lib/friendsTracker';
 import type { WorldMapPayload } from '~/lib/server/worldMap';
 
+let latestFlightMapProps: Record<string, unknown> | null = null;
+
 vi.mock('next-intl', () => ({
   useLocale: () => 'en',
 }));
@@ -19,10 +21,12 @@ vi.mock('~/i18n/navigation', () => ({
 }));
 
 vi.mock('~/components/tracker/flight/FlightMap', () => ({
-  default: function MockFlightMap({ onInitialZoomEnd }: { onInitialZoomEnd?: () => void }) {
+  default: function MockFlightMap(props: { onInitialZoomEnd?: () => void } & Record<string, unknown>) {
+    latestFlightMapProps = props;
+
     useEffect(() => {
-      onInitialZoomEnd?.();
-    }, [onInitialZoomEnd]);
+      props.onInitialZoomEnd?.();
+    }, [props.onInitialZoomEnd]);
 
     return <div data-testid="flight-map" />;
   },
@@ -56,6 +60,8 @@ const initialConfig: FriendsTrackerConfig = {
 
 describe('FriendsTrackerClient', () => {
   beforeEach(() => {
+    latestFlightMapProps = null;
+
     vi.stubGlobal(
       'matchMedia',
       vi.fn().mockImplementation(() => ({
@@ -91,6 +97,122 @@ describe('FriendsTrackerClient', () => {
   afterEach(() => {
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
+  });
+
+  it('passes only one actual map location per friend when a later leg is the live one', async () => {
+    const nowSeconds = Math.floor(Date.now() / 1000);
+
+    vi.spyOn(window, 'fetch').mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          query: 'UX1153,TEST4',
+          requestedIdentifiers: ['UX1153', 'TEST4'],
+          matchedIdentifiers: ['TEST4'],
+          notFoundIdentifiers: ['UX1153'],
+          fetchedAt: Date.now(),
+          flights: [
+            {
+              icao24: 'live-test4',
+              callsign: 'IBE004',
+              originCountry: 'Spain',
+              matchedBy: ['TEST4'],
+              lastContact: nowSeconds - 30,
+              current: {
+                time: nowSeconds - 30,
+                latitude: 44.2,
+                longitude: -21.4,
+                x: 420,
+                y: 210,
+                altitude: 10400,
+                heading: 280,
+                onGround: false,
+              },
+              originPoint: {
+                time: nowSeconds - 5000,
+                latitude: 40.4983,
+                longitude: -3.5676,
+                x: 380,
+                y: 240,
+                altitude: 0,
+                heading: 280,
+                onGround: true,
+              },
+              track: [],
+              rawTrack: [],
+              onGround: false,
+              velocity: 245,
+              heading: 280,
+              verticalRate: 0,
+              geoAltitude: 10400,
+              baroAltitude: 10440,
+              squawk: '4451',
+              category: 1,
+              route: {
+                departureAirport: 'MAD',
+                arrivalAirport: 'JFK',
+                firstSeen: nowSeconds - 5400,
+                lastSeen: null,
+              },
+              dataSource: 'opensky',
+              sourceDetails: [],
+            },
+          ],
+        }),
+        {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        },
+      ),
+    );
+
+    const connectingConfig: FriendsTrackerConfig = {
+      ...initialConfig,
+      destinationAirport: 'JFK',
+      friends: [
+        {
+          id: 'friend-1',
+          name: 'Emma Demo',
+          flights: [
+            {
+              id: 'leg-1',
+              flightNumber: 'UX1153',
+              departureTime: new Date(Date.now() - 5 * 60 * 60 * 1000).toISOString(),
+              from: 'LIS',
+              to: 'MAD',
+            },
+            {
+              id: 'leg-2',
+              flightNumber: 'TEST4',
+              departureTime: new Date(Date.now() - 85 * 60 * 1000).toISOString(),
+              from: 'MAD',
+              to: 'JFK',
+            },
+          ],
+        },
+      ],
+    };
+
+    render(
+      <FriendsTrackerClient
+        map={map}
+        initialConfig={connectingConfig}
+        airportMarkers={[
+          { id: 'lis', code: 'LIS', label: 'Lisbon', latitude: 38.7742, longitude: -9.1342, usage: 'both' },
+          { id: 'mad', code: 'MAD', label: 'Madrid', latitude: 40.4983, longitude: -3.5676, usage: 'both' },
+          { id: 'jfk', code: 'JFK', label: 'New York JFK', latitude: 40.6413, longitude: -73.7781, usage: 'both' },
+        ]}
+      />,
+    );
+
+    expect(await screen.findByText(/chantal crew tracker/i)).toBeInTheDocument();
+
+    await waitFor(() => {
+      const flightAvatars = latestFlightMapProps?.flightAvatars as Record<string, Array<{ friendId: string }>> | undefined;
+      const staticFriendMarkers = latestFlightMapProps?.staticFriendMarkers as Array<{ id: string }> | undefined;
+
+      expect(flightAvatars?.['live-test4']?.map((entry) => entry.friendId)).toEqual(['friend-1']);
+      expect(staticFriendMarkers?.some((marker) => marker.id === 'friend-1')).toBe(false);
+    });
   });
 
   it('renders the configured friend avatar in the sidebar card with the same color coding as the map', async () => {

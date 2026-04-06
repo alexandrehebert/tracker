@@ -240,6 +240,65 @@ function computeTimelineCursorPosition(
   return null;
 }
 
+function getFriendStatusReferenceTimeMs(status: FriendFlightStatus): number {
+  if (status.flight?.lastContact != null) {
+    return status.flight.lastContact * 1000;
+  }
+
+  if (status.flight?.route.lastSeen != null) {
+    return status.flight.route.lastSeen * 1000;
+  }
+
+  if (status.flight?.route.firstSeen != null) {
+    return status.flight.route.firstSeen * 1000;
+  }
+
+  const scheduledTime = Date.parse(status.leg.departureTime);
+  return Number.isFinite(scheduledTime) ? scheduledTime : Number.NEGATIVE_INFINITY;
+}
+
+function pickPreferredMapStatus(friendStatuses: FriendFlightStatus[], now = Date.now()): FriendFlightStatus | null {
+  if (!friendStatuses.length) {
+    return null;
+  }
+
+  const matchedStatuses = friendStatuses.filter((status) => status.flight);
+  if (matchedStatuses.length > 0) {
+    const inFlightStatuses = matchedStatuses.filter((status) => !status.flight?.onGround);
+    const candidateStatuses = inFlightStatuses.length > 0 ? inFlightStatuses : matchedStatuses;
+
+    return candidateStatuses.reduce<FriendFlightStatus | null>((best, status) => {
+      if (!best) {
+        return status;
+      }
+
+      return getFriendStatusReferenceTimeMs(status) >= getFriendStatusReferenceTimeMs(best) ? status : best;
+    }, null);
+  }
+
+  const upcomingStatuses = friendStatuses
+    .map((status) => ({
+      status,
+      departureTimeMs: Date.parse(status.leg.departureTime),
+    }))
+    .filter(({ departureTimeMs }) => Number.isFinite(departureTimeMs) && departureTimeMs >= now)
+    .sort((a, b) => a.departureTimeMs - b.departureTimeMs);
+
+  if (upcomingStatuses.length > 0) {
+    return upcomingStatuses[0]!.status;
+  }
+
+  const mostRecentPastStatus = friendStatuses
+    .map((status) => ({
+      status,
+      departureTimeMs: Date.parse(status.leg.departureTime),
+    }))
+    .filter(({ departureTimeMs }) => Number.isFinite(departureTimeMs))
+    .sort((a, b) => b.departureTimeMs - a.departureTimeMs)[0];
+
+  return mostRecentPastStatus?.status ?? friendStatuses[0] ?? null;
+}
+
 function FriendTimelineCard({
   friend,
   friendStatuses,
@@ -677,18 +736,26 @@ function FriendsTrackerDashboard({
     ) satisfies Record<string, string>;
   }, [statuses]);
 
+  const mapStatuses = useMemo(() => {
+    return config.friends.flatMap((friend) => {
+      const friendStatuses = statuses.filter((status) => status.friend.id === friend.id);
+      const preferredStatus = pickPreferredMapStatus(friendStatuses);
+      return preferredStatus ? [preferredStatus] : [];
+    });
+  }, [config.friends, statuses]);
+
   const flightColorIndexMap = useMemo(() => {
     return new Map(
-      statuses
+      mapStatuses
         .filter((status) => status.flight)
         .map((status, index) => [status.flight!.icao24, index]),
     );
-  }, [statuses]);
+  }, [mapStatuses]);
 
   const flightAvatars = useMemo<Record<string, FriendAvatarInfo[]>>(() => {
     const result: Record<string, FriendAvatarInfo[]> = {};
 
-    for (const status of statuses) {
+    for (const status of mapStatuses) {
       if (!status.flight) {
         continue;
       }
@@ -709,38 +776,33 @@ function FriendsTrackerDashboard({
     }
 
     return result;
-  }, [statuses, flightColorIndexMap]);
+  }, [mapStatuses, flightColorIndexMap]);
 
   const staticFriendMarkers = useMemo<FriendAvatarMarker[]>(() => {
-    const seen = new Set<string>();
-    return statuses
-      .filter((status) => !status.flight && status.leg.from)
-      .flatMap((status, index) => {
-        if (seen.has(status.friend.id)) {
-          return [];
-        }
+    return mapStatuses.flatMap((status, index) => {
+      if (status.flight || !status.leg.from) {
+        return [];
+      }
 
-        const airportCode = status.leg.from?.trim().toUpperCase() ?? '';
-        const airportMarker = airportMarkers.find(
-          (m) => m.code.toUpperCase() === airportCode,
-        );
+      const airportCode = status.leg.from.trim().toUpperCase();
+      const airportMarker = airportMarkers.find(
+        (m) => m.code.toUpperCase() === airportCode,
+      );
 
-        if (!airportMarker) {
-          return [];
-        }
+      if (!airportMarker) {
+        return [];
+      }
 
-        seen.add(status.friend.id);
-
-        return [{
-          id: status.friend.id,
-          name: status.friend.name || status.label,
-          avatarUrl: status.friend.avatarUrl ?? null,
-          color: getFlightMapColor(index, false),
-          latitude: airportMarker.latitude,
-          longitude: airportMarker.longitude,
-        } satisfies FriendAvatarMarker];
-      });
-  }, [statuses, airportMarkers]);
+      return [{
+        id: status.friend.id,
+        name: status.friend.name || status.label,
+        avatarUrl: status.friend.avatarUrl ?? null,
+        color: getFlightMapColor(index, false),
+        latitude: airportMarker.latitude,
+        longitude: airportMarker.longitude,
+      } satisfies FriendAvatarMarker];
+    });
+  }, [mapStatuses, airportMarkers]);
 
   const friendAccentColors = useMemo(() => {
     const result = new Map<string, string>();
