@@ -32,7 +32,6 @@ const HALO_SECONDARY = 'rgba(168,85,247,0.12)';
 const COUNTRY_FILL = 'rgba(12,38,66,0.68)';
 const COUNTRY_STROKE = 'rgba(147,197,253,0.24)';
 const FORECAST_SHADOW_COLOR = 'rgba(8,17,32,0.7)';
-const DEPARTURE_AIRPORT_COLOR = '#f59e0b';
 const AIRPORT_MARKER_COLOR = '#a855f7';
 const ROUTE_POINT_DUPLICATE_DISTANCE_KM = 12;
 
@@ -1231,10 +1230,11 @@ export default function FlightMap2D({
                     <circle
                       cx="0"
                       cy="0"
-                      r={isHighlighted ? 5.5 : 4.2}
-                      fill={DEPARTURE_AIRPORT_COLOR}
-                      stroke="rgba(255,255,255,0.85)"
-                      strokeWidth="1.3"
+                      r={isHighlighted ? 2.1 : 1.7}
+                      fill={strokeColor}
+                      fillOpacity={0.92}
+                      stroke="rgba(255,255,255,0.82)"
+                      strokeWidth="0.8"
                       vectorEffect="non-scaling-stroke"
                     />
                   </g>
@@ -1249,18 +1249,18 @@ export default function FlightMap2D({
                     <circle
                       cx="0"
                       cy="0"
-                      r={isHighlighted ? 8.5 : 6.6}
+                      r={isHighlighted ? 4.2 : 3.2}
                       fill={strokeColor}
-                      fillOpacity={0.22}
+                      fillOpacity={0.1}
                       stroke="none"
                     />
                     <circle
                       cx="0"
                       cy="0"
-                      r={isHighlighted ? 4.8 : 3.8}
+                      r={isHighlighted ? 2.3 : 1.8}
                       fill={strokeColor}
-                      stroke="rgba(255,255,255,0.95)"
-                      strokeWidth="1.3"
+                      stroke="rgba(255,255,255,0.92)"
+                      strokeWidth="0.9"
                       vectorEffect="non-scaling-stroke"
                     />
                   </g>
