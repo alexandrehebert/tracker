@@ -112,20 +112,43 @@ function collectFriendsTrackerAirportCodes(config: FriendsTrackerConfig): string
 
 export async function withFriendsTrackerAirportTimezones(config: FriendsTrackerConfig): Promise<FriendsTrackerConfig> {
   const airportCodes = collectFriendsTrackerAirportCodes(config)
+  const existingLookup = config.airportTimezones ?? {}
 
   if (airportCodes.length === 0) {
     return {
       ...config,
-      airportTimezones: {},
+      airportTimezones: existingLookup,
     }
   }
 
   const airports = (await Promise.all(airportCodes.map((code) => lookupAirportDetails(code))))
     .filter((airport): airport is NonNullable<typeof airport> => Boolean(airport))
 
+  const airportTimezones = {
+    ...existingLookup,
+    ...buildAirportTimezoneLookup(airports),
+  }
+
   return {
     ...config,
-    airportTimezones: buildAirportTimezoneLookup(airports),
+    airportTimezones,
+    trips: (config.trips ?? []).map((trip) => ({
+      ...trip,
+      friends: trip.friends.map((friend) => ({
+        ...friend,
+        flights: friend.flights.map((leg) => {
+          const normalizedFrom = typeof leg.from === 'string' ? leg.from.trim().toUpperCase() : ''
+          const departureTimezone = typeof leg.departureTimezone === 'string' && leg.departureTimezone.trim()
+            ? leg.departureTimezone.trim()
+            : (normalizedFrom ? airportTimezones[normalizedFrom] ?? null : null)
+
+          return {
+            ...leg,
+            departureTimezone,
+          }
+        }),
+      })),
+    })),
   }
 }
 
@@ -201,6 +224,7 @@ export async function writeFriendsTrackerConfig(input: Partial<FriendsTrackerCon
     trips: nextTrips,
     updatedAt: Date.now(),
   });
+  const enrichedNextConfig = await withFriendsTrackerAirportTimezones(nextConfig);
 
   const collection = await getFriendsTrackerConfigCollection();
   if (collection) {
@@ -210,7 +234,7 @@ export async function writeFriendsTrackerConfig(input: Partial<FriendsTrackerCon
         {
           $set: {
             _id: 'default',
-            ...nextConfig,
+            ...enrichedNextConfig,
           },
         },
         { upsert: true },
@@ -220,6 +244,6 @@ export async function writeFriendsTrackerConfig(input: Partial<FriendsTrackerCon
     }
   }
 
-  await syncFriendsTrackerCron(nextConfig);
-  return nextConfig;
+  await syncFriendsTrackerCron(enrichedNextConfig);
+  return enrichedNextConfig;
 }

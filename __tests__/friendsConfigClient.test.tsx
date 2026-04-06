@@ -367,16 +367,12 @@ describe('FriendsConfigClient', () => {
     expect(screen.getByRole('button', { name: /save config/i })).toBeEnabled();
   });
 
-  it('renders the departure field in the departure airport timezone', async () => {
+  it('renders the departure field in the persisted departure timezone', async () => {
     const baseTrip = initialConfig.trips?.[0];
     const baseFriend = baseTrip?.friends[0];
 
     const timezoneConfig: FriendsTrackerConfig = {
       ...initialConfig,
-      airportTimezones: {
-        JFK: 'America/New_York',
-        KJFK: 'America/New_York',
-      },
       trips: [
         {
           ...baseTrip!,
@@ -390,6 +386,7 @@ describe('FriendsConfigClient', () => {
                   departureTime: '2026-04-14T09:30:00.000Z',
                   from: 'JFK',
                   to: 'AMS',
+                  departureTimezone: 'America/New_York',
                 },
               ],
             },

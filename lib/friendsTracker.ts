@@ -8,6 +8,7 @@ export interface FriendFlightLeg {
   id: string;
   flightNumber: string;
   departureTime: string;
+  departureTimezone?: string | null;
   from?: string | null;
   to?: string | null;
   note?: string | null;
@@ -45,6 +46,7 @@ export type NormalizedFriendsTrackerConfig = FriendsTrackerConfig & {
   currentTripId: string | null;
   trips: FriendsTrackerTripConfig[];
   destinationAirport: string | null;
+  airportTimezones: Record<string, string>;
   friends: FriendTravelConfig[];
 };
 
@@ -123,6 +125,7 @@ export function createEmptyFriendFlightLeg(): FriendFlightLeg {
     id: '',
     flightNumber: '',
     departureTime: '',
+    departureTimezone: null,
     from: null,
     to: null,
     note: null,
@@ -370,6 +373,7 @@ export function normalizeFriendFlightLeg(
     id: typeof input?.id === 'string' && input.id.trim() ? input.id.trim() : getFallbackId('leg', friendIndex, legIndex),
     flightNumber,
     departureTime: normalizeDateTime(input?.departureTime),
+    departureTimezone: normalizeOptionalText(input?.departureTimezone),
     from: normalizeOptionalText(input?.from),
     to: normalizeOptionalText(input?.to),
     note: normalizeOptionalText(input?.note),
@@ -450,6 +454,14 @@ export function normalizeFriendsTrackerConfig(
     ?? trips[0]
     ?? null;
 
+  const airportTimezones = input?.airportTimezones && typeof input.airportTimezones === 'object' && !Array.isArray(input.airportTimezones)
+    ? Object.fromEntries(
+      Object.entries(input.airportTimezones)
+        .filter((entry): entry is [string, string] => typeof entry[0] === 'string' && Boolean(entry[0].trim()) && typeof entry[1] === 'string' && Boolean(entry[1].trim()))
+        .map(([code, timezone]) => [code.trim().toUpperCase(), timezone.trim()]),
+    )
+    : {};
+
   return {
     updatedAt: typeof input?.updatedAt === 'number' && Number.isFinite(input.updatedAt) ? input.updatedAt : null,
     updatedBy: normalizeOptionalText(input?.updatedBy),
@@ -457,6 +469,7 @@ export function normalizeFriendsTrackerConfig(
     currentTripId: currentTrip?.id ?? null,
     trips,
     destinationAirport: currentTrip?.destinationAirport ?? null,
+    airportTimezones,
     friends: currentTrip?.friends ?? [],
   };
 }

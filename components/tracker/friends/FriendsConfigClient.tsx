@@ -1228,7 +1228,7 @@ export function FriendsConfigClient({
 
             <div className="mt-4 space-y-3">
               {friend.flights.map((leg, legIndex) => {
-                const departureTimezone = airportTimezones[normalizeAirportCode(leg.from)] ?? null;
+                const departureTimezone = leg.departureTimezone ?? airportTimezones[normalizeAirportCode(leg.from)] ?? null;
                 const fromFieldKey = getAirportFieldKey(friend.id, leg.id, 'from');
                 const toFieldKey = getAirportFieldKey(friend.id, leg.id, 'to');
                 const fromSuggestions = activeAirportField === fromFieldKey ? airportSuggestions : [];
@@ -1346,11 +1346,12 @@ export function FriendsConfigClient({
                         onBlur={() => setActiveAirportField((currentField) => currentField === fromFieldKey ? null : currentField)}
                         onChange={(event) => {
                           const from = event.target.value.toUpperCase();
+                          const nextDepartureTimezone = airportTimezones[normalizeAirportCode(from)] ?? null;
                           setActiveAirportField(fromFieldKey);
                           updateFriend(friend.id, (currentFriend) => ({
                             ...currentFriend,
                             flights: currentFriend.flights.map((currentLeg) => currentLeg.id === leg.id
-                              ? { ...currentLeg, from }
+                              ? { ...currentLeg, from, departureTimezone: nextDepartureTimezone }
                               : currentLeg),
                           }));
                         }}
@@ -1376,20 +1377,22 @@ export function FriendsConfigClient({
                                 aria-selected={normalizeAirportCode(leg.from) === suggestionCode}
                                 onMouseDown={(event) => event.preventDefault()}
                                 onClick={() => {
+                                  const nextDepartureTimezone = airport.timezone?.trim() || airportTimezones[suggestionCode] || null;
                                   updateFriend(friend.id, (currentFriend) => ({
                                     ...currentFriend,
                                     flights: currentFriend.flights.map((currentLeg) => currentLeg.id === leg.id
-                                      ? { ...currentLeg, from: suggestionCode }
+                                      ? { ...currentLeg, from: suggestionCode, departureTimezone: nextDepartureTimezone }
                                       : currentLeg),
                                   }));
                                 }}
                                 onKeyDown={(event) => {
                                   if (event.key === 'Enter' || event.key === ' ') {
                                     event.preventDefault();
+                                    const nextDepartureTimezone = airport.timezone?.trim() || airportTimezones[suggestionCode] || null;
                                     updateFriend(friend.id, (currentFriend) => ({
                                       ...currentFriend,
                                       flights: currentFriend.flights.map((currentLeg) => currentLeg.id === leg.id
-                                        ? { ...currentLeg, from: suggestionCode }
+                                        ? { ...currentLeg, from: suggestionCode, departureTimezone: nextDepartureTimezone }
                                         : currentLeg),
                                     }));
                                   }
