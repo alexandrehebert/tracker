@@ -5,7 +5,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import type { WorldMapPayload } from '~/lib/server/worldMap';
 import FlightMap2D from './FlightMap2D';
 import type { TrackerMapView } from './FlightMapViewToggle';
-import type { FlightMapAirportMarker, SelectedFlightDetails, TrackedFlight } from './types';
+import type { FlightMapAirportMarker, FriendAvatarInfo, FriendAvatarMarker, SelectedFlightDetails, TrackedFlight } from './types';
 
 const FlightMap3D = dynamic(() => import('./FlightMap3D'), {
   ssr: false,
@@ -24,6 +24,8 @@ interface FlightMapProps {
   onInitialZoomEnd?: () => void;
   selectionMode?: 'single' | 'all';
   flightLabels?: Record<string, string>;
+  flightAvatars?: Record<string, FriendAvatarInfo[]>;
+  staticFriendMarkers?: FriendAvatarMarker[];
   emptyOverlayMessage?: string | null;
 }
 
@@ -38,6 +40,8 @@ export default function FlightMap({
   onInitialZoomEnd,
   selectionMode = 'single',
   flightLabels,
+  flightAvatars,
+  staticFriendMarkers,
   emptyOverlayMessage,
 }: FlightMapProps) {
   const [renderedMapView, setRenderedMapView] = useState(mapView);
@@ -96,6 +100,8 @@ export default function FlightMap({
         onInitialZoomEnd={handleMapReady}
         selectionMode={selectionMode}
         flightLabels={flightLabels}
+        flightAvatars={flightAvatars}
+        staticFriendMarkers={staticFriendMarkers}
         emptyOverlayMessage={emptyOverlayMessage}
       />
     );
@@ -111,6 +117,8 @@ export default function FlightMap({
       onInitialZoomEnd={handleMapReady}
       selectionMode={selectionMode}
       flightLabels={flightLabels}
+      flightAvatars={flightAvatars}
+      staticFriendMarkers={staticFriendMarkers}
     />
   );
 }

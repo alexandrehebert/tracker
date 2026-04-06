@@ -150,3 +150,19 @@ export interface TrackerApiResponse {
   fetchedAt: number;
   flights: TrackedFlight[];
 }
+
+export interface FriendAvatarInfo {
+  friendId: string;
+  name: string;
+  avatarUrl: string | null;
+  color: string;
+}
+
+export interface FriendAvatarMarker {
+  id: string;
+  name: string;
+  avatarUrl: string | null;
+  color: string;
+  latitude: number;
+  longitude: number;
+}

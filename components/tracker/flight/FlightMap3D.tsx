@@ -4,7 +4,8 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTrackerLayout } from '../contexts/TrackerLayoutContext';
 import { useTrackerMap } from '../contexts/TrackerMapContext';
 import { getFlightMapColor, SELECTED_FLIGHT_COLOR } from './colors';
-import type { FlightMapAirportMarker, FlightMapPoint, SelectedFlightDetails, TrackedFlight } from './types';
+import { getFriendInitials } from '~/lib/utils/friendInitials';
+import type { FlightMapAirportMarker, FlightMapPoint, FriendAvatarInfo, FriendAvatarMarker, SelectedFlightDetails, TrackedFlight } from './types';
 
 const DEFAULT_ALT = 1.65;
 const MOBILE_ALT = 1.95;
@@ -35,6 +36,7 @@ const POINT_ALTITUDE_OFFSET = 0.018;
 const SELECTED_POINT_ALTITUDE_OFFSET = 0.03;
 const ALTITUDE_GUIDE_STROKE = 0.14;
 const GROUND_RING_ALTITUDE = COUNTRY_ALTITUDE + 0.001;
+const FRIEND_AVATAR_CLUSTER_DEGREES = 2.5;
 
 interface FlightMap3DProps {
   flights: TrackedFlight[];
@@ -45,6 +47,8 @@ interface FlightMap3DProps {
   onInitialZoomEnd?: () => void;
   selectionMode?: 'single' | 'all';
   flightLabels?: Record<string, string>;
+  flightAvatars?: Record<string, FriendAvatarInfo[]>;
+  staticFriendMarkers?: FriendAvatarMarker[];
 }
 
 interface GlobePointDatum {
@@ -108,7 +112,17 @@ interface GlobeAirportMarkerDatum {
   usage: FlightMapAirportMarker['usage'];
 }
 
-type GlobeHtmlDatum = GlobeLabelDatum | GlobeDepartureMarkerDatum | GlobePlaneMarkerDatum | GlobeAirportMarkerDatum;
+interface GlobeFriendAvatarDatum {
+  type: 'friend-avatar';
+  key: string;
+  lat: number;
+  lng: number;
+  altitude: number;
+  members: Array<{ friendId: string; name: string; avatarUrl: string | null; color: string }>;
+  onSelect?: string;
+}
+
+type GlobeHtmlDatum = GlobeLabelDatum | GlobeDepartureMarkerDatum | GlobePlaneMarkerDatum | GlobeAirportMarkerDatum | GlobeFriendAvatarDatum;
 
 interface GlobeRingDatum {
   lat: number;
@@ -123,6 +137,56 @@ function getAltitudeRatio(point: FlightMapPoint | null): number {
   }
 
   return Math.min(0.16, Math.max(0.012, point.altitude / 160_000));
+}
+
+interface FriendGeoMarker {
+  key: string;
+  lat: number;
+  lng: number;
+  friendId: string;
+  name: string;
+  avatarUrl: string | null;
+  color: string;
+  icao24?: string;
+}
+
+function clusterFriendGeoMarkers(
+  markers: FriendGeoMarker[],
+  radiusDegrees: number,
+): Array<{ lat: number; lng: number; members: FriendGeoMarker[] }> {
+  if (markers.length === 0) {
+    return [];
+  }
+
+  const clusters: Array<{ lat: number; lng: number; members: FriendGeoMarker[] }> = [];
+  const assigned = new Set<string>();
+
+  for (const marker of markers) {
+    if (assigned.has(marker.key)) {
+      continue;
+    }
+
+    const members: FriendGeoMarker[] = [marker];
+    assigned.add(marker.key);
+
+    for (const other of markers) {
+      if (other.key === marker.key || assigned.has(other.key)) {
+        continue;
+      }
+
+      const dist = Math.hypot(marker.lat - other.lat, marker.lng - other.lng);
+      if (dist <= radiusDegrees) {
+        members.push(other);
+        assigned.add(other.key);
+      }
+    }
+
+    const clat = members.reduce((sum, m) => sum + m.lat, 0) / members.length;
+    const clng = members.reduce((sum, m) => sum + m.lng, 0) / members.length;
+    clusters.push({ lat: clat, lng: clng, members });
+  }
+
+  return clusters;
 }
 
 function getPointDistanceKm(first: FlightMapPoint | null, second: FlightMapPoint | null): number {
@@ -611,12 +675,84 @@ export default function FlightMap3D({
   onInitialZoomEnd,
   selectionMode = 'single',
   flightLabels,
+  flightAvatars,
+  staticFriendMarkers,
 }: FlightMap3DProps) {
   const { isMobile } = useTrackerLayout();
   const { setGlobeRef } = useTrackerMap();
   const containerRef = useRef<HTMLDivElement>(null);
   const globeRef = useRef<any>(null);
   const [globeReady, setGlobeReady] = useState(false);
+
+  const friendIcao24Set = useMemo(() => {
+    if (!flightAvatars) {
+      return new Set<string>();
+    }
+
+    return new Set(Object.keys(flightAvatars));
+  }, [flightAvatars]);
+
+  const friendAvatarClusters = useMemo<GlobeFriendAvatarDatum[]>(() => {
+    const geoMarkers: FriendGeoMarker[] = [];
+
+    if (flightAvatars) {
+      for (const flight of flights) {
+        const avatarInfos = flightAvatars[flight.icao24];
+        if (!avatarInfos?.length) {
+          continue;
+        }
+
+        const currentPoint = flight.current ?? flight.track.at(-1) ?? flight.originPoint;
+        if (!currentPoint) {
+          continue;
+        }
+
+        for (const info of avatarInfos) {
+          geoMarkers.push({
+            key: `fly-${info.friendId}-${flight.icao24}`,
+            lat: currentPoint.latitude,
+            lng: currentPoint.longitude,
+            friendId: info.friendId,
+            name: info.name,
+            avatarUrl: info.avatarUrl,
+            color: info.color,
+            icao24: flight.icao24,
+          });
+        }
+      }
+    }
+
+    if (staticFriendMarkers) {
+      for (const marker of staticFriendMarkers) {
+        geoMarkers.push({
+          key: `static-${marker.id}`,
+          lat: marker.latitude,
+          lng: marker.longitude,
+          friendId: marker.id,
+          name: marker.name,
+          avatarUrl: marker.avatarUrl,
+          color: marker.color,
+        });
+      }
+    }
+
+    const clusters = clusterFriendGeoMarkers(geoMarkers, FRIEND_AVATAR_CLUSTER_DEGREES);
+
+    return clusters.map((cluster) => ({
+      type: 'friend-avatar' as const,
+      key: cluster.members.map((m) => m.key).join('|'),
+      lat: cluster.lat,
+      lng: cluster.lng,
+      altitude: SELECTED_POINT_MARKER_ALTITUDE + 0.005,
+      members: cluster.members.map((m) => ({
+        friendId: m.friendId,
+        name: m.name,
+        avatarUrl: m.avatarUrl,
+        color: m.color,
+      })),
+      onSelect: cluster.members.find((m) => m.icao24)?.icao24,
+    }));
+  }, [flightAvatars, flights, staticFriendMarkers]);
 
   const pointData = useMemo(() => {
     return flights
@@ -678,7 +814,7 @@ export default function FlightMap3D({
 
   const labelData = useMemo(() => {
     const labels = selectionMode === 'all'
-      ? pointData
+      ? pointData.filter((point) => !friendIcao24Set.has(point.icao24))
       : pointData.filter((point) => point.selected || pointData.length === 1);
 
     return labels.map((point) => ({
@@ -689,7 +825,7 @@ export default function FlightMap3D({
       text: point.label,
       color: point.color,
     })) satisfies GlobeLabelDatum[];
-  }, [pointData, selectionMode]);
+  }, [friendIcao24Set, pointData, selectionMode]);
 
   const sharedAirportMarkerData = useMemo(() => {
     return airportMarkers.map((airport) => ({
@@ -741,20 +877,22 @@ export default function FlightMap3D({
   }, [flights, selectedFlightDetails, selectedIcao24, selectionMode, sharedAirportMarkerData.length]);
 
   const planeMarkerData = useMemo(() => {
-    return pointData.map((point) => ({
-      type: 'plane' as const,
-      icao24: point.icao24,
-      lat: point.lat,
-      lng: point.lng,
-      altitude: point.altitude,
-      color: point.color,
-      selected: point.selected,
-    })) satisfies GlobePlaneMarkerDatum[];
-  }, [pointData]);
+    return pointData
+      .filter((point) => !friendIcao24Set.has(point.icao24))
+      .map((point) => ({
+        type: 'plane' as const,
+        icao24: point.icao24,
+        lat: point.lat,
+        lng: point.lng,
+        altitude: point.altitude,
+        color: point.color,
+        selected: point.selected,
+      })) satisfies GlobePlaneMarkerDatum[];
+  }, [friendIcao24Set, pointData]);
 
   const htmlOverlayData = useMemo(() => {
-    return [...sharedAirportMarkerData, ...departureMarkerData, ...planeMarkerData, ...labelData] satisfies GlobeHtmlDatum[];
-  }, [departureMarkerData, labelData, planeMarkerData, sharedAirportMarkerData]);
+    return [...sharedAirportMarkerData, ...departureMarkerData, ...planeMarkerData, ...labelData, ...friendAvatarClusters] satisfies GlobeHtmlDatum[];
+  }, [departureMarkerData, friendAvatarClusters, labelData, planeMarkerData, sharedAirportMarkerData]);
 
   useEffect(() => {
     if (!containerRef.current) {
@@ -1048,6 +1186,178 @@ export default function FlightMap3D({
             event.stopPropagation();
             onSelectFlight?.(item.icao24);
           });
+          return element;
+        }
+
+        if (item.type === 'friend-avatar') {
+          const isSingle = item.members.length === 1;
+          const firstMember = item.members[0]!;
+          const size = isSingle ? 30 : 36;
+          const halfSize = size / 2;
+
+          element.style.pointerEvents = 'auto';
+          element.style.cursor = 'pointer';
+          element.style.width = `${size}px`;
+          element.style.height = `${size}px`;
+          element.style.borderRadius = '50%';
+          element.style.transform = 'translate(-50%, -50%)';
+          element.style.zIndex = '30';
+          element.style.position = 'relative';
+          element.style.flexShrink = '0';
+
+          const nameBadge = document.createElement('div');
+          nameBadge.style.position = 'absolute';
+          nameBadge.style.left = '50%';
+          nameBadge.style.top = `-${halfSize + 6}px`;
+          nameBadge.style.transform = 'translate(-50%, -100%) scale(0.92)';
+          nameBadge.style.transformOrigin = 'center bottom';
+          nameBadge.style.whiteSpace = 'nowrap';
+          nameBadge.style.padding = '3px 10px';
+          nameBadge.style.borderRadius = '999px';
+          nameBadge.style.fontSize = '10px';
+          nameBadge.style.fontWeight = '700';
+          nameBadge.style.color = 'rgba(226,232,240,0.96)';
+          nameBadge.style.background = 'rgba(2,6,23,0.92)';
+          nameBadge.style.border = '1px solid rgba(56,189,248,0.65)';
+          nameBadge.style.boxShadow = '0 4px 12px rgba(2,6,23,0.35)';
+          nameBadge.style.pointerEvents = 'none';
+          nameBadge.style.opacity = '0';
+          nameBadge.style.transition = 'opacity 140ms ease, transform 140ms ease';
+
+          if (isSingle) {
+            nameBadge.textContent = firstMember.name;
+
+            const bubble = document.createElement('div');
+            bubble.style.width = `${size}px`;
+            bubble.style.height = `${size}px`;
+            bubble.style.borderRadius = '50%';
+            bubble.style.overflow = 'hidden';
+            bubble.style.background = firstMember.color;
+            bubble.style.border = '2.5px solid rgba(255,255,255,0.95)';
+            bubble.style.boxShadow = `0 0 0 3px color-mix(in srgb, ${firstMember.color} 22%, transparent), 0 6px 16px rgba(2,6,23,0.4)`;
+            bubble.style.display = 'flex';
+            bubble.style.alignItems = 'center';
+            bubble.style.justifyContent = 'center';
+
+            if (firstMember.avatarUrl) {
+              const img = document.createElement('img');
+              img.src = firstMember.avatarUrl;
+              img.style.width = '100%';
+              img.style.height = '100%';
+              img.style.objectFit = 'cover';
+              img.alt = firstMember.name;
+              bubble.appendChild(img);
+            } else {
+              const initials = document.createElement('span');
+              initials.textContent = getFriendInitials(firstMember.name);
+              initials.style.color = 'white';
+              initials.style.fontSize = '11px';
+              initials.style.fontWeight = '700';
+              initials.style.fontFamily = 'ui-sans-serif, system-ui, sans-serif';
+              bubble.appendChild(initials);
+            }
+
+            element.appendChild(bubble);
+          } else {
+            const clusterNames = item.members.length <= 3
+              ? item.members.map((m) => m.name).join(', ')
+              : `${item.members.slice(0, 2).map((m) => m.name).join(', ')} +${item.members.length - 2}`;
+            nameBadge.textContent = clusterNames;
+
+            const clusterContainer = document.createElement('div');
+            clusterContainer.style.width = `${size}px`;
+            clusterContainer.style.height = `${size}px`;
+            clusterContainer.style.borderRadius = '50%';
+            clusterContainer.style.position = 'relative';
+            clusterContainer.style.background = 'rgba(2,6,23,0.85)';
+            clusterContainer.style.border = '2.5px solid rgba(255,255,255,0.95)';
+            clusterContainer.style.boxShadow = '0 6px 16px rgba(2,6,23,0.4)';
+            clusterContainer.style.overflow = 'hidden';
+            clusterContainer.style.display = 'flex';
+            clusterContainer.style.alignItems = 'center';
+            clusterContainer.style.justifyContent = 'center';
+
+            const memberCount = Math.min(item.members.length, 3);
+            item.members.slice(0, memberCount).forEach((member, memberIndex) => {
+              const angle = (memberIndex / memberCount) * 2 * Math.PI - Math.PI / 2;
+              const offset = 9;
+              const tx = Math.cos(angle) * offset + halfSize;
+              const ty = Math.sin(angle) * offset + halfSize;
+              const thumbSize = 12;
+
+              const thumb = document.createElement('div');
+              thumb.style.position = 'absolute';
+              thumb.style.width = `${thumbSize}px`;
+              thumb.style.height = `${thumbSize}px`;
+              thumb.style.borderRadius = '50%';
+              thumb.style.left = `${tx - thumbSize / 2}px`;
+              thumb.style.top = `${ty - thumbSize / 2}px`;
+              thumb.style.background = member.color;
+              thumb.style.border = '1.5px solid rgba(255,255,255,0.8)';
+              thumb.style.overflow = 'hidden';
+              thumb.style.display = 'flex';
+              thumb.style.alignItems = 'center';
+              thumb.style.justifyContent = 'center';
+
+              if (member.avatarUrl) {
+                const img = document.createElement('img');
+                img.src = member.avatarUrl;
+                img.style.width = '100%';
+                img.style.height = '100%';
+                img.style.objectFit = 'cover';
+                img.alt = member.name;
+                thumb.appendChild(img);
+              } else {
+                const initSpan = document.createElement('span');
+                initSpan.textContent = getFriendInitials(member.name).slice(0, 1);
+                initSpan.style.color = 'white';
+                initSpan.style.fontSize = '6px';
+                initSpan.style.fontWeight = '700';
+                initSpan.style.fontFamily = 'ui-sans-serif, system-ui, sans-serif';
+                thumb.appendChild(initSpan);
+              }
+
+              clusterContainer.appendChild(thumb);
+            });
+
+            const countBadge = document.createElement('span');
+            countBadge.textContent = String(item.members.length);
+            countBadge.style.position = 'absolute';
+            countBadge.style.color = 'white';
+            countBadge.style.fontSize = '11px';
+            countBadge.style.fontWeight = '700';
+            countBadge.style.fontFamily = 'ui-sans-serif, system-ui, sans-serif';
+            countBadge.style.zIndex = '1';
+            countBadge.style.background = 'rgba(2,6,23,0.72)';
+            countBadge.style.borderRadius = '50%';
+            countBadge.style.width = '18px';
+            countBadge.style.height = '18px';
+            countBadge.style.display = 'flex';
+            countBadge.style.alignItems = 'center';
+            countBadge.style.justifyContent = 'center';
+            clusterContainer.appendChild(countBadge);
+            element.appendChild(clusterContainer);
+          }
+
+          element.appendChild(nameBadge);
+
+          element.addEventListener('mouseenter', () => {
+            element.style.zIndex = '50';
+            nameBadge.style.opacity = '1';
+            nameBadge.style.transform = 'translate(-50%, -100%) scale(1)';
+          });
+          element.addEventListener('mouseleave', () => {
+            element.style.zIndex = '30';
+            nameBadge.style.opacity = '0';
+            nameBadge.style.transform = 'translate(-50%, -100%) scale(0.92)';
+          });
+          element.addEventListener('click', (event) => {
+            event.stopPropagation();
+            if (item.onSelect) {
+              onSelectFlight?.(item.onSelect);
+            }
+          });
+
           return element;
         }
 
