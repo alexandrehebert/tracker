@@ -30,6 +30,7 @@ import TrackerShell from '../TrackerShell';
 import TrackerZoomControls from '../TrackerZoomControls';
 import { TrackerLayoutProvider, useTrackerLayout } from '../contexts/TrackerLayoutContext';
 import FlightMap from '../flight/FlightMap';
+import { getFlightMapColor } from '../flight/colors';
 import { FlightMapProvider } from '../flight/contexts/FlightMapProvider';
 import FlightMapViewToggle, { type TrackerMapView } from '../flight/FlightMapViewToggle';
 import type { FlightMapAirportMarker, FriendAvatarInfo, FriendAvatarMarker, TrackerApiResponse, TrackedFlight } from '../flight/types';
