@@ -31,6 +31,30 @@ const map: WorldMapPayload = {
   projection: { scale: 160, translate: [500, 280] },
 };
 
+function createMapProjection() {
+  const projection = geoNaturalEarth1();
+  projection.scale(map.projection.scale).translate([...map.projection.translate]);
+  return projection;
+}
+
+function getProjectedCoordinates(point: { latitude: number; longitude: number } | null | undefined) {
+  if (!point) {
+    return null;
+  }
+
+  return createMapProjection()([point.longitude, point.latitude]);
+}
+
+function getProjectedPathToken(point: { latitude: number; longitude: number } | null | undefined): string {
+  const coordinates = getProjectedCoordinates(point);
+  return coordinates ? `${coordinates[0].toFixed(2)} ${coordinates[1].toFixed(2)}` : '';
+}
+
+function getProjectedTransform(point: { latitude: number; longitude: number } | null | undefined, scale = 1): string | null {
+  const coordinates = getProjectedCoordinates(point);
+  return coordinates ? `translate(${coordinates[0]} ${coordinates[1]}) scale(${scale})` : null;
+}
+
 const trackedFlight: TrackedFlight = {
   icao24: 'abc123',
   callsign: 'AFR123',
@@ -125,12 +149,16 @@ const secondaryFlight: TrackedFlight = {
   current: {
     ...trackedFlight.current!,
     time: 1_700_000_100,
+    latitude: 51.5074,
+    longitude: -0.1278,
     x: 300,
     y: 280,
   },
   originPoint: {
     ...trackedFlight.originPoint!,
     time: 1_699_999_100,
+    latitude: 40.6413,
+    longitude: -73.7781,
     x: 260,
     y: 320,
   },
@@ -138,6 +166,8 @@ const secondaryFlight: TrackedFlight = {
     {
       ...trackedFlight.track[0]!,
       time: 1_699_999_700,
+      latitude: 47.4502,
+      longitude: -30.0,
       x: 280,
       y: 300,
     },
@@ -270,7 +300,7 @@ describe('FlightMap2D', () => {
     const { container } = renderMap(false);
 
     const svg = screen.getByRole('img', { name: /interactive world map/i });
-    expect(svg).toHaveStyle({ background: '#071a31' });
+    expect(svg).toHaveStyle({ background: '#061729' });
 
     expect(container.querySelector('pattern#tracker-map-grid')).not.toBeNull();
     expect(container.querySelector('rect[fill="url(#tracker-map-grid)"]')).not.toBeNull();
@@ -315,22 +345,28 @@ describe('FlightMap2D', () => {
       (marker) => marker.getAttribute('transform'),
     );
 
-    expect(markerTransforms).toContain(`translate(${trackedFlight.current?.x} ${trackedFlight.current?.y}) scale(0.5)`);
+    expect(markerTransforms).toContain(getProjectedTransform(trackedFlight.current, 0.5));
 
     const labelText = screen.getByText(trackedFlight.callsign);
     expect(labelText.parentElement?.parentElement).toHaveAttribute(
       'transform',
-      `translate(${trackedFlight.current?.x} ${trackedFlight.current?.y}) scale(0.5)`,
+      getProjectedTransform(trackedFlight.current, 0.5),
     );
   });
 
   it('shows labeled departure and arrival airports on the shared map', () => {
-    renderMap(false, {
+    const { container } = renderMap(false, {
       flights: [trackedFlight],
       airportMarkers,
     });
 
+    const airportGroups = Array.from(container.querySelectorAll('g[opacity="0.98"]'));
+
+    fireEvent.mouseEnter(airportGroups[0]!);
     expect(screen.getByText('TLS')).toBeInTheDocument();
+
+    fireEvent.mouseLeave(airportGroups[0]!);
+    fireEvent.mouseEnter(airportGroups[1]!);
     expect(screen.getByText('CDG')).toBeInTheDocument();
   });
 
@@ -629,9 +665,9 @@ describe('FlightMap2D', () => {
 
     const routePath = Array.from(container.querySelectorAll('path')).find((path) => {
       const value = path.getAttribute('d') ?? '';
-      return value.includes(`${trackedFlight.originPoint?.x.toFixed(2)} ${trackedFlight.originPoint?.y.toFixed(2)}`)
-        && value.includes(`${trackedFlight.track[0]?.x.toFixed(2)} ${trackedFlight.track[0]?.y.toFixed(2)}`)
-        && value.includes(`${trackedFlight.current?.x.toFixed(2)} ${trackedFlight.current?.y.toFixed(2)}`);
+      return value.includes(getProjectedPathToken(trackedFlight.originPoint))
+        && value.includes(getProjectedPathToken(trackedFlight.track[0]))
+        && value.includes(getProjectedPathToken(trackedFlight.current));
     });
 
     expect(routePath).not.toBeNull();
@@ -645,11 +681,54 @@ describe('FlightMap2D', () => {
 
     const routePath = Array.from(container.querySelectorAll('path')).find((path) => {
       const value = path.getAttribute('d') ?? '';
-      return value.includes(`${trackedFlight.originPoint?.x.toFixed(2)} ${trackedFlight.originPoint?.y.toFixed(2)}`)
-        && value.includes(`${trackedFlight.current?.x.toFixed(2)} ${trackedFlight.current?.y.toFixed(2)}`);
+      return value.includes(getProjectedPathToken(trackedFlight.originPoint))
+        && value.includes(getProjectedPathToken(trackedFlight.current));
     });
 
     expect(routePath?.getAttribute('d')).toMatch(/[CQ]/);
+  });
+
+  it('uses the map projection for route points even when incoming x/y are stale', () => {
+    const staleProjectedFlight: TrackedFlight = {
+      ...trackedFlight,
+      icao24: 'stale01',
+      callsign: 'STL123',
+      matchedBy: ['STL123'],
+      originPoint: trackedFlight.originPoint
+        ? {
+            ...trackedFlight.originPoint,
+            x: 5,
+            y: 15,
+          }
+        : null,
+      track: trackedFlight.track.map((point, index) => ({
+        ...point,
+        x: 10 + index * 7,
+        y: 20 + index * 9,
+      })),
+      current: trackedFlight.current
+        ? {
+            ...trackedFlight.current,
+            x: 30,
+            y: 40,
+          }
+        : null,
+    };
+
+    const { container } = renderMap(false, {
+      flights: [staleProjectedFlight],
+      selectedIcao24: staleProjectedFlight.icao24,
+    });
+
+    const routePath = Array.from(container.querySelectorAll('path')).find((path) => {
+      const value = path.getAttribute('d') ?? '';
+      return value.includes(getProjectedPathToken(staleProjectedFlight.originPoint))
+        && value.includes(getProjectedPathToken(staleProjectedFlight.current));
+    });
+
+    expect(routePath).not.toBeNull();
+    expect(routePath?.getAttribute('d')).not.toContain('5.00 15.00');
+    expect(routePath?.getAttribute('d')).not.toContain('30.00 40.00');
   });
 
   it('collapses repeated cached route samples so the path does not zig-zag between the same checkpoints', () => {
@@ -730,12 +809,12 @@ describe('FlightMap2D', () => {
       }
 
       const value = path.getAttribute('d') ?? '';
-      return value.includes(`${cachedHistoryFlight.originPoint?.x.toFixed(2)} ${cachedHistoryFlight.originPoint?.y.toFixed(2)}`)
-        && value.includes(`${cachedHistoryFlight.current?.x.toFixed(2)} ${cachedHistoryFlight.current?.y.toFixed(2)}`);
+      return value.includes(getProjectedPathToken(cachedHistoryFlight.originPoint))
+        && value.includes(getProjectedPathToken(cachedHistoryFlight.current));
     });
 
     const routeValue = routePath?.getAttribute('d') ?? '';
-    const originOccurrences = routeValue.split(`${cachedHistoryFlight.originPoint?.x.toFixed(2)} ${cachedHistoryFlight.originPoint?.y.toFixed(2)}`).length - 1;
+    const originOccurrences = routeValue.split(getProjectedPathToken(cachedHistoryFlight.originPoint)).length - 1;
 
     expect(routePath).not.toBeNull();
     expect(originOccurrences).toBeLessThanOrEqual(2);
@@ -766,9 +845,7 @@ describe('FlightMap2D', () => {
       selectedFlightDetails: departureAirportDetails,
     });
 
-    const projection = geoNaturalEarth1();
-    projection.fitSize([map.viewBox.width, map.viewBox.height], { type: 'Sphere' } as never);
-    const departureCoordinates = projection([-87.9073, 41.9742]);
+    const departureCoordinates = getProjectedCoordinates(departureAirportDetails.departureAirport);
 
     expect(departureCoordinates).not.toBeNull();
 
@@ -808,10 +885,8 @@ describe('FlightMap2D', () => {
       },
     });
 
-    const projection = geoNaturalEarth1();
-    projection.fitSize([map.viewBox.width, map.viewBox.height], { type: 'Sphere' } as never);
-    const departureCoordinates = projection([selectedFlightDetails.departureAirport!.longitude!, selectedFlightDetails.departureAirport!.latitude!]);
-    const arrivalCoordinates = projection([selectedFlightDetails.arrivalAirport!.longitude!, selectedFlightDetails.arrivalAirport!.latitude!]);
+    const departureCoordinates = getProjectedCoordinates(selectedFlightDetails.departureAirport);
+    const arrivalCoordinates = getProjectedCoordinates(selectedFlightDetails.arrivalAirport);
 
     expect(departureCoordinates).not.toBeNull();
     expect(arrivalCoordinates).not.toBeNull();
@@ -837,14 +912,14 @@ describe('FlightMap2D', () => {
 
     const selectedRoute = Array.from(container.querySelectorAll('path')).find((path) => {
       const value = path.getAttribute('d') ?? '';
-      return value.includes(`${trackedFlight.originPoint?.x.toFixed(2)} ${trackedFlight.originPoint?.y.toFixed(2)}`)
-        && value.includes(`${trackedFlight.current?.x.toFixed(2)} ${trackedFlight.current?.y.toFixed(2)}`);
+      return value.includes(getProjectedPathToken(trackedFlight.originPoint))
+        && value.includes(getProjectedPathToken(trackedFlight.current));
     });
 
     const nonSelectedRoute = Array.from(container.querySelectorAll('path')).find((path) => {
       const value = path.getAttribute('d') ?? '';
-      return value.includes(`${secondaryFlight.originPoint?.x.toFixed(2)} ${secondaryFlight.originPoint?.y.toFixed(2)}`)
-        && value.includes(`${secondaryFlight.current?.x.toFixed(2)} ${secondaryFlight.current?.y.toFixed(2)}`);
+      return value.includes(getProjectedPathToken(secondaryFlight.originPoint))
+        && value.includes(getProjectedPathToken(secondaryFlight.current));
     });
 
     expect(selectedRoute).not.toBeNull();
@@ -861,7 +936,7 @@ describe('FlightMap2D', () => {
       (marker) => marker.getAttribute('transform'),
     );
 
-    expect(markerTransforms.at(-1)).toBe(`translate(${trackedFlight.current?.x} ${trackedFlight.current?.y}) scale(1)`);
+    expect(markerTransforms.at(-1)).toBe(getProjectedTransform(trackedFlight.current, 1));
   });
 
   it('repositions the selected label away from the map edge when the flight is near the boundary', () => {
@@ -869,6 +944,8 @@ describe('FlightMap2D', () => {
       ...trackedFlight,
       current: {
         ...trackedFlight.current!,
+        latitude: 82,
+        longitude: 170,
         x: 985,
         y: 18,
       },
@@ -882,7 +959,7 @@ describe('FlightMap2D', () => {
     const labelText = screen.getByText(edgeFlight.callsign);
     const labelContainer = labelText.closest('g');
 
-    expect(labelContainer).toHaveAttribute('transform', expect.stringMatching(/translate\(-\d+(?:\.\d+)?\s+\d+(?:\.\d+)?\)/));
+    expect(labelContainer).toHaveAttribute('transform', expect.stringMatching(/translate\((?:-?\d+(?:\.\d+)?)\s+-\d+(?:\.\d+)?\)/));
   });
 
   it('anchors the selected-flight connector on the label edge instead of a corner', () => {

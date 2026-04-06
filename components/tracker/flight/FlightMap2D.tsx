@@ -257,6 +257,41 @@ function createFlightMapPointProjector(map: WorldMapPayload) {
   };
 }
 
+function reprojectFlightPoint(
+  point: FlightMapPoint | null | undefined,
+  projectPoint: ReturnType<typeof createFlightMapPointProjector>,
+): FlightMapPoint | null {
+  if (!point) {
+    return null;
+  }
+
+  return projectPoint({
+    latitude: point.latitude,
+    longitude: point.longitude,
+    time: point.time,
+    altitude: point.altitude,
+    heading: point.heading,
+    onGround: point.onGround,
+  });
+}
+
+function reprojectTrackedFlight(
+  flight: TrackedFlight,
+  projectPoint: ReturnType<typeof createFlightMapPointProjector>,
+): TrackedFlight {
+  return {
+    ...flight,
+    current: reprojectFlightPoint(flight.current, projectPoint),
+    originPoint: reprojectFlightPoint(flight.originPoint, projectPoint),
+    track: flight.track
+      .map((point) => reprojectFlightPoint(point, projectPoint))
+      .filter((point): point is FlightMapPoint => Boolean(point)),
+    rawTrack: flight.rawTrack
+      ?.map((point) => reprojectFlightPoint(point, projectPoint))
+      .filter((point): point is FlightMapPoint => Boolean(point)),
+  };
+}
+
 function projectForecastHeadingPoint({
   start,
   heading,
@@ -779,13 +814,18 @@ export default function FlightMap2D({
     [map],
   );
 
+  const projectedFlights = useMemo(
+    () => flights.map((flight) => reprojectTrackedFlight(flight, projectPoint)),
+    [flights, projectPoint],
+  );
+
   const selectedFlight = useMemo(() => {
     if (selectionMode !== 'single') {
       return null;
     }
 
-    return flights.find((flight) => flight.icao24 === selectedIcao24) ?? flights[0] ?? null;
-  }, [flights, selectedIcao24, selectionMode]);
+    return projectedFlights.find((flight) => flight.icao24 === selectedIcao24) ?? projectedFlights[0] ?? null;
+  }, [projectedFlights, selectedIcao24, selectionMode]);
 
   const selectedRoutePoints = useMemo(() => {
     if (!selectedFlight) {
@@ -825,7 +865,7 @@ export default function FlightMap2D({
     const markers: FriendSvgMarker[] = [];
 
     if (flightAvatars) {
-      for (const flight of flights) {
+      for (const flight of projectedFlights) {
         const avatarInfos = flightAvatars[flight.icao24];
         if (!avatarInfos?.length) {
           continue;
@@ -877,7 +917,7 @@ export default function FlightMap2D({
     }
 
     return markers;
-  }, [flightAvatars, flights, staticFriendMarkers, projectPoint]);
+  }, [flightAvatars, projectedFlights, staticFriendMarkers, projectPoint]);
 
   const friendSvgClusters = useMemo<FriendSvgCluster[]>(() => {
     return clusterFriendSvgMarkers(allFriendSvgMarkers, FRIEND_CLUSTER_RADIUS_PX, mapTransform.k);
@@ -910,21 +950,21 @@ export default function FlightMap2D({
 
   const renderedFlights = useMemo(() => {
     if (!selectedFlight) {
-      return flights;
+      return projectedFlights;
     }
 
     return [
-      ...flights.filter((flight) => flight.icao24 !== selectedFlight.icao24),
+      ...projectedFlights.filter((flight) => flight.icao24 !== selectedFlight.icao24),
       selectedFlight,
     ];
-  }, [flights, selectedFlight]);
+  }, [projectedFlights, selectedFlight]);
 
   const flightColorIndexes = useMemo(() => {
-    return new Map(flights.map((flight, index) => [flight.icao24, index]));
-  }, [flights]);
+    return new Map(projectedFlights.map((flight, index) => [flight.icao24, index]));
+  }, [projectedFlights]);
 
   const labelObstacles = useMemo(() => {
-    return flights.flatMap<LabelObstacle>((flight) => {
+    return projectedFlights.flatMap<LabelObstacle>((flight) => {
       const obstacles: LabelObstacle[] = [];
 
       if (flight.originPoint) {
@@ -937,7 +977,7 @@ export default function FlightMap2D({
 
       return obstacles;
     });
-  }, [flights]);
+  }, [projectedFlights]);
 
   useEffect(() => {
     if (!onInitialZoomEnd) {
