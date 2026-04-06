@@ -18,6 +18,8 @@ export default async function ChantalConfigPage({ params }: ChantalConfigPagePro
     notFound();
   }
 
+  const demoReferenceTime = Date.now();
+
   const [initialConfig, initialCronDashboard] = await Promise.all([
     readFriendsTrackerConfig(),
     getTrackerCronDashboard(5),
@@ -51,7 +53,11 @@ export default async function ChantalConfigPage({ params }: ChantalConfigPagePro
         </div>
 
         <div className="mt-6">
-          <FriendsConfigClient initialConfig={initialConfig} initialCronDashboard={initialCronDashboard} />
+          <FriendsConfigClient
+            initialConfig={initialConfig}
+            initialCronDashboard={initialCronDashboard}
+            initialDemoReferenceTime={demoReferenceTime}
+          />
         </div>
       </div>
     </div>

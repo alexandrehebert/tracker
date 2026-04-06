@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import type { TrackedFlight } from '~/components/tracker/flight/types';
 import {
   buildAirportChain,
@@ -247,6 +247,25 @@ describe('friends tracker helpers', () => {
     expect(demoTrip?.friends.flatMap((friend) => friend.flights.map((leg) => leg.flightNumber))).toEqual(
       expect.arrayContaining(['TEST1', 'TEST2', 'TEST3', 'TEST4', 'TEST5']),
     );
+  });
+
+  it('keeps demo trip timestamps stable across repeated normalizations during hydration', () => {
+    vi.useFakeTimers();
+
+    try {
+      vi.setSystemTime(new Date('2026-04-06T12:00:05.000Z'));
+      const firstConfig = normalizeFriendsTrackerConfig({ friends: [] } as Partial<FriendsTrackerConfig>);
+
+      vi.setSystemTime(new Date('2026-04-06T12:00:45.000Z'));
+      const secondConfig = normalizeFriendsTrackerConfig({ friends: [] } as Partial<FriendsTrackerConfig>);
+
+      const firstDemoTrip = firstConfig.trips.find((trip) => trip.id === 'demo-test-trip');
+      const secondDemoTrip = secondConfig.trips.find((trip) => trip.id === 'demo-test-trip');
+
+      expect(firstDemoTrip?.friends[0]?.flights[0]?.departureTime).toBe(secondDemoTrip?.friends[0]?.flights[0]?.departureTime);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('exposes only the selected current trip at the top level for the live map and cron sync', () => {

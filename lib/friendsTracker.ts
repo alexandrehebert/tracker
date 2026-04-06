@@ -2,6 +2,7 @@ import type { TrackedFlight } from '~/components/tracker/flight/types';
 
 const AUTO_LOCK_WINDOW_HOURS = 36;
 const AUTO_LOCK_LOOKBACK_DAYS = 7;
+const DEMO_REFERENCE_BUCKET_MS = 15 * 60 * 1000;
 
 export interface FriendFlightLeg {
   id: string;
@@ -135,7 +136,11 @@ export function createEmptyTripConfig(): FriendsTrackerTripConfig {
   };
 }
 
-function buildDefaultDemoTrip(now = Date.now()): FriendsTrackerTripConfig {
+function getDemoReferenceTime(now = Date.now()): number {
+  return Math.floor(now / DEMO_REFERENCE_BUCKET_MS) * DEMO_REFERENCE_BUCKET_MS;
+}
+
+function buildDefaultDemoTrip(now = getDemoReferenceTime()): FriendsTrackerTripConfig {
   return {
     id: DEFAULT_DEMO_TRIP_ID,
     name: 'Demo / Test Trip',
@@ -254,8 +259,11 @@ function buildDefaultDemoTrip(now = Date.now()): FriendsTrackerTripConfig {
   };
 }
 
-function ensureDemoTrip(trips: FriendsTrackerTripConfig[]): FriendsTrackerTripConfig[] {
-  const freshDemoTrip = buildDefaultDemoTrip();
+function ensureDemoTrip(
+  trips: FriendsTrackerTripConfig[],
+  demoReferenceTime = getDemoReferenceTime(),
+): FriendsTrackerTripConfig[] {
+  const freshDemoTrip = buildDefaultDemoTrip(getDemoReferenceTime(demoReferenceTime));
   let hasDemoTrip = false;
 
   const refreshedTrips = trips.map((trip) => {
@@ -338,6 +346,7 @@ export function getCurrentTripConfig(config: FriendsTrackerConfig): FriendsTrack
 
 export function normalizeFriendsTrackerConfig(
   input: Partial<FriendsTrackerConfig> | null | undefined,
+  options?: { demoReferenceTime?: number },
 ): NormalizedFriendsTrackerConfig {
   const normalizedTrips = Array.isArray(input?.trips) && input.trips.length > 0
     ? input.trips.map((trip, tripIndex) => normalizeFriendsTrackerTripConfig(trip, tripIndex))
@@ -354,7 +363,7 @@ export function normalizeFriendsTrackerConfig(
         : [];
     })();
 
-  const trips = ensureDemoTrip(normalizedTrips);
+  const trips = ensureDemoTrip(normalizedTrips, options?.demoReferenceTime);
   const requestedCurrentTripId = normalizeOptionalText(input?.currentTripId);
   const currentTrip = trips.find((trip) => trip.id === requestedCurrentTripId)
     ?? trips.find((trip) => !trip.isDemo)
