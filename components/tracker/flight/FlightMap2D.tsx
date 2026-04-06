@@ -24,6 +24,8 @@ interface FlightMap2DProps {
 
 const OCEAN_FILL = '#071a31';
 const GRID_STROKE = 'rgba(203,213,225,0.08)';
+const HALO_PRIMARY = 'rgba(56,189,248,0.18)';
+const HALO_SECONDARY = 'rgba(168,85,247,0.12)';
 const COUNTRY_FILL = 'rgba(30,41,59,0.84)';
 const COUNTRY_STROKE = 'rgba(203,213,225,0.32)';
 const FORECAST_SHADOW_COLOR = 'rgba(8,17,32,0.7)';
@@ -787,6 +789,15 @@ export default function FlightMap2D({
     lastAutoFocusedFlightRef.current = selectedFlight.icao24;
   }, [focusBounds, selectedFlight, selectedRoutePoints, selectionMode]);
 
+  const gridSize = isMobile ? 22 : 26;
+  const gridOverscan = Math.max(map.viewBox.width, map.viewBox.height) * 6;
+  const gridBounds = {
+    x: -gridOverscan,
+    y: -gridOverscan,
+    width: map.viewBox.width + (gridOverscan * 2),
+    height: map.viewBox.height + (gridOverscan * 2),
+  };
+
   return (
     <div className="absolute inset-0">
       <svg
@@ -796,9 +807,6 @@ export default function FlightMap2D({
         className="h-full w-full touch-none select-none"
         style={{
           background: OCEAN_FILL,
-          backgroundImage: `linear-gradient(${GRID_STROKE} 1px, transparent 1px), linear-gradient(90deg, ${GRID_STROKE} 1px, transparent 1px)`,
-          backgroundSize: isMobile ? '22px 22px' : '26px 26px',
-          backgroundPosition: 'center center',
         }}
         role="img"
         aria-label="Interactive world map showing live tracked flight paths"
@@ -811,8 +819,18 @@ export default function FlightMap2D({
               <feMergeNode in="SourceGraphic" />
             </feMerge>
           </filter>
-          <pattern id="tracker-map-grid" width="26" height="26" patternUnits="userSpaceOnUse">
-            <path d="M 26 0 L 0 0 0 26" fill="none" stroke={GRID_STROKE} strokeWidth="1" />
+          <radialGradient id="tracker-map-halo-primary" cx="28%" cy="22%" r="62%">
+            <stop offset="0%" stopColor={HALO_PRIMARY} />
+            <stop offset="42%" stopColor="rgba(56,189,248,0.08)" />
+            <stop offset="100%" stopColor="rgba(56,189,248,0)" />
+          </radialGradient>
+          <radialGradient id="tracker-map-halo-secondary" cx="78%" cy="80%" r="58%">
+            <stop offset="0%" stopColor={HALO_SECONDARY} />
+            <stop offset="38%" stopColor="rgba(168,85,247,0.06)" />
+            <stop offset="100%" stopColor="rgba(168,85,247,0)" />
+          </radialGradient>
+          <pattern id="tracker-map-grid" width={gridSize} height={gridSize} patternUnits="userSpaceOnUse">
+            <path d={`M ${gridSize} 0 L 0 0 0 ${gridSize}`} fill="none" stroke={GRID_STROKE} strokeWidth="1" />
           </pattern>
         </defs>
 
@@ -828,10 +846,24 @@ export default function FlightMap2D({
           y="0"
           width={map.viewBox.width}
           height={map.viewBox.height}
-          fill="url(#tracker-map-grid)"
+          fill="url(#tracker-map-halo-primary)"
+        />
+        <rect
+          x="0"
+          y="0"
+          width={map.viewBox.width}
+          height={map.viewBox.height}
+          fill="url(#tracker-map-halo-secondary)"
         />
 
         <g transform={mapTransform.toString()}>
+          <rect
+            x={gridBounds.x}
+            y={gridBounds.y}
+            width={gridBounds.width}
+            height={gridBounds.height}
+            fill="url(#tracker-map-grid)"
+          />
           {map.countries.map((country) => (
             <path
               key={country.code}

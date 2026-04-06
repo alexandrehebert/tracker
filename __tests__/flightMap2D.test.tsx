@@ -270,6 +270,34 @@ describe('FlightMap2D', () => {
     expect(container.querySelector('rect[fill="url(#tracker-map-grid)"]')).not.toBeNull();
   });
 
+  it('moves the grid with the transformed map layer', () => {
+    const { container } = renderMap(false, {
+      mapTransform: zoomIdentity.translate(120, 80).scale(1.5),
+    });
+
+    const gridRect = container.querySelector('rect[fill="url(#tracker-map-grid)"]');
+    expect(gridRect?.parentElement).toHaveAttribute('transform', 'translate(120,80) scale(1.5)');
+  });
+
+  it('extends the grid beyond the viewport so it feels infinite while panning', () => {
+    const { container } = renderMap(false);
+
+    const gridRect = container.querySelector('rect[fill="url(#tracker-map-grid)"]');
+    expect(Number(gridRect?.getAttribute('x') ?? '0')).toBeLessThan(0);
+    expect(Number(gridRect?.getAttribute('y') ?? '0')).toBeLessThan(0);
+    expect(Number(gridRect?.getAttribute('width') ?? '0')).toBeGreaterThan(map.viewBox.width * 2);
+    expect(Number(gridRect?.getAttribute('height') ?? '0')).toBeGreaterThan(map.viewBox.height * 2);
+  });
+
+  it('renders subtle halo gradients behind the 2D map', () => {
+    const { container } = renderMap(false);
+
+    expect(container.querySelector('radialGradient#tracker-map-halo-primary')).not.toBeNull();
+    expect(container.querySelector('radialGradient#tracker-map-halo-secondary')).not.toBeNull();
+    expect(container.querySelector('rect[fill="url(#tracker-map-halo-primary)"]')).not.toBeNull();
+    expect(container.querySelector('rect[fill="url(#tracker-map-halo-secondary)"]')).not.toBeNull();
+  });
+
   it('keeps selected markers and labels at a fixed screen size while zoomed', () => {
     const { container } = renderMap(false, {
       flights: [trackedFlight],
