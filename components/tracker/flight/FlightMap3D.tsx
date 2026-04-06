@@ -448,14 +448,12 @@ function projectForecastHeadingPoint({
 function getForecastPathPoints({
   flight,
   selectedFlightDetails,
-  allowGroundPreview,
 }: {
   flight: TrackedFlight;
   selectedFlightDetails: SelectedFlightDetails | null | undefined;
-  allowGroundPreview: boolean;
 }): FlightMapPoint[] {
   const currentPoint = flight.current ?? flight.track.at(-1) ?? null;
-  if (!currentPoint || (currentPoint.onGround && !allowGroundPreview)) {
+  if (!currentPoint || currentPoint.onGround) {
     return [];
   }
 
@@ -601,7 +599,7 @@ function buildFlightPathData(
   const lastObservedPoint = observedPoints.at(-1) ?? departurePoint ?? flight.current ?? flight.originPoint ?? null;
   const nearDeparture = isPointNear(lastObservedPoint, departurePoint, 90);
   const nearArrival = isPointNear(lastObservedPoint, arrivalPoint, 90);
-  const showForecastPreview = Boolean(selected && lastObservedPoint && (!flight.onGround || nearDeparture));
+  const showForecastPreview = Boolean(selected && lastObservedPoint && !lastObservedPoint.onGround);
   const shouldIncludeArrivalInMainPath = Boolean(arrivalPoint && flight.onGround && nearArrival && !nearDeparture);
   const mainPoints = shouldIncludeArrivalInMainPath
     ? dedupeFlightPoints([...historyPoints, arrivalPoint])
@@ -651,7 +649,6 @@ function buildFlightPathData(
     ? getForecastPathPoints({
         flight,
         selectedFlightDetails: matchingDetails,
-        allowGroundPreview: nearDeparture,
       })
     : [];
 

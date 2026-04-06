@@ -337,25 +337,7 @@ function getForecastRoutePoints({
   projectPoint: ReturnType<typeof createFlightMapPointProjector>;
 }): FlightMapPoint[] {
   const currentPoint = flight.current ?? flight.track.at(-1) ?? null;
-  if (!currentPoint) {
-    return [];
-  }
-
-  const departureAirport = selectedFlightDetails?.departureAirport;
-  const departurePoint = departureAirport?.latitude != null && departureAirport?.longitude != null
-    ? projectPoint({
-        latitude: departureAirport.latitude,
-        longitude: departureAirport.longitude,
-        time: flight.route.firstSeen,
-        altitude: 0,
-        onGround: true,
-      })
-    : flight.originPoint;
-  const allowGroundPreview = currentPoint.onGround
-    ? departurePoint != null && getPointDistanceKm(currentPoint, departurePoint) <= 90
-    : true;
-
-  if (!allowGroundPreview) {
+  if (!currentPoint || currentPoint.onGround) {
     return [];
   }
 

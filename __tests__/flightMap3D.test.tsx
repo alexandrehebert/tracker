@@ -897,7 +897,7 @@ describe('FlightMap3D', () => {
     ).toBe(true);
   });
 
-  it('shows a dashed fading destination preview when the flight is still at departure', async () => {
+  it('does not show a dashed destination preview before the flight has actually departed', async () => {
     const { globe } = createGlobeMock();
     globeFactory.mockReturnValue(() => globe);
 
@@ -927,22 +927,7 @@ describe('FlightMap3D', () => {
     const renderedPaths = globe.pathsData.mock.calls.at(-1)?.[0] ?? [];
     const forecastPath = renderedPaths.find((path: { variant?: string }) => path.variant === 'forecast');
 
-    expect(forecastPath).toBeDefined();
-
-    const dashLengthAccessor = globe.pathDashLength.mock.calls.at(-1)?.[0];
-    const dashGapAccessor = globe.pathDashGap.mock.calls.at(-1)?.[0];
-    const dashAnimateAccessor = globe.pathDashAnimateTime.mock.calls.at(-1)?.[0];
-    const pathColorAccessor = globe.pathColor.mock.calls.at(-1)?.[0];
-    const pathStrokeAccessor = globe.pathStroke.mock.calls.at(-1)?.[0];
-    const mainPath = renderedPaths.find((path: { variant?: string }) => path.variant === 'main');
-
-    expect(pathStrokeAccessor(mainPath)).toBeGreaterThan(1.35);
-    expect(pathStrokeAccessor(forecastPath)).toBeGreaterThan(0.48);
-    expect(dashLengthAccessor(forecastPath)).toBeLessThan(0.1);
-    expect(dashGapAccessor(forecastPath)).toBeLessThan(0.12);
-    expect(dashAnimateAccessor(forecastPath)).toBe(0);
-    expect(dashAnimateAccessor(mainPath)).toBe(0);
-    expect(pathColorAccessor(forecastPath)).toBe(pathColorAccessor(mainPath));
+    expect(forecastPath).toBeUndefined();
   });
 
   it('keeps a selectable departure marker for flights that have not departed yet', async () => {

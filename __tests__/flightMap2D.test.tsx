@@ -37,8 +37,10 @@ function createMapProjection() {
   return projection;
 }
 
-function getProjectedCoordinates(point: { latitude: number; longitude: number } | null | undefined) {
-  if (!point) {
+function getProjectedCoordinates(
+  point: { latitude: number | null; longitude: number | null } | null | undefined,
+) {
+  if (!point || point.latitude == null || point.longitude == null) {
     return null;
   }
 
@@ -1036,7 +1038,7 @@ describe('FlightMap2D', () => {
     expect(Number(shadowPath?.getAttribute('stroke-width'))).toBeGreaterThan(Number(forecastPath?.getAttribute('stroke-width')));
   });
 
-  it('shows the dashed forecast route even before takeoff when the flight is still at departure', () => {
+  it('does not show a dashed forecast route before takeoff while the flight is still on the departure airport', () => {
     const { container } = renderMap(false, {
       flights: [preDepartureFlight],
       selectedIcao24: preDepartureFlight.icao24,
@@ -1052,7 +1054,7 @@ describe('FlightMap2D', () => {
         && (path.getAttribute('stroke') ?? '').includes('selected-flight-forecast-gradient'),
     );
 
-    expect(forecastPath).toBeTruthy();
+    expect(forecastPath).toBeFalsy();
   });
 
   it('shows an airborne forecast preview in all-flight mode on the flat map', () => {
