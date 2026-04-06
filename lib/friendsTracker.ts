@@ -259,6 +259,70 @@ function buildDefaultDemoTrip(now = getDemoReferenceTime()): FriendsTrackerTripC
   };
 }
 
+function mergeDemoFriend(
+  freshFriend: FriendTravelConfig,
+  existingFriend: FriendTravelConfig | undefined,
+): FriendTravelConfig {
+  if (!existingFriend) {
+    return freshFriend;
+  }
+
+  const mergedFlights = freshFriend.flights.map((freshLeg) => {
+    const existingLeg = existingFriend.flights.find((leg) => leg.id === freshLeg.id)
+      ?? existingFriend.flights.find((leg) => normalizeFriendFlightIdentifier(leg.flightNumber) === normalizeFriendFlightIdentifier(freshLeg.flightNumber));
+
+    if (!existingLeg) {
+      return freshLeg;
+    }
+
+    return {
+      ...freshLeg,
+      from: existingLeg.from ?? freshLeg.from,
+      to: existingLeg.to ?? freshLeg.to,
+      note: existingLeg.note ?? freshLeg.note,
+      resolvedIcao24: existingLeg.resolvedIcao24 ?? freshLeg.resolvedIcao24,
+      lastResolvedAt: existingLeg.lastResolvedAt ?? freshLeg.lastResolvedAt,
+    };
+  });
+
+  const extraFlights = existingFriend.flights.filter((existingLeg) => !mergedFlights.some((flight) => (
+    flight.id === existingLeg.id
+    || normalizeFriendFlightIdentifier(flight.flightNumber) === normalizeFriendFlightIdentifier(existingLeg.flightNumber)
+  )));
+
+  return {
+    ...freshFriend,
+    name: existingFriend.name || freshFriend.name,
+    avatarUrl: existingFriend.avatarUrl ?? freshFriend.avatarUrl,
+    flights: [...mergedFlights, ...extraFlights],
+  };
+}
+
+function mergeDemoTrip(
+  freshDemoTrip: FriendsTrackerTripConfig,
+  existingTrip: FriendsTrackerTripConfig | undefined,
+): FriendsTrackerTripConfig {
+  if (!existingTrip) {
+    return freshDemoTrip;
+  }
+
+  const mergedFriends = freshDemoTrip.friends.map((freshFriend) => (
+    mergeDemoFriend(
+      freshFriend,
+      existingTrip.friends.find((friend) => friend.id === freshFriend.id),
+    )
+  ));
+
+  const extraFriends = existingTrip.friends.filter((existingFriend) => !mergedFriends.some((friend) => friend.id === existingFriend.id));
+
+  return {
+    ...freshDemoTrip,
+    name: existingTrip.name || freshDemoTrip.name,
+    destinationAirport: existingTrip.destinationAirport ?? freshDemoTrip.destinationAirport,
+    friends: [...mergedFriends, ...extraFriends],
+  };
+}
+
 function ensureDemoTrip(
   trips: FriendsTrackerTripConfig[],
   demoReferenceTime = getDemoReferenceTime(),
@@ -272,7 +336,7 @@ function ensureDemoTrip(
     }
 
     hasDemoTrip = true;
-    return freshDemoTrip;
+    return mergeDemoTrip(freshDemoTrip, trip);
   });
 
   return hasDemoTrip ? refreshedTrips : [...refreshedTrips, freshDemoTrip];

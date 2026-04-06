@@ -199,6 +199,7 @@ export function FriendsConfigClient({
   const [isSavingCronToggle, setIsSavingCronToggle] = useState(false);
   const [isRunningCron, setIsRunningCron] = useState(false);
   const [notice, setNotice] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [hasHydrated, setHasHydrated] = useState(false);
   const [lastSavedAt, setLastSavedAt] = useState<number | null>(normalizedConfig.updatedAt);
   const [savedSnapshot, setSavedSnapshot] = useState(() => buildSaveableConfigSnapshot({
     ...normalizedConfig,
@@ -269,6 +270,10 @@ export function FriendsConfigClient({
       };
     });
   }
+
+  useEffect(() => {
+    setHasHydrated(true);
+  }, []);
 
   useEffect(() => {
     if (!tripPendingRemoval) {
@@ -978,20 +983,29 @@ export function FriendsConfigClient({
                     </div>
                     <div className="xl:col-span-1">
                       <label className="mb-2 block text-xs font-medium uppercase tracking-[0.2em] text-slate-400">Estimated departure</label>
-                      <input
-                        type="datetime-local"
-                        value={toDateTimeLocalValue(leg.departureTime)}
-                        onChange={(event) => {
-                          const departureTime = fromDateTimeLocalValue(event.target.value);
-                          updateFriend(friend.id, (currentFriend) => ({
-                            ...currentFriend,
-                            flights: currentFriend.flights.map((currentLeg) => currentLeg.id === leg.id
-                              ? { ...currentLeg, departureTime }
-                              : currentLeg),
-                          }));
-                        }}
-                        className="w-full rounded-2xl border border-white/10 bg-slate-950/90 px-3 py-2 text-sm text-slate-100 outline-none transition focus:border-cyan-400/60 focus:ring-2 focus:ring-cyan-500/20"
-                      />
+                      <div className="relative">
+                        <input
+                          type="datetime-local"
+                          value={hasHydrated ? toDateTimeLocalValue(leg.departureTime) : ''}
+                          onChange={(event) => {
+                            const departureTime = fromDateTimeLocalValue(event.target.value);
+                            updateFriend(friend.id, (currentFriend) => ({
+                              ...currentFriend,
+                              flights: currentFriend.flights.map((currentLeg) => currentLeg.id === leg.id
+                                ? { ...currentLeg, departureTime }
+                                : currentLeg),
+                            }));
+                          }}
+                          className="w-full rounded-2xl border border-white/10 bg-slate-950/90 px-3 py-2 text-sm text-slate-100 outline-none transition focus:border-cyan-400/60 focus:ring-2 focus:ring-cyan-500/20"
+                          aria-busy={!hasHydrated}
+                        />
+                        {!hasHydrated ? (
+                          <div
+                            aria-hidden="true"
+                            className="pointer-events-none absolute inset-0 animate-pulse rounded-2xl border border-white/10 bg-slate-900/70"
+                          />
+                        ) : null}
+                      </div>
                     </div>
                     <div>
                       <label className="mb-2 block text-xs font-medium uppercase tracking-[0.2em] text-slate-400">From</label>

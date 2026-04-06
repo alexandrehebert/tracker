@@ -437,6 +437,75 @@ describe('FlightMap2D', () => {
     expect(countCluster?.querySelector('text')?.textContent).toBe('5');
   });
 
+  it('shows avatar images inside clustered friend bubbles when available', () => {
+    const { container } = renderMap(false, {
+      staticFriendMarkers: [
+        {
+          id: 'avatar-pair-1',
+          name: 'Alice',
+          avatarUrl: 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32"><rect width="32" height="32" fill="%23ef4444"/></svg>',
+          color: '#ef4444',
+          latitude: -33.8688,
+          longitude: 151.2093,
+        },
+        {
+          id: 'avatar-pair-2',
+          name: 'Bob',
+          avatarUrl: 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32"><rect width="32" height="32" fill="%2322c55e"/></svg>',
+          color: '#22c55e',
+          latitude: -33.8688,
+          longitude: 151.2093,
+        },
+        {
+          id: 'avatar-count-1',
+          name: 'Cara',
+          avatarUrl: 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32"><rect width="32" height="32" fill="%233b82f6"/></svg>',
+          color: '#3b82f6',
+          latitude: 34.0522,
+          longitude: -118.2437,
+        },
+        {
+          id: 'avatar-count-2',
+          name: 'Dan',
+          avatarUrl: null,
+          color: '#f59e0b',
+          latitude: 34.0522,
+          longitude: -118.2437,
+        },
+        {
+          id: 'avatar-count-3',
+          name: 'Eve',
+          avatarUrl: 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32"><rect width="32" height="32" fill="%23a855f7"/></svg>',
+          color: '#a855f7',
+          latitude: 34.0522,
+          longitude: -118.2437,
+        },
+        {
+          id: 'avatar-count-4',
+          name: 'Finn',
+          avatarUrl: null,
+          color: '#14b8a6',
+          latitude: 34.0522,
+          longitude: -118.2437,
+        },
+        {
+          id: 'avatar-count-5',
+          name: 'Gia',
+          avatarUrl: 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32"><rect width="32" height="32" fill="%23ec4899"/></svg>',
+          color: '#ec4899',
+          latitude: 34.0522,
+          longitude: -118.2437,
+        },
+      ],
+    });
+
+    const splitTwoCluster = container.querySelector('[data-cluster-layout="split-2"]');
+    const countCluster = container.querySelector('[data-cluster-layout="count"]');
+
+    expect(splitTwoCluster?.querySelectorAll('image').length).toBe(2);
+    expect(countCluster?.querySelectorAll('image').length).toBeGreaterThan(0);
+  });
+
   it('renders the hovered friend cluster last so its label stays above the other markers', () => {
     const { container } = renderMap(false, {
       staticFriendMarkers: [

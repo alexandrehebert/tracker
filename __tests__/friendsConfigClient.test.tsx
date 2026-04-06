@@ -118,4 +118,19 @@ describe('FriendsConfigClient', () => {
 
     expect(screen.getByRole('button', { name: /save config/i })).toBeEnabled();
   });
+
+  it('enables save when editing the built-in demo trip', async () => {
+    const user = userEvent.setup();
+
+    render(<FriendsConfigClient initialConfig={initialConfig} initialCronDashboard={initialCronDashboard} />);
+
+    const saveButton = screen.getByRole('button', { name: /save config/i });
+    expect(saveButton).toBeDisabled();
+
+    await user.click(screen.getByRole('button', { name: /demo \/ test trip/i }));
+    await user.clear(screen.getByDisplayValue('Demo / Test Trip'));
+    await user.type(screen.getByPlaceholderText('Weekend in Lisbon'), 'Demo / Test Trip custom');
+
+    expect(screen.getByRole('button', { name: /save config/i })).toBeEnabled();
+  });
 });

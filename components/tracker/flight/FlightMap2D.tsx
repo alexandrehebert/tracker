@@ -470,8 +470,37 @@ function getFriendClusterLayout(memberCount: number): 'single' | 'split-2' | 'sp
   return 'count';
 }
 
-function getFriendClusterSegmentColors(members: FriendSvgMarker[], slotCount: number): string[] {
-  return Array.from({ length: slotCount }, (_, index) => members[index]?.color ?? FRIEND_CLUSTER_FALLBACK_FILL);
+function renderFriendClusterSegmentFill(
+  member: FriendSvgMarker | undefined,
+  x: number,
+  y: number,
+  width: number,
+  height: number,
+  key: string,
+) {
+  const fill = member?.color ?? FRIEND_CLUSTER_FALLBACK_FILL;
+
+  return (
+    <g key={key}>
+      <rect
+        x={x}
+        y={y}
+        width={width}
+        height={height}
+        fill={fill}
+      />
+      {member?.avatarUrl ? (
+        <image
+          href={member.avatarUrl}
+          x={x}
+          y={y}
+          width={width}
+          height={height}
+          preserveAspectRatio="xMidYMid slice"
+        />
+      ) : null}
+    </g>
+  );
 }
 
 function clusterFriendSvgMarkers(markers: FriendSvgMarker[], clusterRadiusPx: number, zoomScale: number): FriendSvgCluster[] {
@@ -1317,10 +1346,10 @@ export default function FlightMap2D({
                 : `${cluster.members.slice(0, 2).map((m) => m.name).join(', ')} +${cluster.members.length - 2}`;
             const estimatedLabelWidth = Math.max(60, labelText.length * 7 + 20);
             const clusterFillClipId = `friend-cluster-fill-${safeClusterKey}`;
-            const segmentColors = clusterLayout === 'split-2'
-              ? getFriendClusterSegmentColors(cluster.members, 2)
-              : clusterLayout === 'split-4'
-                ? getFriendClusterSegmentColors(cluster.members, 4)
+            const segmentMembers = clusterLayout === 'split-2'
+              ? Array.from({ length: 2 }, (_, index) => cluster.members[index])
+              : clusterLayout === 'split-4' || clusterLayout === 'count'
+                ? Array.from({ length: 4 }, (_, index) => cluster.members[index])
                 : [];
 
             return (
@@ -1390,36 +1419,36 @@ export default function FlightMap2D({
                     <g clipPath={`url(#${clusterFillClipId})`}>
                       {clusterLayout === 'split-2' ? (
                         <>
-                          <rect
-                            x={-innerRadius}
-                            y={-innerRadius}
-                            width={innerRadius}
-                            height={innerRadius * 2}
-                            fill={segmentColors[0]}
-                          />
-                          <rect
-                            x="0"
-                            y={-innerRadius}
-                            width={innerRadius}
-                            height={innerRadius * 2}
-                            fill={segmentColors[1]}
-                          />
+                          {renderFriendClusterSegmentFill(
+                            segmentMembers[0],
+                            -innerRadius,
+                            -innerRadius,
+                            innerRadius,
+                            innerRadius * 2,
+                            `${safeClusterKey}-segment-0`,
+                          )}
+                          {renderFriendClusterSegmentFill(
+                            segmentMembers[1],
+                            0,
+                            -innerRadius,
+                            innerRadius,
+                            innerRadius * 2,
+                            `${safeClusterKey}-segment-1`,
+                          )}
                         </>
-                      ) : clusterLayout === 'split-4' ? (
+                      ) : clusterLayout === 'split-4' || clusterLayout === 'count' ? (
                         <>
-                          {segmentColors.map((color, segmentIndex) => {
+                          {segmentMembers.map((member, segmentIndex) => {
                             const x = segmentIndex % 2 === 0 ? -innerRadius : 0;
                             const y = segmentIndex < 2 ? -innerRadius : 0;
 
-                            return (
-                              <rect
-                                key={`${safeClusterKey}-segment-${segmentIndex}`}
-                                x={x}
-                                y={y}
-                                width={innerRadius}
-                                height={innerRadius}
-                                fill={color}
-                              />
+                            return renderFriendClusterSegmentFill(
+                              member,
+                              x,
+                              y,
+                              innerRadius,
+                              innerRadius,
+                              `${safeClusterKey}-segment-${segmentIndex}`,
                             );
                           })}
                         </>
@@ -1438,7 +1467,7 @@ export default function FlightMap2D({
                         strokeWidth="1.2"
                         vectorEffect="non-scaling-stroke"
                       />
-                    ) : clusterLayout === 'split-4' ? (
+                    ) : clusterLayout === 'split-4' || clusterLayout === 'count' ? (
                       <>
                         <line
                           x1="0"
@@ -1458,6 +1487,31 @@ export default function FlightMap2D({
                           strokeWidth="1.2"
                           vectorEffect="non-scaling-stroke"
                         />
+                        {clusterLayout === 'count' ? (
+                          <>
+                            <circle
+                              cx="0"
+                              cy="0"
+                              r="10"
+                              fill="rgba(2,6,23,0.78)"
+                              stroke="rgba(255,255,255,0.72)"
+                              strokeWidth="1"
+                              vectorEffect="non-scaling-stroke"
+                            />
+                            <text
+                              x="0"
+                              y="0"
+                              textAnchor="middle"
+                              dominantBaseline="middle"
+                              fill="white"
+                              fontSize="11"
+                              fontWeight="800"
+                              fontFamily="ui-sans-serif, system-ui, sans-serif"
+                            >
+                              {cluster.members.length}
+                            </text>
+                          </>
+                        ) : null}
                       </>
                     ) : (
                       <text

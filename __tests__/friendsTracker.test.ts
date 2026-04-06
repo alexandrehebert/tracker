@@ -240,13 +240,54 @@ describe('friends tracker helpers', () => {
     } as Partial<FriendsTrackerConfig>);
 
     const demoTrip = config.trips.find((trip) => trip.id === 'demo-test-trip');
-    expect(demoTrip?.destinationAirport).toBe('JFK');
+    expect(demoTrip?.destinationAirport).toBe('LAX');
     expect(demoTrip?.friends.map((friend) => friend.name)).toEqual(
       expect.arrayContaining(['Alice Demo', 'Bruno Demo', 'Chloe Demo', 'Diego Demo', 'Emma Demo', 'Farah Demo']),
     );
     expect(demoTrip?.friends.flatMap((friend) => friend.flights.map((leg) => leg.flightNumber))).toEqual(
       expect.arrayContaining(['TEST1', 'TEST2', 'TEST3', 'TEST4', 'TEST5']),
     );
+  });
+
+  it('preserves saved demo customizations while refreshing the built-in relative timings', () => {
+    const config = normalizeFriendsTrackerConfig({
+      currentTripId: 'demo-test-trip',
+      trips: [
+        {
+          id: 'demo-test-trip',
+          name: 'Customized demo',
+          destinationAirport: 'EWR',
+          isDemo: true,
+          friends: [
+            {
+              id: 'demo-friend-1',
+              name: 'Alice Custom',
+              avatarUrl: 'data:image/png;base64,abc',
+              flights: [
+                {
+                  id: 'demo-leg-1',
+                  flightNumber: 'TEST1',
+                  departureTime: '2000-01-01T00:00:00.000Z',
+                  from: 'CDG',
+                  to: 'EWR',
+                  note: 'Custom demo note',
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    } as Partial<FriendsTrackerConfig>);
+
+    const demoTrip = config.trips.find((trip) => trip.id === 'demo-test-trip');
+    const firstFriend = demoTrip?.friends.find((friend) => friend.id === 'demo-friend-1');
+
+    expect(demoTrip?.name).toBe('Customized demo');
+    expect(demoTrip?.destinationAirport).toBe('EWR');
+    expect(firstFriend?.name).toBe('Alice Custom');
+    expect(firstFriend?.avatarUrl).toBe('data:image/png;base64,abc');
+    expect(firstFriend?.flights[0]?.note).toBe('Custom demo note');
+    expect(firstFriend?.flights[0]?.departureTime).not.toBe('2000-01-01T00:00:00.000Z');
   });
 
   it('keeps demo trip timestamps stable across repeated normalizations during hydration', () => {
