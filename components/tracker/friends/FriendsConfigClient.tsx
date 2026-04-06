@@ -1422,7 +1422,7 @@ export function FriendsConfigClient({
                         <div
                           role="listbox"
                           aria-label={`Departure airport suggestions for leg ${legIndex + 1}`}
-                          className="absolute left-0 right-0 z-50 mt-1 max-h-44 w-full overflow-y-auto rounded-2xl border border-white/10 bg-slate-950/95 p-1 shadow-lg shadow-slate-950/40"
+                          className="absolute left-0 right-0 z-50 mt-1 max-h-44 w-full overflow-y-auto rounded-2xl border border-white/10 bg-slate-950/95 p-1.5 shadow-lg shadow-slate-950/40"
                         >
                           {fromSuggestions.map((airport) => {
                             const suggestionCode = getAirportSuggestionCode(airport);
@@ -1461,7 +1461,7 @@ export function FriendsConfigClient({
                                     }));
                                   }
                                 }}
-                                className={`flex cursor-pointer flex-col rounded-xl px-3 py-2 text-left text-sm transition focus:outline-none ${isSelected
+                                className={`mb-1 last:mb-0 flex cursor-pointer flex-col rounded-xl px-3 py-2 text-left text-sm transition focus:outline-none ${isSelected
                                   ? 'bg-cyan-500/15 text-cyan-50 ring-1 ring-cyan-400/50'
                                   : 'text-slate-100 hover:bg-slate-900 focus:bg-slate-900'}`}
                               >
@@ -1506,7 +1506,7 @@ export function FriendsConfigClient({
                         <div
                           role="listbox"
                           aria-label={`Arrival airport suggestions for leg ${legIndex + 1}`}
-                          className="absolute left-0 right-0 z-50 mt-1 max-h-44 w-full overflow-y-auto rounded-2xl border border-white/10 bg-slate-950/95 p-1 shadow-lg shadow-slate-950/40"
+                          className="absolute left-0 right-0 z-50 mt-1 max-h-44 w-full overflow-y-auto rounded-2xl border border-white/10 bg-slate-950/95 p-1.5 shadow-lg shadow-slate-950/40"
                         >
                           {toSuggestions.map((airport) => {
                             const suggestionCode = getAirportSuggestionCode(airport);
@@ -1543,7 +1543,7 @@ export function FriendsConfigClient({
                                     }));
                                   }
                                 }}
-                                className={`flex cursor-pointer flex-col rounded-xl px-3 py-2 text-left text-sm transition focus:outline-none ${isSelected
+                                className={`mb-1 last:mb-0 flex cursor-pointer flex-col rounded-xl px-3 py-2 text-left text-sm transition focus:outline-none ${isSelected
                                   ? 'bg-cyan-500/15 text-cyan-50 ring-1 ring-cyan-400/50'
                                   : 'text-slate-100 hover:bg-slate-900 focus:bg-slate-900'}`}
                               >
