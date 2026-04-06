@@ -70,6 +70,42 @@ function createDraftLeg(): FriendFlightLeg {
   };
 }
 
+function ToggleSwitch({
+  checked,
+  onToggle,
+  label,
+  disabled = false,
+  pending = false,
+}: {
+  checked: boolean;
+  onToggle: (nextValue: boolean) => void;
+  label: string;
+  disabled?: boolean;
+  pending?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      aria-label={label}
+      disabled={disabled}
+      onClick={() => onToggle(!checked)}
+      className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-slate-900/80 px-2.5 py-1.5 text-xs text-slate-100 transition hover:border-cyan-400/40 hover:bg-slate-900 disabled:cursor-not-allowed disabled:opacity-70"
+    >
+      <span
+        className={`relative inline-flex h-5 w-9 items-center rounded-full transition ${checked ? 'bg-emerald-500/90' : 'bg-slate-700'}`}
+        aria-hidden="true"
+      >
+        <span
+          className={`inline-block h-4 w-4 rounded-full bg-white shadow-sm transition ${checked ? 'translate-x-4' : 'translate-x-0.5'}`}
+        />
+      </span>
+      <span className="font-medium">{pending ? 'Saving…' : checked ? 'On' : 'Off'}</span>
+    </button>
+  );
+}
+
 export function FriendsConfigClient({
   initialConfig,
   initialCronDashboard,
@@ -83,6 +119,7 @@ export function FriendsConfigClient({
   const [cronEnabled, setCronEnabled] = useState(normalizedConfig.cronEnabled ?? initialCronDashboard.config.enabled);
   const [cronDashboard, setCronDashboard] = useState(initialCronDashboard);
   const [isSaving, setIsSaving] = useState(false);
+  const [isSavingCronToggle, setIsSavingCronToggle] = useState(false);
   const [isRunningCron, setIsRunningCron] = useState(false);
   const [notice, setNotice] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [lastSavedAt, setLastSavedAt] = useState<number | null>(normalizedConfig.updatedAt);
@@ -114,6 +151,67 @@ export function FriendsConfigClient({
       cronEnabled,
       friends,
     });
+  }
+
+  function applySavedConfig(nextConfig: FriendsTrackerConfig) {
+    const normalizedNextConfig = normalizeFriendsTrackerConfig(nextConfig);
+    setFriends(normalizedNextConfig.friends);
+    setCronEnabled(normalizedNextConfig.cronEnabled ?? true);
+    setLastSavedAt(normalizedNextConfig.updatedAt);
+    setCronDashboard((currentDashboard) => ({
+      ...currentDashboard,
+      config: {
+        ...currentDashboard.config,
+        enabled: normalizedNextConfig.cronEnabled ?? true,
+        identifiers: extractFriendTrackerIdentifiers(normalizedNextConfig),
+        updatedAt: normalizedNextConfig.updatedAt,
+        updatedBy: normalizedNextConfig.updatedBy,
+      },
+    }));
+
+    return normalizedNextConfig;
+  }
+
+  async function handleCronToggle(nextValue: boolean) {
+    const previousValue = cronEnabled;
+    setCronEnabled(nextValue);
+    setIsSavingCronToggle(true);
+    setNotice(null);
+
+    try {
+      const response = await fetch('/api/chantal/config', {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          updatedBy: 'chantal cron toggle',
+          cronEnabled: nextValue,
+        }),
+      });
+
+      const payload = await response.json() as FriendsTrackerConfig & { error?: string };
+      if (!response.ok) {
+        throw new Error(payload.error || 'Unable to save the cron setting.');
+      }
+
+      const nextConfig = normalizeFriendsTrackerConfig(payload);
+      setCronEnabled(nextConfig.cronEnabled ?? nextValue);
+      setLastSavedAt(nextConfig.updatedAt);
+      await refreshCronDashboard();
+      setNotice({
+        type: 'success',
+        text: `Background prefetch cron ${nextConfig.cronEnabled ?? nextValue ? 'enabled' : 'disabled'} and saved.`,
+      });
+    } catch (error) {
+      setCronEnabled(previousValue);
+      setNotice({
+        type: 'error',
+        text: error instanceof Error ? error.message : 'Unable to save the cron setting.',
+      });
+    } finally {
+      setIsSavingCronToggle(false);
+    }
   }
 
   async function handleRunCronNow() {
@@ -229,20 +327,7 @@ export function FriendsConfigClient({
         throw new Error(payload.error || 'Unable to save the friends tracker config.');
       }
 
-      const nextConfig = normalizeFriendsTrackerConfig(payload);
-      setFriends(nextConfig.friends);
-      setCronEnabled(nextConfig.cronEnabled ?? true);
-      setLastSavedAt(nextConfig.updatedAt);
-      setCronDashboard((currentDashboard) => ({
-        ...currentDashboard,
-        config: {
-          ...currentDashboard.config,
-          enabled: nextConfig.cronEnabled ?? true,
-          identifiers: extractFriendTrackerIdentifiers(nextConfig),
-          updatedAt: nextConfig.updatedAt,
-          updatedBy: nextConfig.updatedBy,
-        },
-      }));
+      applySavedConfig(payload);
       setNotice({ type: 'success', text: 'Friends tracker config saved and synced to the background prefetch cron.' });
     } catch (error) {
       setNotice({
@@ -308,7 +393,7 @@ export function FriendsConfigClient({
               type="button"
               onClick={handleSave}
               className="inline-flex items-center gap-2 rounded-full bg-cyan-500 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-cyan-400 disabled:cursor-not-allowed disabled:opacity-60"
-              disabled={isSaving}
+              disabled={isSaving || isSavingCronToggle}
             >
               {isSaving ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
               {isSaving ? 'Saving…' : 'Save config'}
@@ -335,20 +420,18 @@ export function FriendsConfigClient({
             </div>
             <p className="mt-3 max-w-3xl text-sm text-slate-300">
               Reuse the same shared cron as `/tracker/cron` to precompute crew telemetry and keep completed legs visible on the map.
-              You can turn it on or off here, then save the crew config to sync the setting.
+              Toggling it here saves immediately, while itinerary edits still use “Save config”.
             </p>
           </div>
 
           <div className="flex flex-wrap items-center gap-2">
-            <label className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-slate-900/80 px-3 py-2 text-sm text-slate-200">
-              <input
-                type="checkbox"
-                className="h-4 w-4 rounded border-slate-500 bg-slate-950"
-                checked={cronEnabled}
-                onChange={(event) => setCronEnabled(event.target.checked)}
-              />
-              Enabled
-            </label>
+            <ToggleSwitch
+              checked={cronEnabled}
+              onToggle={handleCronToggle}
+              label="Enable or disable the Chantal background prefetch cron"
+              disabled={isSaving || isSavingCronToggle}
+              pending={isSavingCronToggle}
+            />
             <button
               type="button"
               onClick={handleRunCronNow}

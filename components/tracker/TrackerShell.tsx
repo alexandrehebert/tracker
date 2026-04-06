@@ -41,7 +41,7 @@ export default function TrackerShell({
   showBackgroundGrid = false,
 }: TrackerShellProps) {
   return (
-    <div className="relative h-full w-full overflow-hidden bg-slate-950 text-slate-100">
+    <div className="relative h-full w-full overflow-hidden bg-[#071a31] text-slate-100">
       <TrackerBackground showGrid={showBackgroundGrid} />
       {topBar ?? null}
       <div className={`transition-opacity duration-700 ${isLoading ? 'opacity-0 pointer-events-none' : 'opacity-100'}`}>

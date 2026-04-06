@@ -21,6 +21,7 @@ vi.mock('~/components/tracker/flight/FlightMap2D', () => ({
 const map: WorldMapPayload = {
   countries: [],
   viewBox: { width: 1000, height: 560 },
+  projection: { scale: 160, translate: [500, 280] },
 };
 
 const responsePayload = {

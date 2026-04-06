@@ -34,7 +34,7 @@ export default function TrackerZoomControls() {
       <button
         type="button"
         onClick={resetZoom}
-        className="inline-flex h-9 w-9 items-center justify-center gap-1 rounded-full border border-white/12 bg-slate-950/80 p-2 text-slate-100 shadow backdrop-blur-sm transition-[background-color,border-color,color,box-shadow] duration-150 hover:bg-slate-900 hover:border-white/20 md:w-auto md:px-3"
+        className="inline-flex h-9 w-9 items-center justify-center gap-1 rounded-full border border-white/12 bg-slate-950/80 p-2 text-slate-100 shadow backdrop-blur-sm transition-[background-color,border-color,color,box-shadow] duration-150 hover:bg-slate-900 hover:border-white/20 lg:w-auto lg:px-3"
         aria-label="Reset view"
       >
         <LocateFixed className="h-5 w-5" />

@@ -1223,29 +1223,29 @@ function TrackerTopBar({
   const { topBarRef } = useTrackerLayout();
 
   return (
-    <div ref={topBarRef} className="pointer-events-none absolute inset-x-0 top-0 z-40 flex flex-wrap items-start justify-between gap-3 p-3 md:p-4">
-      <div className="pointer-events-auto rounded-2xl border border-white/10 bg-slate-950/75 px-4 py-3 backdrop-blur-md">
+    <div ref={topBarRef} className="pointer-events-none absolute inset-x-0 top-0 z-40 grid grid-cols-[minmax(0,1fr)_auto] items-start gap-3 p-3 md:p-4">
+      <div className="pointer-events-auto min-w-0 rounded-2xl border border-white/10 bg-slate-950/75 px-4 py-3 backdrop-blur-md">
         <div className="flex items-center gap-2 text-cyan-200">
           <Radar className="h-4 w-4" />
           <span className="text-xs font-semibold uppercase tracking-[0.24em]">Live flight tracker</span>
         </div>
-        <div className="mt-1 flex items-center gap-2 text-sm text-slate-200">
+        <div className="mt-1 flex flex-wrap items-center gap-2 text-sm text-slate-200">
           <span>{trackedCount} tracked</span>
           <span className="text-slate-500">•</span>
           <span>updated {formatTimestamp(lastUpdated)}</span>
         </div>
       </div>
 
-      <div className="pointer-events-auto flex items-center gap-2">
+      <div className="pointer-events-auto flex flex-col items-end gap-2 md:flex-row md:flex-wrap md:items-center md:justify-end">
         <FlightMapViewToggle mapView={mapView} onChange={onMapViewChange} />
         <TrackerZoomControls />
         <button
           type="button"
           onClick={onRefresh}
-          className="inline-flex items-center gap-2 rounded-full border border-white/12 bg-slate-950/80 px-3 py-2 text-sm font-medium text-slate-100 shadow backdrop-blur-sm transition hover:border-white/20 hover:bg-slate-900"
+          className="inline-flex h-9 w-9 items-center justify-center gap-2 rounded-full border border-white/12 bg-slate-950/80 p-2 text-sm font-medium text-slate-100 shadow backdrop-blur-sm transition hover:border-white/20 hover:bg-slate-900 lg:w-auto lg:px-3"
         >
-          <RefreshCw className={`h-4 w-4 ${isRefreshing ? 'animate-spin' : ''}`} />
-          Refresh
+          <RefreshCw className={`h-4 w-4 shrink-0 ${isRefreshing ? 'animate-spin' : ''}`} />
+          <span className="hidden lg:inline">Refresh</span>
         </button>
       </div>
     </div>

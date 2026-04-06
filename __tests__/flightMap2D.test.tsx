@@ -28,6 +28,7 @@ const map: WorldMapPayload = {
     },
   ],
   viewBox: { width: 1000, height: 560 },
+  projection: { scale: 160, translate: [500, 280] },
 };
 
 const trackedFlight: TrackedFlight = {

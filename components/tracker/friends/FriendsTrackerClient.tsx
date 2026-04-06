@@ -135,8 +135,8 @@ function FriendsTrackerTopBar({
   const { topBarRef } = useTrackerLayout();
 
   return (
-    <div ref={topBarRef} className="pointer-events-none absolute inset-x-0 top-0 z-40 flex flex-wrap items-start justify-between gap-3 p-3 md:p-4">
-      <div className="pointer-events-auto rounded-2xl border border-white/10 bg-slate-950/75 px-4 py-3 shadow-xl backdrop-blur-md">
+    <div ref={topBarRef} className="pointer-events-none absolute inset-x-0 top-0 z-40 grid grid-cols-[minmax(0,1fr)_auto] items-start gap-3 p-3 md:p-4">
+      <div className="pointer-events-auto min-w-0 max-w-full justify-self-start rounded-2xl border border-white/10 bg-slate-950/75 px-4 py-3 shadow-xl backdrop-blur-md">
         <div className="text-[11px] uppercase tracking-[0.24em] text-cyan-200">Chantal crew tracker</div>
         <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-slate-100">
           <span>{friendCount} friends</span>
@@ -146,23 +146,23 @@ function FriendsTrackerTopBar({
         <div className="mt-1 text-xs text-slate-400">Updated {formatDateTimeMillis(lastUpdated, locale)} UTC</div>
       </div>
 
-      <div className="pointer-events-auto flex flex-wrap items-center justify-end gap-2">
+      <div className="pointer-events-auto flex flex-col items-end gap-2 md:flex-row md:flex-wrap md:items-center md:justify-end">
         <Link
           href="/chantal/config"
-          className="inline-flex items-center gap-2 rounded-full border border-white/12 bg-slate-950/80 px-3 py-2 text-sm font-medium text-slate-100 shadow backdrop-blur-sm transition hover:border-white/20 hover:bg-slate-900"
+          className="inline-flex h-9 w-9 items-center justify-center gap-2 rounded-full border border-white/12 bg-slate-950/80 p-2 text-sm font-medium text-slate-100 shadow backdrop-blur-sm transition hover:border-white/20 hover:bg-slate-900 lg:w-auto lg:px-3"
         >
-          <Settings2 className="h-4 w-4" />
-          Config
+          <Settings2 className="h-4 w-4 shrink-0" />
+          <span className="hidden lg:inline">Config</span>
         </Link>
         <FlightMapViewToggle mapView={mapView} onChange={onMapViewChange} />
         <TrackerZoomControls />
         <button
           type="button"
           onClick={onRefresh}
-          className="inline-flex items-center gap-2 rounded-full border border-white/12 bg-slate-950/80 px-3 py-2 text-sm font-medium text-slate-100 shadow backdrop-blur-sm transition hover:border-white/20 hover:bg-slate-900"
+          className="inline-flex h-9 w-9 items-center justify-center gap-2 rounded-full border border-white/12 bg-slate-950/80 p-2 text-sm font-medium text-slate-100 shadow backdrop-blur-sm transition hover:border-white/20 hover:bg-slate-900 lg:w-auto lg:px-3"
         >
-          <RefreshCw className={`h-4 w-4 ${isRefreshing ? 'animate-spin' : ''}`} />
-          Refresh
+          <RefreshCw className={`h-4 w-4 shrink-0 ${isRefreshing ? 'animate-spin' : ''}`} />
+          <span className="hidden lg:inline">Refresh</span>
         </button>
       </div>
     </div>
@@ -314,6 +314,7 @@ function FriendsTrackerDashboard({
       },
       body: JSON.stringify({
         updatedBy: 'chantal map auto-lock',
+        cronEnabled: nextState.config.cronEnabled,
         friends: nextState.config.friends,
       }),
     })
@@ -330,9 +331,6 @@ function FriendsTrackerDashboard({
 
   const totalFriends = config.friends.length;
   const totalLegs = statuses.length;
-  const desktopMapWidth = !isMobile && sidebarOpen
-    ? 'calc(100% - clamp(20rem, 32vw, 34rem))'
-    : '100%';
 
   const sidebarContent = (
     <div className="space-y-4">
@@ -360,12 +358,6 @@ function FriendsTrackerDashboard({
           </p>
         ) : null}
       </section>
-
-      {!identifiers.length ? (
-        <div className="rounded-2xl border border-dashed border-white/10 bg-slate-950/35 p-4 text-sm text-slate-400">
-          No friend itineraries are configured yet. Add the crew details on the config page first.
-        </div>
-      ) : null}
 
       {error ? (
         <div className="rounded-2xl border border-rose-400/30 bg-rose-500/10 p-4 text-sm text-rose-100">
@@ -395,6 +387,12 @@ function FriendsTrackerDashboard({
           <Plane className="h-4 w-4" />
           Friend itineraries
         </div>
+
+        {!identifiers.length ? (
+          <div className="rounded-2xl border border-dashed border-white/10 bg-slate-950/35 p-4 text-sm text-slate-400">
+            No friend itineraries are configured yet. Add the crew details on the config page first.
+          </div>
+        ) : null}
 
         {config.friends.map((friend) => {
           const friendStatuses = statuses.filter((status) => status.friend.id === friend.id);
@@ -501,10 +499,7 @@ function FriendsTrackerDashboard({
       }
       showBackgroundGrid
       mapContent={
-        <div
-          className="relative h-[100dvh] transition-[width] duration-300 ease-out"
-          style={{ width: desktopMapWidth }}
-        >
+        <div className="relative h-[100dvh] w-full">
           <FlightMap
             map={map}
             flights={visibleFlights}

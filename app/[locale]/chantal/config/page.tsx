@@ -46,7 +46,7 @@ export default async function ChantalConfigPage({ params }: ChantalConfigPagePro
           <h1 className="mt-2 text-3xl font-semibold text-white">Crew itinerary setup</h1>
           <p className="mt-2 max-w-3xl text-sm text-slate-300">
             Add each friend, their flight numbers, and any connections. Saving here also syncs the shared tracker cron list,
-            and you can now enable or disable that background prefetch directly from this page.
+            while the cron toggle below now saves its enabled state immediately.
           </p>
         </div>
 

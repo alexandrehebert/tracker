@@ -1,5 +1,9 @@
 'use client';
 
+const TRACKER_OCEAN_FILL = '#071a31';
+const TRACKER_GRID_IMAGE =
+  'linear-gradient(rgba(203,213,225,0.08) 1px, transparent 1px), linear-gradient(90deg, rgba(203,213,225,0.08) 1px, transparent 1px)';
+
 interface TrackerBackgroundProps {
   showGrid?: boolean;
 }
@@ -7,6 +11,16 @@ interface TrackerBackgroundProps {
 export default function TrackerBackground({ showGrid = false }: TrackerBackgroundProps) {
   return (
     <>
+      <div
+        aria-hidden="true"
+        className="pointer-events-none absolute inset-0"
+        style={{
+          backgroundColor: TRACKER_OCEAN_FILL,
+          backgroundImage: showGrid ? TRACKER_GRID_IMAGE : undefined,
+          backgroundSize: showGrid ? '26px 26px' : undefined,
+          backgroundPosition: showGrid ? 'center center' : undefined,
+        }}
+      />
       <div
         aria-hidden="true"
         className="pointer-events-none absolute inset-0 opacity-85"
@@ -18,17 +32,6 @@ export default function TrackerBackground({ showGrid = false }: TrackerBackgroun
           ].join(','),
         }}
       />
-      {showGrid ? (
-        <div
-          aria-hidden="true"
-          className="pointer-events-none absolute inset-0 opacity-35"
-          style={{
-            backgroundImage:
-              'linear-gradient(rgba(148,163,184,0.08) 1px, transparent 1px), linear-gradient(90deg, rgba(148,163,184,0.08) 1px, transparent 1px)',
-            backgroundSize: '28px 28px',
-          }}
-        />
-      ) : null}
     </>
   );
 }

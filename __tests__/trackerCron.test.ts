@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { TrackerApiResponse, TrackedFlight } from '~/components/tracker/flight/types';
+import type { FriendsTrackerConfig } from '~/lib/friendsTracker';
 
 const mockMongoCollections = new Map<string, Map<string, Record<string, unknown>>>();
 
@@ -128,6 +129,16 @@ async function loadTrackerCronModule() {
   return await import('~/lib/server/trackerCron');
 }
 
+async function loadFriendsTrackerModule() {
+  vi.resetModules();
+  return await import('~/lib/server/friendsTracker');
+}
+
+async function loadChantalConfigRouteModule() {
+  vi.resetModules();
+  return await import('~/app/api/chantal/config/route');
+}
+
 function createTrackedFlight(identifier: string, icao24: string): TrackedFlight {
   return {
     icao24,
@@ -200,6 +211,118 @@ describe('tracker cron config and history', () => {
     expect(dashboard.mongoConfigured).toBe(true);
     expect(dashboard.config.identifiers).toEqual(['AF123', 'BA117']);
     expect(dashboard.config.updatedBy).toBe('admin-ui');
+  });
+
+  it('preserves the saved flight list when only the cron enabled flag is updated', async () => {
+    const { getTrackerCronDashboard, writeTrackerCronConfig } = await loadTrackerCronModule();
+
+    await writeTrackerCronConfig({
+      identifiers: ['AF123', 'BA117'],
+      updatedBy: 'admin-ui',
+    });
+
+    const saved = await writeTrackerCronConfig({
+      enabled: false,
+      updatedBy: 'toggle-only',
+    } as never);
+
+    expect(saved.enabled).toBe(false);
+    expect(saved.identifiers).toEqual(['AF123', 'BA117']);
+
+    const dashboard = await getTrackerCronDashboard();
+    expect(dashboard.config.enabled).toBe(false);
+    expect(dashboard.config.identifiers).toEqual(['AF123', 'BA117']);
+    expect(dashboard.config.updatedBy).toBe('toggle-only');
+  });
+
+  it('preserves the saved cron toggle when Chantal map updates only the friend list', async () => {
+    const { readFriendsTrackerConfig, writeFriendsTrackerConfig } = await loadFriendsTrackerModule();
+
+    await writeFriendsTrackerConfig({
+      updatedBy: 'chantal config page',
+      cronEnabled: false,
+      friends: [
+        {
+          id: 'friend-1',
+          name: 'Alice',
+          flights: [
+            {
+              id: 'leg-1',
+              flightNumber: 'AF123',
+              departureTime: '2026-04-14T09:30:00.000Z',
+            },
+          ],
+        },
+      ],
+    });
+
+    const autoLockedConfig = await writeFriendsTrackerConfig({
+      updatedBy: 'chantal map auto-lock',
+      friends: [
+        {
+          id: 'friend-1',
+          name: 'Alice',
+          flights: [
+            {
+              id: 'leg-1',
+              flightNumber: 'AF123',
+              departureTime: '2026-04-14T09:30:00.000Z',
+              resolvedIcao24: '3c675a',
+            },
+          ],
+        },
+      ],
+    });
+
+    expect(autoLockedConfig.cronEnabled).toBe(false);
+
+    const persisted = await readFriendsTrackerConfig();
+    expect(persisted.cronEnabled).toBe(false);
+  });
+
+  it('preserves the saved friends when the Chantal cron toggle is saved on its own', async () => {
+    const { readFriendsTrackerConfig, writeFriendsTrackerConfig } = await loadFriendsTrackerModule();
+    const { PUT } = await loadChantalConfigRouteModule();
+
+    await writeFriendsTrackerConfig({
+      updatedBy: 'chantal config page',
+      cronEnabled: true,
+      friends: [
+        {
+          id: 'friend-1',
+          name: 'Alice',
+          flights: [
+            {
+              id: 'leg-1',
+              flightNumber: 'AF123',
+              departureTime: '2026-04-14T09:30:00.000Z',
+            },
+          ],
+        },
+      ],
+    });
+
+    const response = await PUT(new Request('http://localhost/api/chantal/config', {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        updatedBy: 'chantal cron toggle',
+        cronEnabled: false,
+      }),
+    }));
+
+    const payload = await response.json() as FriendsTrackerConfig;
+
+    expect(response.status).toBe(200);
+    expect(payload.cronEnabled).toBe(false);
+    expect(payload.friends).toHaveLength(1);
+    expect(payload.friends[0]?.name).toBe('Alice');
+
+    const persisted = await readFriendsTrackerConfig();
+    expect(persisted.cronEnabled).toBe(false);
+    expect(persisted.friends).toHaveLength(1);
   });
 
   it('records each cron execution and its per-flight results in history', async () => {

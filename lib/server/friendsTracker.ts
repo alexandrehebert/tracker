@@ -126,8 +126,12 @@ export async function readFriendsTrackerConfig(): Promise<FriendsTrackerConfig> 
 }
 
 export async function writeFriendsTrackerConfig(input: Partial<FriendsTrackerConfig> | null | undefined): Promise<FriendsTrackerConfig> {
+  const currentConfig = await readFriendsTrackerConfig();
   const nextConfig = normalizeFriendsTrackerConfig({
+    ...currentConfig,
     ...input,
+    cronEnabled: typeof input?.cronEnabled === 'boolean' ? input.cronEnabled : currentConfig.cronEnabled,
+    friends: Array.isArray(input?.friends) ? input.friends : currentConfig.friends,
     updatedAt: Date.now(),
   });
 

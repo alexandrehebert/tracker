@@ -115,6 +115,42 @@ async function readApiPayload<T>(response: Response): Promise<T | { error: strin
   }
 }
 
+function ToggleSwitch({
+  checked,
+  onToggle,
+  label,
+  disabled = false,
+  pending = false,
+}: {
+  checked: boolean;
+  onToggle: (nextValue: boolean) => void;
+  label: string;
+  disabled?: boolean;
+  pending?: boolean;
+}) {
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      aria-label={label}
+      disabled={disabled}
+      onClick={() => onToggle(!checked)}
+      className="inline-flex items-center gap-1.5 rounded-full border border-white/10 bg-white/5 px-2.5 py-1.5 text-xs text-slate-100 transition hover:border-sky-300/50 hover:bg-sky-500/10 disabled:cursor-not-allowed disabled:opacity-70"
+    >
+      <span
+        className={`relative inline-flex h-5 w-9 items-center rounded-full transition ${checked ? 'bg-emerald-500/90' : 'bg-slate-700'}`}
+        aria-hidden="true"
+      >
+        <span
+          className={`inline-block h-4 w-4 rounded-full bg-white shadow-sm transition ${checked ? 'translate-x-4' : 'translate-x-0.5'}`}
+        />
+      </span>
+      <span className="font-medium">{pending ? 'Saving…' : checked ? 'On' : 'Off'}</span>
+    </button>
+  );
+}
+
 export function TrackerCronAdminClient({ initialDashboard }: { initialDashboard: TrackerCronDashboard }) {
   const locale = useLocale();
   const [dashboard, setDashboard] = useState(initialDashboard);
@@ -124,6 +160,7 @@ export function TrackerCronAdminClient({ initialDashboard }: { initialDashboard:
   const [manualTokenExpirySeconds, setManualTokenExpirySeconds] = useState('1800');
   const [revealedToken, setRevealedToken] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
+  const [isSavingEnabled, setIsSavingEnabled] = useState(false);
   const [isRunning, setIsRunning] = useState(false);
   const [activeTokenAction, setActiveTokenAction] = useState<'checking' | 'refreshing' | 'clearing' | 'setting' | 'copying' | null>(null);
   const [notice, setNotice] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
@@ -153,6 +190,40 @@ export function TrackerCronAdminClient({ initialDashboard }: { initialDashboard:
     setIdentifiersInput(payload.config.identifiers.join('\n'));
     setEnabled(payload.config.enabled);
     return payload;
+  }
+
+  async function handleEnabledToggle(nextValue: boolean) {
+    const previousValue = enabled;
+    setEnabled(nextValue);
+    setIsSavingEnabled(true);
+    setNotice(null);
+
+    try {
+      const response = await fetch('/api/tracker/cron/config', {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ enabled: nextValue }),
+      });
+
+      const payload: unknown = await readApiPayload<TrackerCronDashboard>(response);
+      if (!response.ok || isErrorResponse(payload) || !isTrackerCronDashboard(payload)) {
+        throw new Error(isErrorResponse(payload) ? payload.error : 'Unable to save the cron enabled state.');
+      }
+
+      setDashboard(payload);
+      setEnabled(payload.config.enabled);
+      setNotice({ type: 'success', text: `Cron ${payload.config.enabled ? 'enabled' : 'disabled'} and saved.` });
+    } catch (error) {
+      setEnabled(previousValue);
+      setNotice({
+        type: 'error',
+        text: error instanceof Error ? error.message : 'Unable to save the cron enabled state.',
+      });
+    } finally {
+      setIsSavingEnabled(false);
+    }
   }
 
   async function handleSave(event: FormEvent<HTMLFormElement>) {
@@ -398,15 +469,13 @@ export function TrackerCronAdminClient({ initialDashboard }: { initialDashboard:
                   Enter one callsign or ICAO24 per line. These identifiers are fetched every 15 minutes and refreshed into Mongo.
                 </p>
               </div>
-              <label className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-2 text-sm text-slate-200">
-                <input
-                  type="checkbox"
-                  className="h-4 w-4 rounded border-slate-500 bg-slate-950"
-                  checked={enabled}
-                  onChange={(event) => setEnabled(event.target.checked)}
-                />
-                Enabled
-              </label>
+              <ToggleSwitch
+                checked={enabled}
+                onToggle={handleEnabledToggle}
+                label="Enable or disable the shared tracker cron"
+                disabled={isSaving || isSavingEnabled}
+                pending={isSavingEnabled}
+              />
             </div>
 
             <label className="mt-4 block text-sm font-medium text-slate-200" htmlFor="tracker-cron-identifiers">
@@ -423,7 +492,7 @@ export function TrackerCronAdminClient({ initialDashboard }: { initialDashboard:
             <div className="mt-4 flex flex-wrap gap-3">
               <button
                 type="submit"
-                disabled={isSaving}
+                disabled={isSaving || isSavingEnabled}
                 className="inline-flex items-center justify-center rounded-full bg-sky-500 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-sky-400 disabled:cursor-wait disabled:opacity-70"
               >
                 {isSaving ? 'Saving…' : 'Save list'}

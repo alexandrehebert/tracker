@@ -32,13 +32,16 @@ export async function PUT(request: NextRequest) {
       enabled?: boolean;
     } | null;
 
-    if (!body || (typeof body.identifiers !== 'string' && !Array.isArray(body.identifiers))) {
-      return buildJsonResponse({ error: 'Provide a string or array of flight identifiers.' }, 400);
+    const hasIdentifiers = typeof body?.identifiers === 'string' || Array.isArray(body?.identifiers);
+    const hasEnabled = typeof body?.enabled === 'boolean';
+
+    if (!body || (!hasIdentifiers && !hasEnabled)) {
+      return buildJsonResponse({ error: 'Provide cron identifiers or an enabled flag to save.' }, 400);
     }
 
     await writeTrackerCronConfig({
-      identifiers: body.identifiers,
-      enabled: typeof body.enabled === 'boolean' ? body.enabled : undefined,
+      identifiers: hasIdentifiers ? body.identifiers : undefined,
+      enabled: hasEnabled ? body.enabled : undefined,
       updatedBy: 'tracker/cron admin page',
     });
 

@@ -107,7 +107,11 @@ function normalizeTrackerCronIdentifier(value: string | null | undefined): strin
   return typeof value === 'string' ? value.replace(/\s+/g, '').trim().toUpperCase() : '';
 }
 
-export function normalizeTrackerCronIdentifiers(input: string | string[]): string[] {
+export function normalizeTrackerCronIdentifiers(input: string | string[] | null | undefined): string[] {
+  if (input == null) {
+    return [];
+  }
+
   const rawValues = Array.isArray(input)
     ? input.flatMap((value) => value.split(/[\n,]+/))
     : input.split(/[\n,]+/);
@@ -321,7 +325,7 @@ export async function readTrackerCronConfig(): Promise<TrackerCronConfig> {
 }
 
 export async function writeTrackerCronConfig(input: {
-  identifiers: string | string[];
+  identifiers?: string | string[] | null;
   enabled?: boolean;
   updatedBy?: string | null;
 }): Promise<TrackerCronConfig> {
@@ -329,7 +333,9 @@ export async function writeTrackerCronConfig(input: {
   const nextConfig = normalizeTrackerCronConfig({
     ...currentConfig,
     enabled: input.enabled ?? currentConfig.enabled,
-    identifiers: normalizeTrackerCronIdentifiers(input.identifiers),
+    identifiers: input.identifiers == null
+      ? currentConfig.identifiers
+      : normalizeTrackerCronIdentifiers(input.identifiers),
     updatedAt: Date.now(),
     updatedBy: typeof input.updatedBy === 'string' ? input.updatedBy.trim() : null,
   });

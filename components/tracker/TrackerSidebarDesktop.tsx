@@ -41,7 +41,7 @@ export default function TrackerSidebarDesktop({ children, footer }: TrackerSideb
       } : undefined}
       aria-label={!sidebarOpen ? 'Expand tracker panel' : undefined}
     >
-      <aside className="relative h-fit max-h-[calc(100dvh-6.5rem)] rounded-3xl border border-white/12 bg-slate-950/88 shadow-[0_30px_90px_rgba(2,6,23,0.55)] backdrop-blur-md pointer-events-auto flex flex-col">
+      <aside className="relative h-fit max-h-[calc(100dvh-6.5rem)] rounded-3xl border border-white/12 bg-slate-950/72 shadow-[0_30px_90px_rgba(2,6,23,0.55)] backdrop-blur-md pointer-events-auto flex flex-col">
         <button
           ref={sidebarToggleRef}
           type="button"
@@ -76,7 +76,7 @@ export default function TrackerSidebarDesktop({ children, footer }: TrackerSideb
       </aside>
 
       {footer ? (
-        <div className="rounded-3xl border border-white/12 bg-slate-950/88 p-4 shadow-[0_20px_60px_rgba(2,6,23,0.45)] backdrop-blur-md pointer-events-auto">
+        <div className="rounded-3xl border border-white/12 bg-slate-950/72 p-4 shadow-[0_20px_60px_rgba(2,6,23,0.45)] backdrop-blur-md pointer-events-auto">
           {footer}
         </div>
       ) : null}
