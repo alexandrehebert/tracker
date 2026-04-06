@@ -24,6 +24,7 @@ export interface FriendsTrackerConfig {
   updatedAt: number | null;
   updatedBy: string | null;
   cronEnabled?: boolean | null;
+  destinationAirport?: string | null;
   friends: FriendTravelConfig[];
 }
 
@@ -147,6 +148,7 @@ export function normalizeFriendsTrackerConfig(
     updatedAt: typeof input?.updatedAt === 'number' && Number.isFinite(input.updatedAt) ? input.updatedAt : null,
     updatedBy: normalizeOptionalText(input?.updatedBy),
     cronEnabled: typeof input?.cronEnabled === 'boolean' ? input.cronEnabled : true,
+    destinationAirport: normalizeOptionalText(input?.destinationAirport),
     friends: Array.isArray(input?.friends)
       ? input.friends.map((friend, friendIndex) => normalizeFriendConfig(friend, friendIndex))
       : [],
@@ -308,4 +310,105 @@ export function applyAutoLockedFriendFlights(
     config: nextConfig,
     changed,
   };
+}
+
+/**
+ * Builds the ordered list of unique airport codes from a sequence of flight legs.
+ * Returns [leg[0].from, leg[0].to, leg[1].to, ...], skipping nulls and consecutive duplicates.
+ */
+export function buildAirportChain(legs: FriendFlightLeg[]): string[] {
+  const airports: string[] = [];
+
+  for (let i = 0; i < legs.length; i++) {
+    const leg = legs[i];
+
+    if (i === 0 && leg.from) {
+      airports.push(leg.from.toUpperCase());
+    }
+
+    if (leg.to) {
+      const normalized = leg.to.toUpperCase();
+      if (airports[airports.length - 1] !== normalized) {
+        airports.push(normalized);
+      }
+    }
+  }
+
+  return airports;
+}
+
+/**
+ * Returns only the legs belonging to the friend's "current trip":
+ * either the outbound journey (to the destination) or the return journey,
+ * based on the destination airport and the current time.
+ *
+ * If no destination is configured, all legs are returned as-is.
+ */
+export function getCurrentTripLegs(
+  friend: FriendTravelConfig,
+  statuses: FriendFlightStatus[],
+  destinationAirport: string | null,
+  now = Date.now(),
+): FriendFlightLeg[] {
+  const legs = friend.flights;
+  if (!legs.length) {
+    return legs;
+  }
+
+  const sorted = [...legs].sort((a, b) => {
+    const timeA = Date.parse(a.departureTime) || 0;
+    const timeB = Date.parse(b.departureTime) || 0;
+    return timeA - timeB;
+  });
+
+  if (!destinationAirport) {
+    return sorted;
+  }
+
+  const dest = destinationAirport.toUpperCase().trim();
+
+  // Split sorted legs into trips: each trip ends when a leg arrives at the destination.
+  const trips: FriendFlightLeg[][] = [];
+  let currentTrip: FriendFlightLeg[] = [];
+
+  for (const leg of sorted) {
+    currentTrip.push(leg);
+    if ((leg.to ?? '').toUpperCase().trim() === dest) {
+      trips.push(currentTrip);
+      currentTrip = [];
+    }
+  }
+
+  if (currentTrip.length > 0) {
+    trips.push(currentTrip);
+  }
+
+  if (trips.length <= 1) {
+    return sorted;
+  }
+
+  // Priority 1: any trip containing a currently active (matched) leg.
+  for (const trip of trips) {
+    const hasActiveLeg = trip.some((leg) => {
+      const s = statuses.find((st) => st.leg.id === leg.id);
+      return s?.status === 'matched';
+    });
+    if (hasActiveLeg) {
+      return trip;
+    }
+  }
+
+  // Priority 2: first trip with at least one future leg.
+  for (const trip of trips) {
+    const hasUpcomingLeg = trip.some((leg) => {
+      const dep = Date.parse(leg.departureTime);
+      return !Number.isNaN(dep) && dep > now;
+    });
+    if (hasUpcomingLeg) {
+      return trip;
+    }
+  }
+
+  // All trips are in the past — show the most recent one.
+  return trips[trips.length - 1] ?? sorted;
 }
