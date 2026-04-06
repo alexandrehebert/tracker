@@ -793,14 +793,14 @@ export default function FlightMap3D({
         .backgroundColor('rgba(0,0,0,0)')
         .showGraticules(true)
         .showAtmosphere(true)
-        .atmosphereColor('#3b82f6')
+        .atmosphereColor('#67e8f9')
         .atmosphereAltitude(0.14)
         .polygonsData(features)
         .polygonGeoJsonGeometry((feature: any) => feature.geometry)
         .polygonAltitude(COUNTRY_ALTITUDE)
-        .polygonCapColor(() => 'rgba(30,41,59,0.84)')
-        .polygonSideColor(() => '#0a1628')
-        .polygonStrokeColor(() => 'rgba(203,213,225,0.32)');
+        .polygonCapColor(() => 'rgba(12,38,66,0.84)')
+        .polygonSideColor(() => '#081427')
+        .polygonStrokeColor(() => 'rgba(147,197,253,0.28)');
 
       const globeMaterial = globe.globeMaterial?.();
       if (globeMaterial) {

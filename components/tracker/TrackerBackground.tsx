@@ -1,8 +1,8 @@
 'use client';
 
-const TRACKER_OCEAN_FILL = '#071a31';
+const TRACKER_OCEAN_FILL = '#061729';
 const TRACKER_GRID_IMAGE =
-  'linear-gradient(rgba(203,213,225,0.08) 1px, transparent 1px), linear-gradient(90deg, rgba(203,213,225,0.08) 1px, transparent 1px)';
+  'linear-gradient(rgba(125,211,252,0.09) 1px, transparent 1px), linear-gradient(90deg, rgba(125,211,252,0.09) 1px, transparent 1px)';
 
 interface TrackerBackgroundProps {
   showGrid?: boolean;

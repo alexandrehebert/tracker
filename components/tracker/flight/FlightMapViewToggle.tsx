@@ -11,7 +11,7 @@ interface FlightMapViewToggleProps {
 
 export default function FlightMapViewToggle({ mapView, onChange }: FlightMapViewToggleProps) {
   return (
-    <div className="flex items-center gap-1 rounded-full border border-white/12 bg-slate-950/40 p-1 backdrop-blur-sm">
+    <div className="pointer-events-auto flex items-center gap-1 rounded-full border border-white/12 bg-slate-950/40 p-1 backdrop-blur-sm">
       <button
         type="button"
         onClick={() => onChange('flat')}

@@ -22,12 +22,12 @@ interface FlightMap2DProps {
   emptyOverlayMessage?: string | null;
 }
 
-const OCEAN_FILL = '#071a31';
-const GRID_STROKE = 'rgba(203,213,225,0.08)';
+const OCEAN_FILL = '#061729';
+const GRID_STROKE = 'rgba(125,211,252,0.09)';
 const HALO_PRIMARY = 'rgba(56,189,248,0.18)';
 const HALO_SECONDARY = 'rgba(168,85,247,0.12)';
-const COUNTRY_FILL = 'rgba(30,41,59,0.84)';
-const COUNTRY_STROKE = 'rgba(203,213,225,0.32)';
+const COUNTRY_FILL = 'rgba(12,38,66,0.68)';
+const COUNTRY_STROKE = 'rgba(147,197,253,0.24)';
 const FORECAST_SHADOW_COLOR = 'rgba(8,17,32,0.7)';
 const DEPARTURE_AIRPORT_COLOR = '#f59e0b';
 const AIRPORT_MARKER_COLOR = '#a855f7';
@@ -829,6 +829,11 @@ export default function FlightMap2D({
             <stop offset="38%" stopColor="rgba(168,85,247,0.06)" />
             <stop offset="100%" stopColor="rgba(168,85,247,0)" />
           </radialGradient>
+          <clipPath id="tracker-map-land-clip">
+            {map.countries.map((country) => (
+              <path key={`clip-${country.code}`} d={country.path} />
+            ))}
+          </clipPath>
           <pattern id="tracker-map-grid" width={gridSize} height={gridSize} patternUnits="userSpaceOnUse">
             <path d={`M ${gridSize} 0 L 0 0 0 ${gridSize}`} fill="none" stroke={GRID_STROKE} strokeWidth="1" />
           </pattern>
@@ -870,10 +875,20 @@ export default function FlightMap2D({
               d={country.path}
               fill={COUNTRY_FILL}
               stroke={COUNTRY_STROKE}
-              strokeWidth="0.8"
+              strokeWidth="0.85"
+              strokeLinejoin="round"
               vectorEffect="non-scaling-stroke"
             />
           ))}
+          <rect
+            x={gridBounds.x}
+            y={gridBounds.y}
+            width={gridBounds.width}
+            height={gridBounds.height}
+            fill="url(#tracker-map-grid)"
+            opacity="0.22"
+            clipPath="url(#tracker-map-land-clip)"
+          />
 
           {projectedAirportMarkers.map((airport) => {
             const markerTransform = getFixedSizeTransform(airport.point, mapTransform.k);

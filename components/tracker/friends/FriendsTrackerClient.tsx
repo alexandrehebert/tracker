@@ -146,10 +146,10 @@ function FriendsTrackerTopBar({
         <div className="mt-1 text-xs text-slate-400">Updated {formatDateTimeMillis(lastUpdated, locale)} UTC</div>
       </div>
 
-      <div className="pointer-events-auto flex flex-col items-end gap-2 md:flex-row md:flex-wrap md:items-center md:justify-end">
+      <div className="pointer-events-none flex flex-col items-end gap-2 md:flex-row md:flex-wrap md:items-center md:justify-end">
         <Link
           href="/chantal/config"
-          className="inline-flex h-9 w-9 items-center justify-center gap-2 rounded-full border border-white/12 bg-slate-950/80 p-2 text-sm font-medium text-slate-100 shadow backdrop-blur-sm transition hover:border-white/20 hover:bg-slate-900 lg:w-auto lg:px-3"
+          className="pointer-events-auto inline-flex h-9 w-9 items-center justify-center gap-2 rounded-full border border-white/12 bg-slate-950/80 p-2 text-sm font-medium text-slate-100 shadow backdrop-blur-sm transition hover:border-white/20 hover:bg-slate-900 lg:w-auto lg:px-3"
         >
           <Settings2 className="h-4 w-4 shrink-0" />
           <span className="hidden lg:inline">Config</span>
@@ -159,7 +159,7 @@ function FriendsTrackerTopBar({
         <button
           type="button"
           onClick={onRefresh}
-          className="inline-flex h-9 w-9 items-center justify-center gap-2 rounded-full border border-white/12 bg-slate-950/80 p-2 text-sm font-medium text-slate-100 shadow backdrop-blur-sm transition hover:border-white/20 hover:bg-slate-900 lg:w-auto lg:px-3"
+          className="pointer-events-auto inline-flex h-9 w-9 items-center justify-center gap-2 rounded-full border border-white/12 bg-slate-950/80 p-2 text-sm font-medium text-slate-100 shadow backdrop-blur-sm transition hover:border-white/20 hover:bg-slate-900 lg:w-auto lg:px-3"
         >
           <RefreshCw className={`h-4 w-4 shrink-0 ${isRefreshing ? 'animate-spin' : ''}`} />
           <span className="hidden lg:inline">Refresh</span>
