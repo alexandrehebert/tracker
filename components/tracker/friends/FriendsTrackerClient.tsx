@@ -23,6 +23,7 @@ import {
   getCurrentTripConfig,
   getCurrentTripLegs,
   normalizeFriendsTrackerConfig,
+  parseDestinationAirportCodes,
   type FriendFlightLeg,
   type FriendFlightStatus,
   type FriendsTrackerConfig,
@@ -42,6 +43,7 @@ const AUTO_REFRESH_MS = 60_000;
 const MIN_MAP_LOADING_MS = 2_000;
 const TIMELINE_MIN_SEGMENT_DISTANCE_KM = 600;
 const TIMELINE_FALLBACK_SEGMENT_DISTANCE_KM = 1_200;
+const TIMELINE_RECENT_DEPARTURE_WINDOW_MS = 12 * 60 * 60 * 1000;
 const TIMELINE_NODE_SIZE_PX = 14;
 
 interface FriendsTrackerClientProps {
@@ -234,6 +236,20 @@ function computeTimelineCursorPosition(
   }
 
   if (lastPastLegIndex >= 0) {
+    const hasFutureLeg = currentTripLegs.slice(lastPastLegIndex + 1).some((leg) => {
+      const departureMs = Date.parse(leg.departureTime);
+      return !Number.isNaN(departureMs) && departureMs > now;
+    });
+    const lastPastDepartureMs = Date.parse(currentTripLegs[lastPastLegIndex]!.departureTime);
+
+    if (
+      !hasFutureLeg
+      && !Number.isNaN(lastPastDepartureMs)
+      && now - lastPastDepartureMs <= TIMELINE_RECENT_DEPARTURE_WINDOW_MS
+    ) {
+      return Math.min(lastPastLegIndex + 0.5, currentTripLegs.length - 0.1);
+    }
+
     return lastPastLegIndex + 1;
   }
 
@@ -367,7 +383,9 @@ function FriendTimelineCard({
     ? null
     : `calc(${TIMELINE_NODE_SIZE_PX / 2}px + ${clampedCursorFraction} * (100% - ${TIMELINE_NODE_SIZE_PX}px))`;
 
-  const cursorRotationDegrees = activeLegIndex >= 0 ? 45 : -45;
+  const cursorRotationDegrees = activeLegIndex >= 0 || (cursorRaw != null && Math.abs(cursorRaw % 1) > 0.001)
+    ? 45
+    : -45;
   const cursorIconMode = cursorRaw != null && cursorRaw >= Math.max(airports.length - 1, 0)
     ? 'landing'
     : cursorRaw != null && cursorRaw <= 0
@@ -392,10 +410,11 @@ function FriendTimelineCard({
     ? currentTripLegs[cursorLegIndex]?.flightNumber ?? activeLegFlightNumber
     : activeLegFlightNumber;
 
-  const normalizedDestinationAirport = destinationAirport?.toUpperCase().trim() ?? null;
-  const hasArrivedAtDestination = normalizedDestinationAirport != null
+  const destinationAirports = parseDestinationAirportCodes(destinationAirport);
+  const hasConfiguredDestinationAirports = destinationAirports.length > 0;
+  const hasArrivedAtDestination = hasConfiguredDestinationAirports
     && airports.length > 0
-    && airports[airports.length - 1] === normalizedDestinationAirport
+    && destinationAirports.includes(airports[airports.length - 1] ?? '')
     && cursorRaw != null
     && cursorRaw >= airports.length - 1;
   const hasStartedTrip = currentTripLegs.some((leg) => {
@@ -453,7 +472,7 @@ function FriendTimelineCard({
           <div className="truncate text-sm font-semibold text-white">{friend.name}</div>
           <div className="text-[11px] text-slate-400">
             {currentTripLegs.length} leg{currentTripLegs.length === 1 ? '' : 's'}
-            {destinationAirport ? (
+            {hasConfiguredDestinationAirports ? (
               <span className="ml-1 text-slate-500">
                 · {tripProgressLabel}
               </span>
@@ -480,7 +499,7 @@ function FriendTimelineCard({
             <div className="relative flex items-start">
               {timelineSegments.map((segment, index) => {
                 const airport = airports[index]!;
-                const isDest = destinationAirport != null && airport === destinationAirport.toUpperCase().trim();
+                const isDest = destinationAirports.includes(airport);
                 const isCompleted = activeLegIndex >= 0
                   ? index < completedAirportCount
                   : (cursorRaw != null && index <= cursorRaw);
@@ -536,7 +555,7 @@ function FriendTimelineCard({
 
               {(() => {
                 const finalAirport = airports[airports.length - 1]!;
-                const isDest = destinationAirport != null && finalAirport === destinationAirport.toUpperCase().trim();
+                const isDest = destinationAirports.includes(finalAirport);
                 const isCompleted = activeLegIndex >= 0
                   ? airports.length - 1 < completedAirportCount
                   : (cursorRaw != null && airports.length - 1 <= cursorRaw);
@@ -582,11 +601,13 @@ function FriendTimelineCard({
                   {cursorIconMode === 'takeoff' ? (
                     <PlaneTakeoff
                       className="h-3 w-3 text-cyan-200 drop-shadow-[0_0_4px_rgba(103,232,249,0.75)]"
+                      style={{ transform: 'rotate(-45deg)' }}
                       aria-label={cursorFlightNumber ? `Flight ${cursorFlightNumber} ready for departure` : 'Departure airport'}
                     />
                   ) : cursorIconMode === 'landing' ? (
                     <PlaneLanding
                       className="h-3 w-3 text-cyan-200 drop-shadow-[0_0_4px_rgba(103,232,249,0.75)]"
+                      style={{ transform: 'rotate(-45deg)' }}
                       aria-label={cursorFlightNumber ? `Flight ${cursorFlightNumber} arrived` : 'Arrival airport'}
                     />
                   ) : (

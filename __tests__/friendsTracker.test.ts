@@ -497,4 +497,17 @@ describe('getCurrentTripLegs', () => {
     const result = getCurrentTripLegs(friend, noStatuses, 'MIA', now);
     expect(result).toHaveLength(2);
   });
+
+  it('treats comma-separated airports as valid meeting destinations', () => {
+    const now = Date.UTC(2026, 3, 16, 12, 0);
+    const friend = makeFriend([
+      { id: 'l1', flightNumber: 'AF1', departureTime: '2026-04-14T08:00:00Z', from: 'CDG', to: 'AMS' },
+      { id: 'l2', flightNumber: 'KL1', departureTime: '2026-04-14T12:00:00Z', from: 'AMS', to: 'EWR' },
+      { id: 'l3', flightNumber: 'UA1', departureTime: '2026-04-20T14:00:00Z', from: 'EWR', to: 'CDG' },
+    ]);
+
+    const result = getCurrentTripLegs(friend, noStatuses, 'JFK, EWR', now);
+    expect(result).toHaveLength(1);
+    expect(result[0]?.id).toBe('l3');
+  });
 });

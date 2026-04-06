@@ -698,7 +698,7 @@ export function FriendsConfigClient({
                 <div>
                   <div className="mb-2 flex items-center gap-2 text-xs font-medium uppercase tracking-[0.2em] text-slate-400">
                     <MapPin className="h-3.5 w-3.5" />
-                    Meeting destination
+                    Meeting destination(s)
                   </div>
                   <input
                     value={destinationAirport}
@@ -709,12 +709,12 @@ export function FriendsConfigClient({
                         destinationAirport: nextDestinationAirport,
                       }));
                     }}
-                    placeholder="e.g. MIA, LIS, CDG"
-                    maxLength={10}
+                    placeholder="e.g. JFK, EWR, LGA"
+                    maxLength={64}
                     className="w-full rounded-2xl border border-white/10 bg-slate-950/90 px-3 py-2 text-sm text-slate-100 outline-none transition focus:border-cyan-400/60 focus:ring-2 focus:ring-cyan-500/20"
                   />
                   <p className="mt-2 text-xs text-slate-400">
-                    Match the airport used in each leg&apos;s “To” field, such as `MIA`, `LIS`, or `KMIA`.
+                    Match the airport codes used in each leg&apos;s “To” field, and separate alternatives with commas such as `JFK, EWR` or `MIA, FLL, PBI`.
                   </p>
                 </div>
 

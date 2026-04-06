@@ -60,6 +60,21 @@ function normalizeOptionalText(value: unknown): string | null {
   return typeof value === 'string' && value.trim() ? value.trim() : null;
 }
 
+export function parseDestinationAirportCodes(value: string | null | undefined): string[] {
+  if (typeof value !== 'string') {
+    return [];
+  }
+
+  return Array.from(
+    new Set(
+      value
+        .split(/[\n,;]+/)
+        .map((entry) => entry.trim().toUpperCase())
+        .filter(Boolean),
+    ),
+  );
+}
+
 function normalizeDateTime(value: unknown): string {
   if (typeof value !== 'string') {
     return '';
@@ -669,19 +684,20 @@ export function getCurrentTripLegs(
     return timeA - timeB;
   });
 
-  if (!destinationAirport) {
+  const destinationAirports = parseDestinationAirportCodes(destinationAirport);
+  if (destinationAirports.length === 0) {
     return sorted;
   }
 
-  const dest = destinationAirport.toUpperCase().trim();
-
-  // Split sorted legs into trips: each trip ends when a leg arrives at the destination.
+  // Split sorted legs into trips: each trip ends when a leg arrives at any configured destination airport.
   const trips: FriendFlightLeg[][] = [];
   let currentTrip: FriendFlightLeg[] = [];
 
   for (const leg of sorted) {
     currentTrip.push(leg);
-    if ((leg.to ?? '').toUpperCase().trim() === dest) {
+
+    const arrivalAirport = (leg.to ?? '').toUpperCase().trim();
+    if (arrivalAirport && destinationAirports.includes(arrivalAirport)) {
       trips.push(currentTrip);
       currentTrip = [];
     }
