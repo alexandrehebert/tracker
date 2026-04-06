@@ -1,8 +1,10 @@
 'use client';
 
 import { useLocale } from 'next-intl';
-import { useMemo, useState, type FormEvent } from 'react';
+import { useEffect, useMemo, useState, type FormEvent, type UIEvent } from 'react';
 import type { TrackerCronDashboard, TrackerCronRun, TrackerCronRunStatus } from '~/lib/server/trackerCron';
+
+const HISTORY_PAGE_SIZE = 10;
 
 function formatDateTime(value: number | null, formatter: Intl.DateTimeFormat): string {
   if (!value) {
@@ -164,8 +166,14 @@ export function TrackerCronAdminClient({ initialDashboard }: { initialDashboard:
   const [isRunning, setIsRunning] = useState(false);
   const [activeTokenAction, setActiveTokenAction] = useState<'checking' | 'refreshing' | 'clearing' | 'setting' | 'copying' | null>(null);
   const [notice, setNotice] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
+  const [visibleHistoryCount, setVisibleHistoryCount] = useState(() => Math.min(HISTORY_PAGE_SIZE, initialDashboard.history.length));
 
   const latestRun = useMemo(() => dashboard.history[0] ?? null, [dashboard.history]);
+  const visibleHistory = useMemo(
+    () => dashboard.history.slice(0, visibleHistoryCount),
+    [dashboard.history, visibleHistoryCount],
+  );
+  const hasMoreHistory = visibleHistoryCount < dashboard.history.length;
   const dateTimeFormatter = useMemo(() => new Intl.DateTimeFormat(locale, {
     dateStyle: 'medium',
     timeStyle: 'short',
@@ -418,6 +426,32 @@ export function TrackerCronAdminClient({ initialDashboard }: { initialDashboard:
     }
   }
 
+  useEffect(() => {
+    setVisibleHistoryCount((current) => {
+      const minimumVisible = Math.min(HISTORY_PAGE_SIZE, dashboard.history.length);
+      if (current < minimumVisible) {
+        return minimumVisible;
+      }
+
+      return Math.min(current, dashboard.history.length);
+    });
+  }, [dashboard.history.length]);
+
+  function loadMoreHistory() {
+    setVisibleHistoryCount((current) => Math.min(current + HISTORY_PAGE_SIZE, dashboard.history.length));
+  }
+
+  function handleHistoryScroll(event: UIEvent<HTMLDivElement>) {
+    if (!hasMoreHistory) {
+      return;
+    }
+
+    const { scrollTop, scrollHeight, clientHeight } = event.currentTarget;
+    if (scrollHeight - scrollTop - clientHeight <= 96) {
+      loadMoreHistory();
+    }
+  }
+
   return (
     <div className="space-y-6">
       {!dashboard.mongoConfigured ? (
@@ -631,15 +665,15 @@ export function TrackerCronAdminClient({ initialDashboard }: { initialDashboard:
         <section className="rounded-3xl border border-white/10 bg-slate-900/70 p-5 shadow-[0_18px_50px_rgba(2,6,23,0.25)]">
           <h2 className="text-lg font-semibold text-white">Execution history</h2>
           <p className="mt-1 text-sm text-slate-300">
-            Mongo keeps the full run history. This page shows the most recent {dashboard.history.length} executions.
+            Mongo keeps the full run history. Showing the latest {visibleHistory.length} of {dashboard.history.length} executions{hasMoreHistory ? ' — scroll to the bottom to load 10 more.' : '.'}
           </p>
 
-          <div className="mt-4 space-y-3">
+          <div className="mt-4 max-h-[70vh] space-y-3 overflow-y-auto pr-1" onScroll={handleHistoryScroll}>
             {dashboard.history.length === 0 ? (
               <div className="rounded-2xl border border-dashed border-white/10 bg-slate-950/40 px-4 py-5 text-sm text-slate-400">
                 No cron executions have been recorded yet.
               </div>
-            ) : dashboard.history.map((run) => (
+            ) : visibleHistory.map((run) => (
               <details key={run.id} className="rounded-2xl border border-white/10 bg-slate-950/40 p-4" open={run === latestRun}>
                 <summary className="flex cursor-pointer list-none flex-col gap-2 md:flex-row md:items-center md:justify-between">
                   <div>
@@ -694,6 +728,19 @@ export function TrackerCronAdminClient({ initialDashboard }: { initialDashboard:
               </details>
             ))}
           </div>
+
+          {hasMoreHistory ? (
+            <div className="mt-3 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-white/10 bg-slate-950/40 px-3 py-2 text-xs text-slate-300">
+              <p>Scroll to the bottom to load 10 more executions automatically.</p>
+              <button
+                type="button"
+                onClick={loadMoreHistory}
+                className="inline-flex items-center justify-center rounded-full border border-white/15 bg-white/5 px-3 py-1.5 text-xs font-semibold text-slate-100 transition hover:border-sky-300/60 hover:bg-sky-500/10"
+              >
+                Load 10 more
+              </button>
+            </div>
+          ) : null}
         </section>
       </div>
     </div>

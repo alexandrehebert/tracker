@@ -496,6 +496,8 @@ describe('FriendsTrackerClient', () => {
     expect(screen.getByText(/not started/i)).toBeInTheDocument();
     expect(screen.getByText(/in flight/i)).toBeInTheDocument();
     expect(screen.getByText(/arrived/i)).toBeInTheDocument();
+    expect(screen.getByLabelText(/flight test1 ready for departure/i)).not.toHaveAttribute('style');
+    expect(screen.getByLabelText(/flight test3 arrived/i)).not.toHaveAttribute('style');
 
     const aliceCard = screen.getByText(/alice demo/i).closest('article');
     const chloeCard = screen.getByText(/chloe demo/i).closest('article');
@@ -506,12 +508,12 @@ describe('FriendsTrackerClient', () => {
     expect(alicePlane.parentElement).toHaveStyle({
       left: 'calc(7px + 0 * (100% - 14px))',
     });
-    expect(alicePlane).toHaveStyle({ transform: 'rotate(-45deg)' });
+    expect(alicePlane).not.toHaveAttribute('style');
 
     expect(chloePlane.parentElement).toHaveStyle({
       left: 'calc(7px + 1 * (100% - 14px))',
     });
-    expect(chloePlane).toHaveStyle({ transform: 'rotate(-45deg)' });
+    expect(chloePlane).not.toHaveAttribute('style');
   });
 
   it('anchors a connection-stop cursor directly on the middle airport dot', async () => {

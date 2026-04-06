@@ -601,13 +601,11 @@ function FriendTimelineCard({
                   {cursorIconMode === 'takeoff' ? (
                     <PlaneTakeoff
                       className="h-3 w-3 text-cyan-200 drop-shadow-[0_0_4px_rgba(103,232,249,0.75)]"
-                      style={{ transform: 'rotate(-45deg)' }}
                       aria-label={cursorFlightNumber ? `Flight ${cursorFlightNumber} ready for departure` : 'Departure airport'}
                     />
                   ) : cursorIconMode === 'landing' ? (
                     <PlaneLanding
                       className="h-3 w-3 text-cyan-200 drop-shadow-[0_0_4px_rgba(103,232,249,0.75)]"
-                      style={{ transform: 'rotate(-45deg)' }}
                       aria-label={cursorFlightNumber ? `Flight ${cursorFlightNumber} arrived` : 'Arrival airport'}
                     />
                   ) : (
