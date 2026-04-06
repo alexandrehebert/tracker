@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, type ChangeEvent } from 'react';
 import { useLocale } from 'next-intl';
 import { ArrowDown, ArrowUp, Camera, Clock3, Download, MapPin, PlaneTakeoff, Play, Plus, RefreshCw, Save, Settings2, Trash2, Upload, Users, X } from 'lucide-react';
 import { Link } from '~/i18n/navigation';
+import type { AirportDirectoryResponse } from '~/components/tracker/flight/types';
 import {
   createEmptyFriendConfig,
   createEmptyFriendFlightLeg,
@@ -68,7 +69,134 @@ function moveArrayItem<T>(items: T[], fromIndex: number, toIndex: number): T[] {
   return nextItems;
 }
 
-function toDateTimeLocalValue(value: string): string {
+function normalizeAirportCode(value: string | null | undefined): string {
+  return typeof value === 'string' ? value.trim().toUpperCase() : '';
+}
+
+function buildAirportTimezoneLookup(airports: AirportDirectoryResponse['airports'] | undefined): Record<string, string> {
+  if (!Array.isArray(airports)) {
+    return {};
+  }
+
+  return airports.reduce<Record<string, string>>((lookup, airport) => {
+    const timezone = typeof airport.timezone === 'string' && airport.timezone.trim()
+      ? airport.timezone.trim()
+      : null;
+
+    if (!timezone) {
+      return lookup;
+    }
+
+    for (const code of [airport.code, airport.iata, airport.icao]) {
+      const normalizedCode = normalizeAirportCode(code);
+      if (normalizedCode) {
+        lookup[normalizedCode] = timezone;
+      }
+    }
+
+    return lookup;
+  }, {});
+}
+
+function getAirportSuggestionCode(airport: AirportDirectoryResponse['airports'][number]): string {
+  return normalizeAirportCode(airport.iata ?? airport.icao ?? airport.code);
+}
+
+function formatAirportSuggestionLabel(airport: AirportDirectoryResponse['airports'][number]): string {
+  const code = getAirportSuggestionCode(airport);
+  const label = airport.name ?? airport.city ?? airport.country ?? 'Unknown airport';
+  return `${code} — ${label}`;
+}
+
+function buildAirportSearchValue(airport: AirportDirectoryResponse['airports'][number]): string {
+  return [airport.code, airport.iata, airport.icao, airport.name, airport.city, airport.country, airport.timezone]
+    .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+    .join(' ')
+    .toLowerCase();
+}
+
+function getAirportSuggestions(
+  airports: AirportDirectoryResponse['airports'],
+  value: string | null | undefined,
+  limit = 6,
+): AirportDirectoryResponse['airports'] {
+  const rawSearch = typeof value === 'string' ? value.trim() : '';
+  if (rawSearch.length < 2) {
+    return [];
+  }
+
+  const normalizedCode = normalizeAirportCode(rawSearch);
+  if (normalizedCode === rawSearch && airports.some((airport) => getAirportSuggestionCode(airport) === normalizedCode)) {
+    return [];
+  }
+
+  const normalizedSearch = rawSearch.toLowerCase();
+  return airports
+    .filter((airport) => buildAirportSearchValue(airport).includes(normalizedSearch))
+    .slice(0, limit);
+}
+
+function getFormatterPartMap(date: Date, timeZone: string): Record<string, string> {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone,
+    hour12: false,
+    hourCycle: 'h23',
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+  }).formatToParts(date).reduce<Record<string, string>>((parts, part) => {
+    if (part.type !== 'literal') {
+      parts[part.type] = part.value;
+    }
+
+    return parts;
+  }, {});
+}
+
+function parseDateTimeLocalParts(value: string): {
+  year: number;
+  month: number;
+  day: number;
+  hour: number;
+  minute: number;
+} | null {
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})$/.exec(value);
+  if (!match) {
+    return null;
+  }
+
+  const [, year, month, day, hour, minute] = match;
+  return {
+    year: Number(year),
+    month: Number(month),
+    day: Number(day),
+    hour: Number(hour),
+    minute: Number(minute),
+  };
+}
+
+function getTimeZoneOffsetMs(date: Date, timeZone: string): number | null {
+  try {
+    const parts = getFormatterPartMap(date, timeZone);
+    const zonedTime = Date.UTC(
+      Number(parts.year),
+      Number(parts.month) - 1,
+      Number(parts.day),
+      Number(parts.hour),
+      Number(parts.minute),
+      Number(parts.second),
+    );
+
+    return zonedTime - date.getTime();
+  } catch {
+    return null;
+  }
+}
+
+function toDateTimeLocalValue(value: string, timeZone?: string | null): string {
   if (!value) {
     return '';
   }
@@ -78,13 +206,50 @@ function toDateTimeLocalValue(value: string): string {
     return '';
   }
 
+  if (timeZone) {
+    try {
+      const parts = getFormatterPartMap(new Date(parsedTime), timeZone);
+      return `${parts.year}-${parts.month}-${parts.day}T${parts.hour}:${parts.minute}`;
+    } catch {
+      // Fall back to the browser timezone when the airport timezone is unavailable.
+    }
+  }
+
   const date = new Date(parsedTime);
   const timezoneOffsetMs = date.getTimezoneOffset() * 60_000;
   return new Date(parsedTime - timezoneOffsetMs).toISOString().slice(0, 16);
 }
 
-function fromDateTimeLocalValue(value: string): string {
-  return value ? new Date(value).toISOString() : '';
+function fromDateTimeLocalValue(value: string, timeZone?: string | null): string {
+  if (!value) {
+    return '';
+  }
+
+  if (!timeZone) {
+    const parsedTime = Date.parse(value);
+    return Number.isNaN(parsedTime) ? '' : new Date(parsedTime).toISOString();
+  }
+
+  const parts = parseDateTimeLocalParts(value);
+  if (!parts) {
+    return '';
+  }
+
+  const utcGuess = Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute, 0, 0);
+  const initialOffset = getTimeZoneOffsetMs(new Date(utcGuess), timeZone);
+
+  if (initialOffset == null) {
+    const parsedTime = Date.parse(value);
+    return Number.isNaN(parsedTime) ? '' : new Date(parsedTime).toISOString();
+  }
+
+  let resolvedTime = utcGuess - initialOffset;
+  const adjustedOffset = getTimeZoneOffsetMs(new Date(resolvedTime), timeZone);
+  if (adjustedOffset != null && adjustedOffset !== initialOffset) {
+    resolvedTime = utcGuess - adjustedOffset;
+  }
+
+  return new Date(resolvedTime).toISOString();
 }
 
 function formatDateTime(value: number | null, locale: string): string {
@@ -214,6 +379,8 @@ export function FriendsConfigClient({
   const [notice, setNotice] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [jsonNotice, setJsonNotice] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [hasHydrated, setHasHydrated] = useState(false);
+  const [airportDirectory, setAirportDirectory] = useState<AirportDirectoryResponse['airports']>([]);
+  const [airportTimezones, setAirportTimezones] = useState<Record<string, string>>({});
   const [lastSavedAt, setLastSavedAt] = useState<number | null>(normalizedConfig.updatedAt);
   const [savedSnapshot, setSavedSnapshot] = useState(() => buildSaveableConfigSnapshot({
     ...normalizedConfig,
@@ -286,6 +453,40 @@ export function FriendsConfigClient({
 
   useEffect(() => {
     setHasHydrated(true);
+  }, []);
+
+  useEffect(() => {
+    let isCancelled = false;
+
+    void (async () => {
+      try {
+        const response = await fetch('/api/airports', { cache: 'force-cache' });
+        const payload = await response.json() as Partial<AirportDirectoryResponse> & { error?: string };
+
+        if (!response.ok || isCancelled) {
+          return;
+        }
+
+        const airports = Array.isArray(payload.airports) ? payload.airports : [];
+        const nextLookup = buildAirportTimezoneLookup(airports);
+        setAirportDirectory(airports);
+
+        if (Object.keys(nextLookup).length === 0) {
+          return;
+        }
+
+        setAirportTimezones((currentLookup) => ({
+          ...currentLookup,
+          ...nextLookup,
+        }));
+      } catch {
+        // Ignore airport directory issues here and keep the local-time fallback.
+      }
+    })();
+
+    return () => {
+      isCancelled = true;
+    };
   }, []);
 
   useEffect(() => {
@@ -1016,8 +1217,13 @@ export function FriendsConfigClient({
             </div>
 
             <div className="mt-4 space-y-3">
-              {friend.flights.map((leg, legIndex) => (
-                <div key={leg.id} className="rounded-2xl border border-white/10 bg-slate-950/70 p-4">
+              {friend.flights.map((leg, legIndex) => {
+                const departureTimezone = airportTimezones[normalizeAirportCode(leg.from)] ?? null;
+                const fromSuggestions = getAirportSuggestions(airportDirectory, leg.from);
+                const toSuggestions = getAirportSuggestions(airportDirectory, leg.to);
+
+                return (
+                  <div key={leg.id} className="rounded-2xl border border-white/10 bg-slate-950/70 p-4">
                   <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
                     <div className="flex items-center gap-2 text-sm font-semibold text-white">
                       <PlaneTakeoff className="h-4 w-4 text-sky-300" />
@@ -1086,9 +1292,10 @@ export function FriendsConfigClient({
                       <div className="relative">
                         <input
                           type="datetime-local"
-                          value={hasHydrated ? toDateTimeLocalValue(leg.departureTime) : ''}
+                          aria-label={`Estimated departure for leg ${legIndex + 1}`}
+                          value={hasHydrated ? toDateTimeLocalValue(leg.departureTime, departureTimezone) : ''}
                           onChange={(event) => {
-                            const departureTime = fromDateTimeLocalValue(event.target.value);
+                            const departureTime = fromDateTimeLocalValue(event.target.value, departureTimezone);
                             updateFriend(friend.id, (currentFriend) => ({
                               ...currentFriend,
                               flights: currentFriend.flights.map((currentLeg) => currentLeg.id === leg.id
@@ -1106,13 +1313,21 @@ export function FriendsConfigClient({
                           />
                         ) : null}
                       </div>
+                      <p className={`mt-1.5 text-xs ${departureTimezone ? 'text-slate-500' : leg.from ? 'text-amber-200/80' : 'text-slate-500'}`}>
+                        {departureTimezone
+                          ? `Uses ${departureTimezone} for ${normalizeAirportCode(leg.from)}.`
+                          : leg.from
+                            ? `Timezone for ${normalizeAirportCode(leg.from)} is unavailable, so this field falls back to your local time.`
+                            : 'Enter the local time at the departure airport for accurate display and cron timing.'}
+                      </p>
                     </div>
-                    <div>
+                    <div className="relative">
                       <label className="mb-2 block text-xs font-medium uppercase tracking-[0.2em] text-slate-400">From</label>
                       <input
+                        aria-label={`From airport for leg ${legIndex + 1}`}
                         value={leg.from ?? ''}
                         onChange={(event) => {
-                          const from = event.target.value;
+                          const from = event.target.value.toUpperCase();
                           updateFriend(friend.id, (currentFriend) => ({
                             ...currentFriend,
                             flights: currentFriend.flights.map((currentLeg) => currentLeg.id === leg.id
@@ -1121,15 +1336,62 @@ export function FriendsConfigClient({
                           }));
                         }}
                         placeholder="CDG"
+                        autoComplete="off"
+                        aria-autocomplete="list"
                         className="w-full rounded-2xl border border-white/10 bg-slate-950/90 px-3 py-2 text-sm text-slate-100 outline-none transition focus:border-cyan-400/60 focus:ring-2 focus:ring-cyan-500/20"
                       />
+                      {fromSuggestions.length > 0 ? (
+                        <div
+                          role="listbox"
+                          aria-label={`Departure airport suggestions for leg ${legIndex + 1}`}
+                          className="absolute z-10 mt-1 max-h-44 w-full overflow-y-auto rounded-2xl border border-white/10 bg-slate-950/95 p-1 shadow-lg shadow-slate-950/40"
+                        >
+                          {fromSuggestions.map((airport) => {
+                            const suggestionCode = getAirportSuggestionCode(airport);
+                            const location = [airport.city, airport.country].filter(Boolean).join(', ');
+
+                            return (
+                              <div
+                                key={`from-${leg.id}-${suggestionCode}`}
+                                role="option"
+                                tabIndex={0}
+                                aria-selected={normalizeAirportCode(leg.from) === suggestionCode}
+                                onClick={() => {
+                                  updateFriend(friend.id, (currentFriend) => ({
+                                    ...currentFriend,
+                                    flights: currentFriend.flights.map((currentLeg) => currentLeg.id === leg.id
+                                      ? { ...currentLeg, from: suggestionCode }
+                                      : currentLeg),
+                                  }));
+                                }}
+                                onKeyDown={(event) => {
+                                  if (event.key === 'Enter' || event.key === ' ') {
+                                    event.preventDefault();
+                                    updateFriend(friend.id, (currentFriend) => ({
+                                      ...currentFriend,
+                                      flights: currentFriend.flights.map((currentLeg) => currentLeg.id === leg.id
+                                        ? { ...currentLeg, from: suggestionCode }
+                                        : currentLeg),
+                                    }));
+                                  }
+                                }}
+                                className="flex cursor-pointer flex-col rounded-xl px-3 py-2 text-left text-sm text-slate-100 transition hover:bg-slate-900 focus:bg-slate-900 focus:outline-none"
+                              >
+                                <span>{formatAirportSuggestionLabel(airport)}</span>
+                                {location ? <span className="text-[11px] text-slate-400">{location}</span> : null}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      ) : null}
                     </div>
-                    <div>
+                    <div className="relative">
                       <label className="mb-2 block text-xs font-medium uppercase tracking-[0.2em] text-slate-400">To</label>
                       <input
+                        aria-label={`To airport for leg ${legIndex + 1}`}
                         value={leg.to ?? ''}
                         onChange={(event) => {
-                          const to = event.target.value;
+                          const to = event.target.value.toUpperCase();
                           updateFriend(friend.id, (currentFriend) => ({
                             ...currentFriend,
                             flights: currentFriend.flights.map((currentLeg) => currentLeg.id === leg.id
@@ -1138,8 +1400,54 @@ export function FriendsConfigClient({
                           }));
                         }}
                         placeholder="LIS"
+                        autoComplete="off"
+                        aria-autocomplete="list"
                         className="w-full rounded-2xl border border-white/10 bg-slate-950/90 px-3 py-2 text-sm text-slate-100 outline-none transition focus:border-cyan-400/60 focus:ring-2 focus:ring-cyan-500/20"
                       />
+                      {toSuggestions.length > 0 ? (
+                        <div
+                          role="listbox"
+                          aria-label={`Arrival airport suggestions for leg ${legIndex + 1}`}
+                          className="absolute z-10 mt-1 max-h-44 w-full overflow-y-auto rounded-2xl border border-white/10 bg-slate-950/95 p-1 shadow-lg shadow-slate-950/40"
+                        >
+                          {toSuggestions.map((airport) => {
+                            const suggestionCode = getAirportSuggestionCode(airport);
+                            const location = [airport.city, airport.country].filter(Boolean).join(', ');
+
+                            return (
+                              <div
+                                key={`to-${leg.id}-${suggestionCode}`}
+                                role="option"
+                                tabIndex={0}
+                                aria-selected={normalizeAirportCode(leg.to) === suggestionCode}
+                                onClick={() => {
+                                  updateFriend(friend.id, (currentFriend) => ({
+                                    ...currentFriend,
+                                    flights: currentFriend.flights.map((currentLeg) => currentLeg.id === leg.id
+                                      ? { ...currentLeg, to: suggestionCode }
+                                      : currentLeg),
+                                  }));
+                                }}
+                                onKeyDown={(event) => {
+                                  if (event.key === 'Enter' || event.key === ' ') {
+                                    event.preventDefault();
+                                    updateFriend(friend.id, (currentFriend) => ({
+                                      ...currentFriend,
+                                      flights: currentFriend.flights.map((currentLeg) => currentLeg.id === leg.id
+                                        ? { ...currentLeg, to: suggestionCode }
+                                        : currentLeg),
+                                    }));
+                                  }
+                                }}
+                                className="flex cursor-pointer flex-col rounded-xl px-3 py-2 text-left text-sm text-slate-100 transition hover:bg-slate-900 focus:bg-slate-900 focus:outline-none"
+                              >
+                                <span>{formatAirportSuggestionLabel(airport)}</span>
+                                {location ? <span className="text-[11px] text-slate-400">{location}</span> : null}
+                              </div>
+                            );
+                          })}
+                        </div>
+                      ) : null}
                     </div>
                     <div>
                       <label className="mb-2 block text-xs font-medium uppercase tracking-[0.2em] text-slate-400">Note</label>
@@ -1182,7 +1490,8 @@ export function FriendsConfigClient({
                     </div>
                   ) : null}
                 </div>
-              ))}
+                );
+              })}
 
               <button
                 type="button"
