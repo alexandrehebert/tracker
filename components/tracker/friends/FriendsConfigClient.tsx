@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, type ChangeEvent } from 'react';
 import { useLocale } from 'next-intl';
-import { ArrowDown, ArrowRight, ArrowUp, Camera, Clock3, Download, MapPin, PlaneTakeoff, Play, Plus, RefreshCw, Save, Settings2, Trash2, Upload, Users, X } from 'lucide-react';
+import { ArrowDown, ArrowUp, Camera, Clock3, Download, MapPin, PlaneTakeoff, Play, Plus, RefreshCw, Save, Settings2, Trash2, Upload, Users, X } from 'lucide-react';
 import { Link } from '~/i18n/navigation';
 import {
   createEmptyFriendConfig,
@@ -177,6 +177,19 @@ function ToggleSwitch({
   );
 }
 
+function getCronDashboardChantalIdentifiers(dashboard: TrackerCronDashboard): string[] {
+  return Array.isArray(dashboard.config.chantalIdentifiers) ? dashboard.config.chantalIdentifiers : [];
+}
+
+function getCronDashboardManualIdentifiers(dashboard: TrackerCronDashboard): string[] {
+  if (Array.isArray(dashboard.config.manualIdentifiers)) {
+    return dashboard.config.manualIdentifiers;
+  }
+
+  const chantalIdentifiers = new Set(getCronDashboardChantalIdentifiers(dashboard));
+  return dashboard.config.identifiers.filter((identifier) => !chantalIdentifiers.has(identifier));
+}
+
 export function FriendsConfigClient({
   initialConfig,
   initialCronDashboard,
@@ -193,18 +206,19 @@ export function FriendsConfigClient({
   const [trips, setTrips] = useState(normalizedConfig.trips ?? []);
   const [currentTripId, setCurrentTripId] = useState<string | null>(normalizedConfig.currentTripId ?? initialCurrentTrip?.id ?? null);
   const [selectedTripId, setSelectedTripId] = useState<string | null>(normalizedConfig.currentTripId ?? initialCurrentTrip?.id ?? normalizedConfig.trips?.[0]?.id ?? null);
-  const [cronEnabled, setCronEnabled] = useState(normalizedConfig.cronEnabled ?? initialCronDashboard.config.enabled);
+  const [cronEnabled, setCronEnabled] = useState(normalizedConfig.cronEnabled ?? true);
   const [cronDashboard, setCronDashboard] = useState(initialCronDashboard);
   const [isSaving, setIsSaving] = useState(false);
   const [isSavingCronToggle, setIsSavingCronToggle] = useState(false);
   const [isRunningCron, setIsRunningCron] = useState(false);
   const [notice, setNotice] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [jsonNotice, setJsonNotice] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [hasHydrated, setHasHydrated] = useState(false);
   const [lastSavedAt, setLastSavedAt] = useState<number | null>(normalizedConfig.updatedAt);
   const [savedSnapshot, setSavedSnapshot] = useState(() => buildSaveableConfigSnapshot({
     ...normalizedConfig,
     currentTripId: normalizedConfig.currentTripId ?? initialCurrentTrip?.id ?? normalizedConfig.trips?.[0]?.id ?? null,
-    cronEnabled: normalizedConfig.cronEnabled ?? initialCronDashboard.config.enabled,
+    cronEnabled: normalizedConfig.cronEnabled ?? true,
     trips: normalizedConfig.trips ?? [],
   }, demoReferenceTime));
   const [tripPendingRemovalId, setTripPendingRemovalId] = useState<string | null>(null);
@@ -228,7 +242,6 @@ export function FriendsConfigClient({
     }
 
     setCronDashboard(payload);
-    setCronEnabled(payload.config.enabled);
     return payload;
   }
 
@@ -335,16 +348,26 @@ export function FriendsConfigClient({
       cronEnabled: normalizedNextConfig.cronEnabled ?? true,
       trips: nextTrips,
     }, demoReferenceTime));
-    setCronDashboard((currentDashboard) => ({
-      ...currentDashboard,
-      config: {
-        ...currentDashboard.config,
-        enabled: normalizedNextConfig.cronEnabled ?? true,
-        identifiers: extractFriendTrackerIdentifiers(normalizedNextConfig),
-        updatedAt: normalizedNextConfig.updatedAt,
-        updatedBy: normalizedNextConfig.updatedBy,
-      },
-    }));
+
+    const nextChantalIdentifiers = normalizedNextConfig.cronEnabled === false
+      ? []
+      : extractFriendTrackerIdentifiers(normalizedNextConfig);
+
+    setCronDashboard((currentDashboard) => {
+      const manualIdentifiers = getCronDashboardManualIdentifiers(currentDashboard);
+
+      return {
+        ...currentDashboard,
+        config: {
+          ...currentDashboard.config,
+          identifiers: Array.from(new Set([...manualIdentifiers, ...nextChantalIdentifiers])),
+          manualIdentifiers,
+          chantalIdentifiers: nextChantalIdentifiers,
+          updatedAt: normalizedNextConfig.updatedAt,
+          updatedBy: normalizedNextConfig.updatedBy,
+        },
+      };
+    });
 
     return normalizedNextConfig;
   }
@@ -376,7 +399,9 @@ export function FriendsConfigClient({
       await refreshCronDashboard();
       setNotice({
         type: 'success',
-        text: `Background prefetch cron ${nextConfig.cronEnabled ?? nextValue ? 'enabled' : 'disabled'} and saved.`,
+        text: nextConfig.cronEnabled ?? nextValue
+          ? 'Chantal batch enabled and added to the shared cron list.'
+          : 'Chantal batch disabled and removed from the shared cron list.',
       });
     } catch (error) {
       setCronEnabled(previousValue);
@@ -427,6 +452,8 @@ export function FriendsConfigClient({
   }
 
   function handleExport() {
+    setJsonNotice(null);
+
     try {
       const exportPayload = buildExportPayload();
       const blob = new Blob([JSON.stringify(exportPayload, null, 2)], { type: 'application/json' });
@@ -439,9 +466,9 @@ export function FriendsConfigClient({
       link.click();
       URL.revokeObjectURL(objectUrl);
 
-      setNotice({ type: 'success', text: 'JSON export downloaded successfully.' });
+      setJsonNotice({ type: 'success', text: 'JSON export downloaded successfully.' });
     } catch (error) {
-      setNotice({
+      setJsonNotice({
         type: 'error',
         text: error instanceof Error ? error.message : 'Unable to export the friends tracker config.',
       });
@@ -455,6 +482,8 @@ export function FriendsConfigClient({
     if (!file) {
       return;
     }
+
+    setJsonNotice(null);
 
     try {
       const rawText = await file.text();
@@ -479,12 +508,12 @@ export function FriendsConfigClient({
       setSelectedTripId(importedConfig.currentTripId ?? importedTrips[0]?.id ?? null);
       setCronEnabled(importedConfig.cronEnabled ?? true);
       setLastSavedAt(importedConfig.updatedAt);
-      setNotice({
+      setJsonNotice({
         type: 'success',
         text: `Imported ${importedTripCount} trip${importedTripCount === 1 ? '' : 's'} from JSON. Click “Save config” to persist it.`,
       });
     } catch (error) {
-      setNotice({
+      setJsonNotice({
         type: 'error',
         text: error instanceof Error ? error.message : 'Unable to import the JSON config.',
       });
@@ -519,7 +548,12 @@ export function FriendsConfigClient({
       }
 
       applySavedConfig(payload);
-      setNotice({ type: 'success', text: 'Friends tracker config saved and synced to the background prefetch cron.' });
+      setNotice({
+        type: 'success',
+        text: payload.cronEnabled === false
+          ? 'Friends tracker config saved. This Chantal batch remains excluded from the shared cron list.'
+          : 'Friends tracker config saved and synced to the shared cron list.',
+      });
     } catch (error) {
       setNotice({
         type: 'error',
@@ -547,21 +581,6 @@ export function FriendsConfigClient({
               </p>
             </div>
 
-            <div className="flex flex-wrap gap-2 text-xs text-slate-300">
-              <span className="rounded-full border border-white/10 bg-slate-900/80 px-3 py-1.5">
-                Editing: <span className="font-semibold text-white">{selectedTrip?.name ?? 'No trip selected'}</span>
-              </span>
-              <span className="rounded-full border border-white/10 bg-slate-900/80 px-3 py-1.5">
-                Live map: <span className="font-semibold text-white">{currentTrip?.name ?? '—'}</span>
-              </span>
-              <span className="rounded-full border border-white/10 bg-slate-900/80 px-3 py-1.5">
-                Last saved (UTC): <span className="font-semibold text-white">{formatDateTime(lastSavedAt, locale)}</span>
-              </span>
-            </div>
-
-            <div className="rounded-2xl border border-cyan-400/20 bg-cyan-500/10 px-4 py-3 text-xs text-cyan-50">
-              Changes stay local until you click <span className="font-semibold">Save config</span> in the sticky bar below.
-            </div>
           </div>
 
           <div className="grid gap-2 sm:grid-cols-2 xl:min-w-[22rem]">
@@ -572,17 +591,10 @@ export function FriendsConfigClient({
               className="hidden"
               onChange={handleImport}
             />
-            <Link
-              href="/chantal"
-              className="inline-flex w-full items-center justify-center gap-2 rounded-full border border-white/12 bg-slate-950/80 px-4 py-2 text-sm font-medium text-slate-100 transition hover:border-white/20 hover:bg-slate-900"
-            >
-              <ArrowRight className="h-4 w-4" />
-              Preview map
-            </Link>
             <button
               type="button"
               onClick={() => fileInputRef.current?.click()}
-              className="inline-flex w-full items-center justify-center gap-2 rounded-full border border-white/12 bg-slate-950/80 px-4 py-2 text-sm font-medium text-slate-100 transition hover:border-white/20 hover:bg-slate-900"
+              className="inline-flex w-full items-center justify-center gap-2 rounded-full border border-white/12 bg-slate-950/80 px-4 py-2 text-sm font-medium text-slate-100 transition hover:border-white/20 hover:bg-slate-900 sm:col-span-2"
             >
               <Upload className="h-4 w-4" />
               Import JSON
@@ -595,6 +607,82 @@ export function FriendsConfigClient({
               <Download className="h-4 w-4" />
               Export current JSON
             </button>
+            {jsonNotice ? (
+              <div
+                className={`sm:col-span-2 rounded-2xl border px-3 py-2 text-xs ${jsonNotice.type === 'success'
+                  ? 'border-emerald-400/30 bg-emerald-500/10 text-emerald-100'
+                  : 'border-rose-400/30 bg-rose-500/10 text-rose-100'}`}
+              >
+                {jsonNotice.text}
+              </div>
+            ) : null}
+          </div>
+        </div>
+      </section>
+
+      <section className="rounded-3xl border border-white/10 bg-slate-950/55 p-4 backdrop-blur-sm sm:p-5">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div>
+            <div className="flex items-center gap-2 text-sky-200">
+              <Clock3 className="h-4 w-4" />
+              <p className="text-xs uppercase tracking-[0.24em]">Background prefetch cron</p>
+            </div>
+            <p className="mt-3 max-w-3xl text-sm text-slate-300">
+              This toggle only adds or removes the current Chantal trip from the shared cron list. The global cron on/off switch stays on the full cron admin page, while itinerary edits still wait for “Save config”.
+            </p>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2">
+            <ToggleSwitch
+              checked={cronEnabled}
+              onToggle={handleCronToggle}
+              label="Enable or disable syncing the Chantal trip into the shared cron list"
+              disabled={isSaving || isSavingCronToggle}
+              pending={isSavingCronToggle}
+            />
+            <button
+              type="button"
+              onClick={handleRunCronNow}
+              disabled={isRunningCron || trackedIdentifiers.length === 0}
+              className="inline-flex w-full items-center justify-center gap-2 rounded-full border border-white/12 bg-slate-950/80 px-4 py-2 text-sm font-medium text-slate-100 transition hover:border-white/20 hover:bg-slate-900 disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto"
+            >
+              {isRunningCron ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
+              {isRunningCron ? 'Running…' : 'Run now'}
+            </button>
+            <Link
+              href="/tracker/cron"
+              className="inline-flex w-full items-center justify-center gap-2 rounded-full border border-sky-400/40 bg-sky-500/10 px-4 py-2 text-sm font-medium text-sky-100 transition hover:bg-sky-500/20 sm:w-auto"
+            >
+              Full cron admin
+            </Link>
+          </div>
+        </div>
+
+        {!cronDashboard.mongoConfigured ? (
+          <div className="mt-4 rounded-2xl border border-amber-400/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
+            MongoDB is not configured, so cron state and history cannot be persisted.
+          </div>
+        ) : null}
+
+        <div className="mt-4 grid gap-3 md:grid-cols-3">
+          <div className="rounded-2xl border border-white/10 bg-slate-950/70 p-3 text-sm text-slate-200">
+            <div className="text-xs uppercase tracking-[0.2em] text-slate-400">Schedule</div>
+            <div className="mt-1 font-semibold text-white">Every 15 minutes</div>
+            <div className="mt-1 text-xs text-slate-400">{cronDashboard.config.schedule}</div>
+          </div>
+          <div className="rounded-2xl border border-white/10 bg-slate-950/70 p-3 text-sm text-slate-200">
+            <div className="text-xs uppercase tracking-[0.2em] text-slate-400">Tracked identifiers</div>
+            <div className="mt-1 font-semibold text-white">{trackedIdentifiers.length}</div>
+            <div className="mt-1 text-xs text-slate-400">
+              {cronEnabled
+                ? `Currently syncing ${currentTrip?.name ?? 'the selected trip'} into the shared cron list.`
+                : 'This Chantal batch is currently excluded from the shared cron list.'}
+            </div>
+          </div>
+          <div className="rounded-2xl border border-white/10 bg-slate-950/70 p-3 text-sm text-slate-200">
+            <div className="text-xs uppercase tracking-[0.2em] text-slate-400">Latest run</div>
+            <div className="mt-1 font-semibold text-white">{formatDateTime(latestCronRun?.startedAt ?? null, locale)}</div>
+            <div className="mt-1 text-xs text-slate-400">{latestCronRun ? latestCronRun.status : 'No runs yet'}</div>
           </div>
         </div>
       </section>
@@ -774,8 +862,8 @@ export function FriendsConfigClient({
       </section>
 
       <section className="sticky top-3 z-20 rounded-2xl border border-white/10 bg-slate-950/90 p-3 shadow-lg shadow-slate-950/25 backdrop-blur">
-        <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-          <div>
+        <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+          <div className="space-y-2">
             <p className="text-sm font-semibold text-white">
               {notice ? (notice.type === 'success' ? 'Update ready' : 'Please review this message') : 'Ready to publish your changes?'}
             </p>
@@ -786,9 +874,21 @@ export function FriendsConfigClient({
               : 'text-slate-400'}`}
             >
               {notice?.text ?? (hasPendingChanges
-                ? 'Saving syncs the selected live trip, meeting airport, and shared cron identifiers used by the tracker.'
+                ? 'Changes stay local until you click Save config. Saving also syncs the selected live trip, meeting airport, and shared cron identifiers used by the tracker.'
                 : 'All changes are already saved. Make any edit to enable Save config.')}
             </p>
+
+            <div className="flex flex-wrap gap-2 text-xs text-slate-300">
+              <span className="rounded-full border border-white/10 bg-slate-900/80 px-3 py-1.5">
+                Editing: <span className="font-semibold text-white">{selectedTrip?.name ?? 'No trip selected'}</span>
+              </span>
+              <span className="rounded-full border border-white/10 bg-slate-900/80 px-3 py-1.5">
+                Live map: <span className="font-semibold text-white">{currentTrip?.name ?? '—'}</span>
+              </span>
+              <span className="rounded-full border border-white/10 bg-slate-900/80 px-3 py-1.5">
+                Last saved (UTC): <span className="font-semibold text-white">{formatDateTime(lastSavedAt, locale)}</span>
+              </span>
+            </div>
           </div>
 
           <button
@@ -1101,71 +1201,6 @@ export function FriendsConfigClient({
           </section>
         ))}
       </div>
-
-      <section className="rounded-3xl border border-white/10 bg-slate-950/55 p-4 backdrop-blur-sm sm:p-5">
-        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
-          <div>
-            <div className="flex items-center gap-2 text-sky-200">
-              <Clock3 className="h-4 w-4" />
-              <p className="text-xs uppercase tracking-[0.24em]">Background prefetch cron</p>
-            </div>
-            <p className="mt-3 max-w-3xl text-sm text-slate-300">
-              This stays separate from trip editing so the itinerary builder remains focused. Toggling the cron saves immediately, while itinerary edits still wait for “Save config”.
-            </p>
-          </div>
-
-          <div className="flex flex-wrap items-center gap-2">
-            <ToggleSwitch
-              checked={cronEnabled}
-              onToggle={handleCronToggle}
-              label="Enable or disable the Chantal background prefetch cron"
-              disabled={isSaving || isSavingCronToggle}
-              pending={isSavingCronToggle}
-            />
-            <button
-              type="button"
-              onClick={handleRunCronNow}
-              disabled={isRunningCron || trackedIdentifiers.length === 0}
-              className="inline-flex w-full items-center justify-center gap-2 rounded-full border border-white/12 bg-slate-950/80 px-4 py-2 text-sm font-medium text-slate-100 transition hover:border-white/20 hover:bg-slate-900 disabled:cursor-not-allowed disabled:opacity-60 sm:w-auto"
-            >
-              {isRunningCron ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
-              {isRunningCron ? 'Running…' : 'Run now'}
-            </button>
-            <Link
-              href="/tracker/cron"
-              className="inline-flex w-full items-center justify-center gap-2 rounded-full border border-sky-400/40 bg-sky-500/10 px-4 py-2 text-sm font-medium text-sky-100 transition hover:bg-sky-500/20 sm:w-auto"
-            >
-              Full cron admin
-            </Link>
-          </div>
-        </div>
-
-        {!cronDashboard.mongoConfigured ? (
-          <div className="mt-4 rounded-2xl border border-amber-400/40 bg-amber-500/10 px-4 py-3 text-sm text-amber-100">
-            MongoDB is not configured, so cron state and history cannot be persisted.
-          </div>
-        ) : null}
-
-        <div className="mt-4 grid gap-3 md:grid-cols-3">
-          <div className="rounded-2xl border border-white/10 bg-slate-950/70 p-3 text-sm text-slate-200">
-            <div className="text-xs uppercase tracking-[0.2em] text-slate-400">Schedule</div>
-            <div className="mt-1 font-semibold text-white">Every 15 minutes</div>
-            <div className="mt-1 text-xs text-slate-400">{cronDashboard.config.schedule}</div>
-          </div>
-          <div className="rounded-2xl border border-white/10 bg-slate-950/70 p-3 text-sm text-slate-200">
-            <div className="text-xs uppercase tracking-[0.2em] text-slate-400">Tracked identifiers</div>
-            <div className="mt-1 font-semibold text-white">{trackedIdentifiers.length}</div>
-            <div className="mt-1 text-xs text-slate-400">
-              {cronEnabled ? `Currently tracking ${currentTrip?.name ?? 'the selected trip'}.` : 'Cron currently paused.'}
-            </div>
-          </div>
-          <div className="rounded-2xl border border-white/10 bg-slate-950/70 p-3 text-sm text-slate-200">
-            <div className="text-xs uppercase tracking-[0.2em] text-slate-400">Latest run</div>
-            <div className="mt-1 font-semibold text-white">{formatDateTime(latestCronRun?.startedAt ?? null, locale)}</div>
-            <div className="mt-1 text-xs text-slate-400">{latestCronRun ? latestCronRun.status : 'No runs yet'}</div>
-          </div>
-        </div>
-      </section>
 
       {tripPendingRemoval ? (
         <div

@@ -35,12 +35,6 @@ export default async function ChantalConfigPage({ params }: ChantalConfigPagePro
           >
             ← Back to Chantal map
           </Link>
-          <Link
-            href="/tracker/cron"
-            className="inline-flex items-center rounded-full border border-sky-400/40 bg-sky-500/10 px-3 py-1.5 text-sm text-sky-100 transition hover:bg-sky-500/20"
-          >
-            Prefetch cron admin
-          </Link>
         </div>
 
         <div className="mt-5">

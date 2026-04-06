@@ -59,6 +59,8 @@ const initialCronDashboard: TrackerCronDashboard = {
   config: {
     enabled: true,
     identifiers: ['AF123', 'KL641'],
+    manualIdentifiers: ['AF123', 'KL641'],
+    chantalIdentifiers: [],
     schedule: '*/15 * * * *',
     updatedAt: null,
     updatedBy: null,

@@ -235,7 +235,7 @@ describe('tracker cron config and history', () => {
     expect(dashboard.config.updatedBy).toBe('toggle-only');
   });
 
-  it('preserves the saved cron toggle when Chantal map updates only the friend list', async () => {
+  it('preserves the saved Chantal batch toggle when the map updates only the friend list', async () => {
     const { readFriendsTrackerConfig, writeFriendsTrackerConfig } = await loadFriendsTrackerModule();
 
     await writeFriendsTrackerConfig({
@@ -278,6 +278,52 @@ describe('tracker cron config and history', () => {
 
     const persisted = await readFriendsTrackerConfig();
     expect(persisted.cronEnabled).toBe(false);
+  });
+
+  it('adds and removes Chantal-managed identifiers without changing the cron admin toggle', async () => {
+    const { getTrackerCronDashboard, writeTrackerCronConfig } = await loadTrackerCronModule();
+    const { writeFriendsTrackerConfig } = await loadFriendsTrackerModule();
+
+    await writeTrackerCronConfig({
+      identifiers: ['BA117'],
+      enabled: false,
+      updatedBy: 'tracker/cron admin page',
+    });
+
+    await writeFriendsTrackerConfig({
+      updatedBy: 'chantal config page',
+      cronEnabled: true,
+      friends: [
+        {
+          id: 'friend-1',
+          name: 'Alice',
+          flights: [
+            {
+              id: 'leg-1',
+              flightNumber: 'AF123',
+              departureTime: '2026-04-14T09:30:00.000Z',
+            },
+          ],
+        },
+      ],
+    });
+
+    const enabledBatchDashboard = await getTrackerCronDashboard();
+    expect(enabledBatchDashboard.config.enabled).toBe(false);
+    expect(enabledBatchDashboard.config.identifiers).toEqual(['BA117', 'AF123']);
+    expect(enabledBatchDashboard.config.manualIdentifiers).toEqual(['BA117']);
+    expect(enabledBatchDashboard.config.chantalIdentifiers).toEqual(['AF123']);
+
+    await writeFriendsTrackerConfig({
+      updatedBy: 'chantal cron toggle',
+      cronEnabled: false,
+    });
+
+    const disabledBatchDashboard = await getTrackerCronDashboard();
+    expect(disabledBatchDashboard.config.enabled).toBe(false);
+    expect(disabledBatchDashboard.config.identifiers).toEqual(['BA117']);
+    expect(disabledBatchDashboard.config.manualIdentifiers).toEqual(['BA117']);
+    expect(disabledBatchDashboard.config.chantalIdentifiers).toEqual([]);
   });
 
   it('preserves the saved friends when the Chantal cron toggle is saved on its own', async () => {

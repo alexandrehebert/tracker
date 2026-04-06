@@ -19,6 +19,8 @@ export type TrackerCronFlightStatus = 'matched' | 'not-found' | 'error';
 export interface TrackerCronConfig {
   enabled: boolean;
   identifiers: string[];
+  manualIdentifiers: string[];
+  chantalIdentifiers: string[];
   schedule: string;
   updatedAt: number | null;
   updatedBy: string | null;
@@ -75,6 +77,8 @@ type TrackerCronRunDocument = TrackerCronRun & {
 const DEFAULT_CONFIG: TrackerCronConfig = {
   enabled: true,
   identifiers: [],
+  manualIdentifiers: [],
+  chantalIdentifiers: [],
   schedule: TRACKER_CRON_SCHEDULE,
   updatedAt: null,
   updatedBy: null,
@@ -120,9 +124,19 @@ export function normalizeTrackerCronIdentifiers(input: string | string[] | null 
 }
 
 function normalizeTrackerCronConfig(config: Partial<TrackerCronConfig> | null | undefined): TrackerCronConfig {
+  const mergedIdentifiers = normalizeTrackerCronIdentifiers(config?.identifiers ?? []);
+  const chantalIdentifiers = normalizeTrackerCronIdentifiers(config?.chantalIdentifiers ?? []);
+  const manualIdentifiers = normalizeTrackerCronIdentifiers(
+    config?.manualIdentifiers?.length
+      ? config.manualIdentifiers
+      : mergedIdentifiers.filter((identifier) => !chantalIdentifiers.includes(identifier)),
+  );
+
   return {
     enabled: config?.enabled ?? DEFAULT_CONFIG.enabled,
-    identifiers: normalizeTrackerCronIdentifiers(config?.identifiers ?? []),
+    identifiers: Array.from(new Set([...manualIdentifiers, ...chantalIdentifiers])),
+    manualIdentifiers,
+    chantalIdentifiers,
     schedule: typeof config?.schedule === 'string' && config.schedule.trim()
       ? config.schedule.trim()
       : TRACKER_CRON_SCHEDULE,
@@ -326,18 +340,28 @@ export async function readTrackerCronConfig(): Promise<TrackerCronConfig> {
 
 export async function writeTrackerCronConfig(input: {
   identifiers?: string | string[] | null;
+  manualIdentifiers?: string | string[] | null;
+  chantalIdentifiers?: string | string[] | null;
   enabled?: boolean;
   updatedBy?: string | null;
 }): Promise<TrackerCronConfig> {
   const currentConfig = await readTrackerCronConfig();
+  const nextManualIdentifiers = input.manualIdentifiers == null
+    ? input.identifiers == null
+      ? currentConfig.manualIdentifiers
+      : normalizeTrackerCronIdentifiers(input.identifiers)
+    : normalizeTrackerCronIdentifiers(input.manualIdentifiers);
+  const nextChantalIdentifiers = input.chantalIdentifiers == null
+    ? currentConfig.chantalIdentifiers
+    : normalizeTrackerCronIdentifiers(input.chantalIdentifiers);
   const nextConfig = normalizeTrackerCronConfig({
     ...currentConfig,
     enabled: input.enabled ?? currentConfig.enabled,
-    identifiers: input.identifiers == null
-      ? currentConfig.identifiers
-      : normalizeTrackerCronIdentifiers(input.identifiers),
+    identifiers: [...nextManualIdentifiers, ...nextChantalIdentifiers],
+    manualIdentifiers: nextManualIdentifiers,
+    chantalIdentifiers: nextChantalIdentifiers,
     updatedAt: Date.now(),
-    updatedBy: typeof input.updatedBy === 'string' ? input.updatedBy.trim() : null,
+    updatedBy: typeof input.updatedBy === 'string' ? input.updatedBy.trim() : currentConfig.updatedBy,
   });
 
   const collection = await getTrackerCronConfigCollection();

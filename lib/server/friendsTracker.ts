@@ -5,9 +5,10 @@ import {
   extractFriendTrackerIdentifiers,
   getCurrentTripConfig,
   normalizeFriendsTrackerConfig,
+  normalizeFriendsTrackerTripConfig,
   type FriendsTrackerConfig,
 } from '~/lib/friendsTracker';
-import { readTrackerCronConfig, writeTrackerCronConfig } from './trackerCron';
+import { writeTrackerCronConfig } from './trackerCron';
 
 const DEFAULT_DB_NAME = 'tracker';
 const FRIENDS_TRACKER_CONFIG_COLLECTION_NAME = 'friends_tracker_config';
@@ -89,10 +90,9 @@ async function getFriendsTrackerConfigCollection(): Promise<Collection<FriendsTr
 
 async function syncFriendsTrackerCron(config: FriendsTrackerConfig): Promise<void> {
   try {
-    const identifiers = extractFriendTrackerIdentifiers(config);
+    const identifiers = config.cronEnabled === false ? [] : extractFriendTrackerIdentifiers(config);
     await writeTrackerCronConfig({
-      identifiers,
-      enabled: typeof config.cronEnabled === 'boolean' ? config.cronEnabled : true,
+      chantalIdentifiers: identifiers,
       updatedBy: config.updatedBy ?? 'chantal-config',
     });
   } catch (error) {
@@ -101,36 +101,24 @@ async function syncFriendsTrackerCron(config: FriendsTrackerConfig): Promise<voi
 }
 
 export async function readFriendsTrackerConfig(): Promise<FriendsTrackerConfig> {
-  const [collection, trackerCronConfig] = await Promise.all([
-    getFriendsTrackerConfigCollection(),
-    readTrackerCronConfig(),
-  ]);
+  const collection = await getFriendsTrackerConfigCollection();
 
   if (!collection) {
-    return normalizeFriendsTrackerConfig({
-      ...DEFAULT_CONFIG,
-      cronEnabled: trackerCronConfig.enabled,
-    });
+    return normalizeFriendsTrackerConfig(DEFAULT_CONFIG);
   }
 
   try {
     const document = await collection.findOne({ _id: 'default' } as Parameters<typeof collection.findOne>[0]);
-    return normalizeFriendsTrackerConfig({
-      ...document,
-      cronEnabled: trackerCronConfig.enabled,
-    });
+    return normalizeFriendsTrackerConfig(document ?? DEFAULT_CONFIG);
   } catch (error) {
     logMongoWarning(error);
-    return normalizeFriendsTrackerConfig({
-      ...DEFAULT_CONFIG,
-      cronEnabled: trackerCronConfig.enabled,
-    });
+    return normalizeFriendsTrackerConfig(DEFAULT_CONFIG);
   }
 }
 
 export async function writeFriendsTrackerConfig(input: Partial<FriendsTrackerConfig> | null | undefined): Promise<FriendsTrackerConfig> {
   const currentConfig = await readFriendsTrackerConfig();
-  const requestedCurrentTripId = typeof input?.currentTripId === 'string' && input.currentTripId.trim()
+  let requestedCurrentTripId = typeof input?.currentTripId === 'string' && input.currentTripId.trim()
     ? input.currentTripId.trim()
     : input?.currentTripId === null
     ? null
@@ -145,16 +133,30 @@ export async function writeFriendsTrackerConfig(input: Partial<FriendsTrackerCon
       currentTripId: requestedCurrentTripId,
       trips: currentConfig.trips,
     });
-    const currentTrip = getCurrentTripConfig(baseConfig);
+    const existingCurrentTrip = getCurrentTripConfig(baseConfig);
+    const editableTrip = existingCurrentTrip && !existingCurrentTrip.isDemo
+      ? existingCurrentTrip
+      : (baseConfig.trips.find((trip) => !trip.isDemo) ?? null);
 
-    if (currentTrip) {
-      nextTrips = baseConfig.trips.map((trip) => trip.id === currentTrip.id
+    if (editableTrip) {
+      nextTrips = baseConfig.trips.map((trip) => trip.id === editableTrip.id
         ? {
           ...trip,
           destinationAirport: destinationAirportProvided ? input?.destinationAirport ?? null : trip.destinationAirport,
           friends: Array.isArray(input?.friends) ? input.friends : trip.friends,
         }
         : trip);
+      requestedCurrentTripId = editableTrip.id;
+    } else {
+      const seededTrip = normalizeFriendsTrackerTripConfig({
+        id: 'primary-trip',
+        name: 'Main trip',
+        destinationAirport: destinationAirportProvided ? input?.destinationAirport ?? null : null,
+        friends: Array.isArray(input?.friends) ? input.friends : [],
+      }, 0, 'Main trip');
+
+      nextTrips = [seededTrip];
+      requestedCurrentTripId = seededTrip.id;
     }
   }
 

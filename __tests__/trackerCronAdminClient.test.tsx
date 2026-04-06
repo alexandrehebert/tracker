@@ -43,11 +43,13 @@ function createRun(index: number): TrackerCronRun {
   };
 }
 
-const initialDashboard: TrackerCronDashboard = {
+const initialDashboard = {
   mongoConfigured: true,
   config: {
     enabled: true,
-    identifiers: ['AF123'],
+    identifiers: ['AF123', 'TEST1', 'TEST2'],
+    manualIdentifiers: ['AF123'],
+    chantalIdentifiers: ['TEST1', 'TEST2'],
     schedule: '*/15 * * * *',
     updatedAt: null,
     updatedBy: null,
@@ -66,9 +68,20 @@ const initialDashboard: TrackerCronDashboard = {
     expiresInMs: null,
     isExpired: false,
   },
-};
+} as TrackerCronDashboard;
 
 describe('TrackerCronAdminClient', () => {
+  it('shows Chantal-managed flights separately from the editable manual list', () => {
+    render(<TrackerCronAdminClient initialDashboard={initialDashboard} />);
+
+    expect(screen.getByLabelText(/manual flight identifiers/i)).toHaveValue('AF123');
+    expect(screen.getByText(/managed by \/chantal/i)).toBeInTheDocument();
+
+    const chantalTextarea = screen.getByLabelText(/chantal-managed flight identifiers/i);
+    expect(chantalTextarea).toHaveValue('TEST1\nTEST2');
+    expect(chantalTextarea).toHaveAttribute('readonly');
+  });
+
   it('shows execution history in batches of 10 and lets the user load more', async () => {
     const user = userEvent.setup();
     const { container } = render(<TrackerCronAdminClient initialDashboard={initialDashboard} />);

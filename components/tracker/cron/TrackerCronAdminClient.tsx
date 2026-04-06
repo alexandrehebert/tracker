@@ -153,10 +153,23 @@ function ToggleSwitch({
   );
 }
 
+function getChantalIdentifiers(config: TrackerCronDashboard['config']): string[] {
+  return Array.isArray(config.chantalIdentifiers) ? config.chantalIdentifiers : [];
+}
+
+function getManualIdentifiers(config: TrackerCronDashboard['config']): string[] {
+  if (Array.isArray(config.manualIdentifiers)) {
+    return config.manualIdentifiers;
+  }
+
+  const chantalIdentifiers = new Set(getChantalIdentifiers(config));
+  return config.identifiers.filter((identifier) => !chantalIdentifiers.has(identifier));
+}
+
 export function TrackerCronAdminClient({ initialDashboard }: { initialDashboard: TrackerCronDashboard }) {
   const locale = useLocale();
   const [dashboard, setDashboard] = useState(initialDashboard);
-  const [identifiersInput, setIdentifiersInput] = useState(initialDashboard.config.identifiers.join('\n'));
+  const [identifiersInput, setIdentifiersInput] = useState(getManualIdentifiers(initialDashboard.config).join('\n'));
   const [enabled, setEnabled] = useState(initialDashboard.config.enabled);
   const [manualToken, setManualToken] = useState('');
   const [manualTokenExpirySeconds, setManualTokenExpirySeconds] = useState('1800');
@@ -169,6 +182,8 @@ export function TrackerCronAdminClient({ initialDashboard }: { initialDashboard:
   const [visibleHistoryCount, setVisibleHistoryCount] = useState(() => Math.min(HISTORY_PAGE_SIZE, initialDashboard.history.length));
 
   const latestRun = useMemo(() => dashboard.history[0] ?? null, [dashboard.history]);
+  const manualIdentifiers = useMemo(() => getManualIdentifiers(dashboard.config), [dashboard.config]);
+  const chantalIdentifiers = useMemo(() => getChantalIdentifiers(dashboard.config), [dashboard.config]);
   const visibleHistory = useMemo(
     () => dashboard.history.slice(0, visibleHistoryCount),
     [dashboard.history, visibleHistoryCount],
@@ -195,7 +210,7 @@ export function TrackerCronAdminClient({ initialDashboard }: { initialDashboard:
     }
 
     setDashboard(payload);
-    setIdentifiersInput(payload.config.identifiers.join('\n'));
+    setIdentifiersInput(getManualIdentifiers(payload.config).join('\n'));
     setEnabled(payload.config.enabled);
     return payload;
   }
@@ -479,7 +494,9 @@ export function TrackerCronAdminClient({ initialDashboard }: { initialDashboard:
         <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
           <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Tracked flights</p>
           <p className="mt-2 text-lg font-semibold text-white">{dashboard.config.identifiers.length}</p>
-          <p className="mt-1 text-sm text-slate-300">Saved identifiers that the cron will refresh.</p>
+          <p className="mt-1 text-sm text-slate-300">
+            {manualIdentifiers.length} manual{chantalIdentifiers.length > 0 ? ` · ${chantalIdentifiers.length} from /chantal` : ''}
+          </p>
         </div>
         <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
           <p className="text-xs uppercase tracking-[0.2em] text-slate-400">Latest run (UTC)</p>
@@ -500,7 +517,7 @@ export function TrackerCronAdminClient({ initialDashboard }: { initialDashboard:
               <div>
                 <h2 className="text-lg font-semibold text-white">Cron flight list</h2>
                 <p className="mt-1 text-sm text-slate-300">
-                  Enter one callsign or ICAO24 per line. These identifiers are fetched every 15 minutes and refreshed into Mongo.
+                  Enter the manual callsigns or ICAO24 values you want to track. Flights synced from `/chantal` stay separate below and cannot be edited here.
                 </p>
               </div>
               <ToggleSwitch
@@ -513,7 +530,7 @@ export function TrackerCronAdminClient({ initialDashboard }: { initialDashboard:
             </div>
 
             <label className="mt-4 block text-sm font-medium text-slate-200" htmlFor="tracker-cron-identifiers">
-              Flight identifiers
+              Manual flight identifiers
             </label>
             <textarea
               id="tracker-cron-identifiers"
@@ -522,6 +539,21 @@ export function TrackerCronAdminClient({ initialDashboard }: { initialDashboard:
               placeholder={'AF123\nBA117\n3c675a'}
               className="mt-2 min-h-56 w-full rounded-2xl border border-white/10 bg-slate-950 px-3 py-3 font-mono text-sm text-slate-100 outline-none transition focus:border-sky-400/60"
             />
+
+            {chantalIdentifiers.length > 0 ? (
+              <div className="mt-4 rounded-2xl border border-cyan-400/30 bg-cyan-500/10 p-4">
+                <div className="text-xs uppercase tracking-[0.2em] text-cyan-100">Managed by /chantal</div>
+                <p className="mt-1 text-sm text-cyan-50">
+                  This batch is synced automatically from the Chantal page. Disable it there if you want these entries removed from the shared cron list.
+                </p>
+                <textarea
+                  readOnly
+                  aria-label="Chantal-managed flight identifiers"
+                  value={chantalIdentifiers.join('\n')}
+                  className="mt-3 min-h-24 w-full rounded-2xl border border-cyan-400/20 bg-slate-950 px-3 py-3 font-mono text-sm text-cyan-50 outline-none"
+                />
+              </div>
+            ) : null}
 
             <div className="mt-4 flex flex-wrap gap-3">
               <button
