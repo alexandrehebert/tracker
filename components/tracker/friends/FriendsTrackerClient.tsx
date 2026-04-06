@@ -8,6 +8,8 @@ import {
   Globe,
   Map as MapIcon,
   Plane,
+  PlaneLanding,
+  PlaneTakeoff,
   RefreshCw,
   Settings2,
   Users,
@@ -307,6 +309,11 @@ function FriendTimelineCard({
     : `calc(${TIMELINE_NODE_SIZE_PX / 2}px + ${clampedCursorFraction} * (100% - ${TIMELINE_NODE_SIZE_PX}px))`;
 
   const cursorRotationDegrees = activeLegIndex >= 0 ? 45 : -45;
+  const cursorIconMode = cursorRaw != null && cursorRaw >= Math.max(airports.length - 1, 0)
+    ? 'landing'
+    : cursorRaw != null && cursorRaw <= 0
+    ? 'takeoff'
+    : 'plane';
 
   // Last seen: latest lastContact among all matched legs for this friend.
   const lastContactSeconds = friendStatuses.reduce<number | null>((best, s) => {
@@ -513,11 +520,23 @@ function FriendTimelineCard({
                     transition: 'left 0.5s ease',
                   }}
                 >
-                  <Plane
-                    className="h-3 w-3 text-cyan-200 drop-shadow-[0_0_4px_rgba(103,232,249,0.75)]"
-                    style={{ transform: `rotate(${cursorRotationDegrees}deg)` }}
-                    aria-label={cursorFlightNumber ? `Flight ${cursorFlightNumber}` : 'Current position'}
-                  />
+                  {cursorIconMode === 'takeoff' ? (
+                    <PlaneTakeoff
+                      className="h-3 w-3 text-cyan-200 drop-shadow-[0_0_4px_rgba(103,232,249,0.75)]"
+                      aria-label={cursorFlightNumber ? `Flight ${cursorFlightNumber} ready for departure` : 'Departure airport'}
+                    />
+                  ) : cursorIconMode === 'landing' ? (
+                    <PlaneLanding
+                      className="h-3 w-3 text-cyan-200 drop-shadow-[0_0_4px_rgba(103,232,249,0.75)]"
+                      aria-label={cursorFlightNumber ? `Flight ${cursorFlightNumber} arrived` : 'Arrival airport'}
+                    />
+                  ) : (
+                    <Plane
+                      className="h-3 w-3 text-cyan-200 drop-shadow-[0_0_4px_rgba(103,232,249,0.75)]"
+                      style={{ transform: `rotate(${cursorRotationDegrees}deg)` }}
+                      aria-label={cursorFlightNumber ? `Flight ${cursorFlightNumber}` : 'Current position'}
+                    />
+                  )}
                 </div>
               )}
             </div>
