@@ -32,7 +32,7 @@ import { TrackerLayoutProvider, useTrackerLayout } from '../contexts/TrackerLayo
 import FlightMap from '../flight/FlightMap';
 import { FlightMapProvider } from '../flight/contexts/FlightMapProvider';
 import FlightMapViewToggle, { type TrackerMapView } from '../flight/FlightMapViewToggle';
-import type { FlightMapAirportMarker, TrackerApiResponse, TrackedFlight } from '../flight/types';
+import type { FlightMapAirportMarker, FriendAvatarInfo, FriendAvatarMarker, TrackerApiResponse, TrackedFlight } from '../flight/types';
 
 const AUTO_REFRESH_MS = 60_000;
 const MIN_MAP_LOADING_MS = 2_000;
@@ -416,6 +416,71 @@ function FriendsTrackerDashboard({
     ) satisfies Record<string, string>;
   }, [statuses]);
 
+  const flightColorIndexMap = useMemo(() => {
+    return new Map(
+      statuses
+        .filter((status) => status.flight)
+        .map((status, index) => [status.flight!.icao24, index]),
+    );
+  }, [statuses]);
+
+  const flightAvatars = useMemo<Record<string, FriendAvatarInfo[]>>(() => {
+    const result: Record<string, FriendAvatarInfo[]> = {};
+
+    for (const status of statuses) {
+      if (!status.flight) {
+        continue;
+      }
+
+      const icao24 = status.flight.icao24;
+      const colorIndex = flightColorIndexMap.get(icao24) ?? 0;
+
+      if (!result[icao24]) {
+        result[icao24] = [];
+      }
+
+      result[icao24]!.push({
+        friendId: status.friend.id,
+        name: status.friend.name || status.label,
+        avatarUrl: status.friend.avatarUrl ?? null,
+        color: getFlightMapColor(colorIndex, false),
+      });
+    }
+
+    return result;
+  }, [statuses, flightColorIndexMap]);
+
+  const staticFriendMarkers = useMemo<FriendAvatarMarker[]>(() => {
+    const seen = new Set<string>();
+    return statuses
+      .filter((status) => !status.flight && status.leg.from)
+      .flatMap((status, index) => {
+        if (seen.has(status.friend.id)) {
+          return [];
+        }
+
+        const airportCode = status.leg.from?.trim().toUpperCase() ?? '';
+        const airportMarker = airportMarkers.find(
+          (m) => m.code.toUpperCase() === airportCode,
+        );
+
+        if (!airportMarker) {
+          return [];
+        }
+
+        seen.add(status.friend.id);
+
+        return [{
+          id: status.friend.id,
+          name: status.friend.name || status.label,
+          avatarUrl: status.friend.avatarUrl ?? null,
+          color: getFlightMapColor(index, false),
+          latitude: airportMarker.latitude,
+          longitude: airportMarker.longitude,
+        } satisfies FriendAvatarMarker];
+      });
+  }, [statuses, airportMarkers]);
+
   const runSearch = useCallback(async (
     options: {
       background?: boolean;
@@ -611,6 +676,8 @@ function FriendsTrackerDashboard({
             selectedIcao24={null}
             selectionMode="all"
             flightLabels={flightLabels}
+            flightAvatars={flightAvatars}
+            staticFriendMarkers={staticFriendMarkers}
             airportMarkers={airportMarkers}
             emptyOverlayMessage={null}
             onInitialZoomEnd={onMapReady}

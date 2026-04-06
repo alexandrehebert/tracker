@@ -17,6 +17,7 @@ export interface FriendFlightLeg {
 export interface FriendTravelConfig {
   id: string;
   name: string;
+  avatarUrl?: string | null;
   flights: FriendFlightLeg[];
 }
 
@@ -100,6 +101,7 @@ export function createEmptyFriendConfig(): FriendTravelConfig {
   return {
     id: '',
     name: '',
+    avatarUrl: null,
     flights: [createEmptyFriendFlightLeg()],
   };
 }
@@ -137,6 +139,7 @@ export function normalizeFriendConfig(
   return {
     id: typeof input?.id === 'string' && input.id.trim() ? input.id.trim() : getFallbackId('friend', friendIndex),
     name: typeof input?.name === 'string' && input.name.trim() ? input.name.trim() : `Friend ${friendIndex + 1}`,
+    avatarUrl: typeof input?.avatarUrl === 'string' && input.avatarUrl ? input.avatarUrl : null,
     flights,
   };
 }
