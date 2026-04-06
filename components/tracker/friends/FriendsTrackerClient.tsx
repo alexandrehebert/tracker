@@ -3,33 +3,34 @@
 import { useLocale } from 'next-intl';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  CalendarClock,
   CircleAlert,
   Clock3,
-  Gauge,
   Globe,
   Map as MapIcon,
   Plane,
   RefreshCw,
-  Route,
   Settings2,
   Users,
 } from 'lucide-react';
 import { Link } from '~/i18n/navigation';
 import {
   applyAutoLockedFriendFlights,
+  buildAirportChain,
   buildFriendFlightStatuses,
   extractFriendTrackerIdentifiers,
+  getCurrentTripLegs,
   normalizeFriendsTrackerConfig,
+  type FriendFlightLeg,
   type FriendFlightStatus,
   type FriendsTrackerConfig,
+  type FriendTravelConfig,
 } from '~/lib/friendsTracker';
 import type { WorldMapPayload } from '~/lib/server/worldMap';
 import TrackerShell from '../TrackerShell';
 import TrackerZoomControls from '../TrackerZoomControls';
 import { TrackerLayoutProvider, useTrackerLayout } from '../contexts/TrackerLayoutContext';
-import { getFlightMapColor } from '../flight/colors';
 import FlightMap from '../flight/FlightMap';
+import { getFlightMapColor } from '../flight/colors';
 import { FlightMapProvider } from '../flight/contexts/FlightMapProvider';
 import FlightMapViewToggle, { type TrackerMapView } from '../flight/FlightMapViewToggle';
 import type { FlightMapAirportMarker, FriendAvatarInfo, FriendAvatarMarker, TrackerApiResponse, TrackedFlight } from '../flight/types';
@@ -82,36 +83,234 @@ function formatDateTimeMillis(timestampMs: number | null, locale: string): strin
   }).format(timestampMs);
 }
 
-function formatScheduledDateTime(value: string, locale: string): string {
-  if (!value) {
-    return 'Time not set';
+function getFriendInitials(name: string): string {
+  const parts = name.trim().split(/\s+/);
+  if (parts.length >= 2) {
+    return `${parts[0]![0]}${parts[parts.length - 1]![0]}`.toUpperCase();
   }
-
-  const parsedTime = Date.parse(value);
-  if (Number.isNaN(parsedTime)) {
-    return value;
-  }
-
-  return new Intl.DateTimeFormat(locale, {
-    dateStyle: 'medium',
-    timeStyle: 'short',
-    timeZone: 'UTC',
-  }).format(parsedTime);
+  return name.slice(0, 2).toUpperCase() || '?';
 }
 
-function formatSpeed(value: number | null): string {
-  return value == null ? '—' : `${Math.round(value * 3.6).toLocaleString()} km/h`;
+/**
+ * Estimates the cursor position (0 = first airport, airports.length - 1 = last airport)
+ * for a friend's current trip timeline based on live flight data.
+ */
+function computeTimelineCursorPosition(
+  currentTripLegs: FriendFlightLeg[],
+  friendStatuses: FriendFlightStatus[],
+  now: number,
+): number | null {
+  if (!currentTripLegs.length) {
+    return null;
+  }
+
+  // Find the first active (matched) leg in the current trip.
+  for (let i = 0; i < currentTripLegs.length; i++) {
+    const leg = currentTripLegs[i]!;
+    const status = friendStatuses.find((s) => s.leg.id === leg.id);
+
+    if (status?.status !== 'matched' || !status.flight) {
+      continue;
+    }
+
+    const flight = status.flight;
+    // Estimate progress within the leg using firstSeen → lastContact timestamps.
+    const firstSeenMs = flight.route.firstSeen != null ? flight.route.firstSeen * 1000 : null;
+    const lastSeenMs = flight.route.lastSeen != null ? flight.route.lastSeen * 1000 : null;
+
+    let progress = 0.5; // default: mid-flight
+    if (firstSeenMs != null && lastSeenMs != null && lastSeenMs > firstSeenMs) {
+      progress = Math.min(Math.max((now - firstSeenMs) / (lastSeenMs - firstSeenMs), 0.1), 0.9);
+    }
+
+    // Cursor position: leg index i maps to airport segment [i, i+1].
+    return i + progress;
+  }
+
+  // No active leg — derive position from departure times.
+  // Find the last leg whose departure is in the past.
+  let lastPastLegIndex = -1;
+  for (let i = 0; i < currentTripLegs.length; i++) {
+    const dep = Date.parse(currentTripLegs[i]!.departureTime);
+    if (!Number.isNaN(dep) && dep <= now) {
+      lastPastLegIndex = i;
+    }
+  }
+
+  if (lastPastLegIndex >= 0) {
+    // Cursor at the arrival airport of the last completed leg (= airport index lastPastLegIndex + 1).
+    return lastPastLegIndex + 1;
+  }
+
+  return null;
 }
 
-function getStatusClasses(status: FriendFlightStatus['status']) {
-  switch (status) {
-    case 'matched':
-      return 'bg-emerald-500/20 text-emerald-100';
-    case 'scheduled':
-      return 'bg-sky-500/20 text-sky-100';
-    default:
-      return 'bg-amber-500/20 text-amber-100';
-  }
+function FriendTimelineCard({
+  friend,
+  friendStatuses,
+  destinationAirport,
+  now,
+}: {
+  friend: FriendTravelConfig;
+  friendStatuses: FriendFlightStatus[];
+  destinationAirport: string | null;
+  now: number;
+}) {
+  const currentTripLegs = getCurrentTripLegs(friend, friendStatuses, destinationAirport, now);
+  const airports = buildAirportChain(currentTripLegs);
+  const cursorRaw = computeTimelineCursorPosition(currentTripLegs, friendStatuses, now);
+
+  const numSegments = Math.max(airports.length - 1, 1);
+  const cursorFraction = cursorRaw != null ? cursorRaw / numSegments : null;
+
+  // Determine how many airports are "completed" (friend has already passed through them).
+  // Airport at index j is completed if leg j-1 is done and not currently active.
+  const activeLegIndex = currentTripLegs.findIndex((leg) => {
+    const s = friendStatuses.find((st) => st.leg.id === leg.id);
+    return s?.status === 'matched';
+  });
+
+  const completedAirportCount = activeLegIndex >= 0
+    ? activeLegIndex // airports 0..activeLegIndex-1 are fully done; activeLegIndex is departure of current leg
+    : (cursorRaw != null ? Math.floor(cursorRaw) : 0);
+
+  // Last seen: latest lastContact among all matched legs for this friend.
+  const lastContactSeconds = friendStatuses.reduce<number | null>((best, s) => {
+    const contact = s.flight?.lastContact ?? null;
+    if (contact == null) return best;
+    return best == null || contact > best ? contact : best;
+  }, null);
+
+  // Active leg flight number to show next to cursor.
+  const activeLegFlightNumber = activeLegIndex >= 0
+    ? currentTripLegs[activeLegIndex]?.flightNumber ?? null
+    : null;
+
+  const initials = getFriendInitials(friend.name);
+  const hasAnyMatch = friendStatuses.some((s) => s.status === 'matched');
+
+  return (
+    <article className="rounded-2xl border border-white/10 bg-slate-950/55 p-3">
+      {/* Header row: avatar + name + last seen */}
+      <div className="flex items-center gap-3">
+        {/* Avatar placeholder */}
+        <div
+          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-white/15 bg-slate-800 text-[11px] font-bold uppercase tracking-wide text-slate-300"
+          aria-label={`Avatar for ${friend.name}`}
+        >
+          {initials}
+        </div>
+
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-sm font-semibold text-white">{friend.name}</div>
+          <div className="text-[11px] text-slate-400">
+            {currentTripLegs.length} leg{currentTripLegs.length === 1 ? '' : 's'}
+            {destinationAirport ? (
+              <span className="ml-1 text-slate-500">
+                · {activeLegIndex >= 0 ? 'in flight' : (cursorRaw != null && cursorRaw >= airports.length - 1 && airports[airports.length - 1] === destinationAirport ? 'arrived' : 'outbound')}
+              </span>
+            ) : null}
+          </div>
+        </div>
+
+        {lastContactSeconds != null ? (
+          <div className="flex shrink-0 items-center gap-1 text-[11px] text-slate-400">
+            <Clock3 className="h-3 w-3" />
+            <span>{formatRelativeSeconds(lastContactSeconds)}</span>
+          </div>
+        ) : (
+          <div className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold ${hasAnyMatch ? 'bg-emerald-500/20 text-emerald-200' : 'bg-slate-700/60 text-slate-400'}`}>
+            {hasAnyMatch ? 'live' : 'awaiting'}
+          </div>
+        )}
+      </div>
+
+      {/* Horizontal timeline */}
+      {airports.length >= 2 ? (
+        <div className="mt-3 px-1">
+          <div className="relative">
+            {/* Base track line */}
+            <div className="absolute top-[7px] left-0 right-0 h-px bg-slate-700" />
+
+            {/* Completed track (colored portion up to cursor) */}
+            {cursorFraction != null && (
+              <div
+                className="absolute top-[7px] left-0 h-px bg-cyan-500/70 transition-all duration-500"
+                style={{ width: `${Math.min(cursorFraction * 100, 100)}%` }}
+              />
+            )}
+
+            {/* Airport nodes */}
+            <div className="relative flex items-start justify-between">
+              {airports.map((airport, i) => {
+                const isDest = destinationAirport != null && airport === destinationAirport.toUpperCase().trim();
+                const isCompleted = i < completedAirportCount;
+                const isActive = i === completedAirportCount && activeLegIndex >= 0;
+                return (
+                  <div key={`${airport}-${i}`} className="flex flex-col items-center" style={{ minWidth: 0 }}>
+                    <div
+                      className={`h-3.5 w-3.5 rounded-full border transition-colors ${
+                        isDest
+                          ? 'border-amber-400 bg-amber-400/80 shadow-sm shadow-amber-400/40'
+                          : isCompleted || isActive
+                          ? 'border-cyan-400 bg-cyan-400'
+                          : 'border-slate-500 bg-slate-800'
+                      }`}
+                    />
+                    <span
+                      className={`mt-1 max-w-[40px] truncate text-center text-[9px] leading-none ${
+                        isDest
+                          ? 'font-semibold text-amber-300'
+                          : isCompleted || isActive
+                          ? 'text-cyan-300'
+                          : 'text-slate-500'
+                      }`}
+                      title={airport}
+                    >
+                      {airport}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* Cursor (plane icon) — floats above the track */}
+            {cursorFraction != null && (
+              <div
+                className="pointer-events-none absolute top-0"
+                style={{
+                  left: `calc(${Math.min(cursorFraction * 100, 100)}% - 6px)`,
+                  transition: 'left 0.5s ease',
+                }}
+              >
+                <Plane
+                  className="h-3 w-3 -rotate-45 text-cyan-300 drop-shadow-[0_0_4px_rgba(103,232,249,0.8)]"
+                  aria-label={activeLegFlightNumber ? `Flight ${activeLegFlightNumber}` : 'Current position'}
+                />
+              </div>
+            )}
+          </div>
+
+          {/* Flight number label under cursor */}
+          {activeLegFlightNumber ? (
+            <div
+              className="mt-1 text-[10px] text-cyan-400"
+              style={{
+                marginLeft: `calc(${Math.min((cursorFraction ?? 0) * 100, 95)}% - 14px)`,
+                transition: 'margin-left 0.5s ease',
+              }}
+            >
+              {activeLegFlightNumber}
+            </div>
+          ) : null}
+        </div>
+      ) : (
+        <div className="mt-2 text-xs text-slate-500 italic">
+          {airports.length === 1 ? `Origin: ${airports[0]}` : 'No airport data configured for this trip.'}
+        </div>
+      )}
+    </article>
+  );
 }
 
 function FriendsTrackerTopBar({
@@ -179,8 +378,7 @@ function FriendsTrackerDashboard({
   loadingTargetView,
   onMapReady,
 }: FriendsTrackerDashboardProps) {
-  const locale = useLocale();
-  const { isMobile, sidebarOpen } = useTrackerLayout();
+  // Layout context used by child components
   const [config, setConfig] = useState(() => normalizeFriendsTrackerConfig(initialConfig));
   const [data, setData] = useState<TrackerApiResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -395,155 +593,62 @@ function FriendsTrackerDashboard({
   }, [config, data?.flights]);
 
   const totalFriends = config.friends.length;
-  const totalLegs = statuses.length;
+  const now = Date.now();
+  const destinationAirport = config.destinationAirport ?? null;
 
   const sidebarContent = (
-    <div className="space-y-4">
-      <section className="rounded-2xl border border-white/10 bg-slate-950/55 p-4 backdrop-blur-sm">
-        <div className="mb-3 flex items-center gap-2 text-cyan-200">
-          <Users className="h-4 w-4" />
-          <h2 className="text-sm font-semibold uppercase tracking-[0.24em]">Crew overview</h2>
+    <div className="space-y-3">
+      {/* Compact crew overview header */}
+      <div className="flex items-center justify-between gap-3 px-1">
+        <div className="flex items-center gap-2 text-xs uppercase tracking-[0.22em] text-slate-400">
+          <Users className="h-3.5 w-3.5" />
+          <span>{totalFriends} crew member{totalFriends === 1 ? '' : 's'}</span>
         </div>
-        <p className="mb-4 text-sm text-slate-300">
-          Every configured flight stays visible here together. Connections and completed legs remain on the shared map via the background prefetch cache.
-        </p>
-        <div className="grid grid-cols-2 gap-3 text-sm text-slate-200">
-          <div className="rounded-2xl border border-white/10 bg-slate-950/70 p-3">
-            <div className="text-xs uppercase tracking-[0.2em] text-slate-400">Friends</div>
-            <div className="mt-1 text-lg font-semibold text-white">{totalFriends}</div>
+        {destinationAirport ? (
+          <div className="flex items-center gap-1.5 rounded-full border border-amber-400/30 bg-amber-500/10 px-2.5 py-1 text-[11px] font-semibold text-amber-200">
+            <Plane className="h-3 w-3 -rotate-45" />
+            {destinationAirport}
           </div>
-          <div className="rounded-2xl border border-white/10 bg-slate-950/70 p-3">
-            <div className="text-xs uppercase tracking-[0.2em] text-slate-400">Flight legs</div>
-            <div className="mt-1 text-lg font-semibold text-white">{totalLegs}</div>
-          </div>
-        </div>
-        {airportMarkers.length ? (
-          <p className="mt-4 text-xs text-slate-400">
-            {airportMarkers.length} shared airport marker{airportMarkers.length === 1 ? '' : 's'} remain visible on the crew map.
-          </p>
         ) : null}
-      </section>
+      </div>
 
       {error ? (
-        <div className="rounded-2xl border border-rose-400/30 bg-rose-500/10 p-4 text-sm text-rose-100">
+        <div className="rounded-2xl border border-rose-400/30 bg-rose-500/10 p-3 text-sm text-rose-100">
           <div className="mb-1 flex items-center gap-2 font-semibold">
             <CircleAlert className="h-4 w-4" />
             Unable to refresh the crew map
           </div>
-          <p>{error}</p>
+          <p className="text-xs">{error}</p>
         </div>
       ) : null}
 
       {data?.notFoundIdentifiers.length ? (
-        <div className="rounded-2xl border border-cyan-400/30 bg-cyan-500/10 p-4 text-sm text-cyan-50">
-          <div className="mb-2 flex items-center gap-2 font-semibold">
-            <Clock3 className="h-4 w-4" />
-            Waiting on live telemetry
+        <div className="rounded-2xl border border-cyan-400/30 bg-cyan-500/10 p-3 text-xs text-cyan-100">
+          <div className="mb-1 flex items-center gap-1.5 font-semibold">
+            <Clock3 className="h-3.5 w-3.5" />
+            Awaiting telemetry: {data.notFoundIdentifiers.join(', ')}
           </div>
-          <p>{data.notFoundIdentifiers.join(', ')}</p>
-          <p className="mt-2 text-cyan-100/80">
-            Completed or low-coverage legs remain on the map from the shared cache as fresh telemetry drops away.
-          </p>
         </div>
       ) : null}
 
-      <section className="space-y-3">
-        <div className="flex items-center gap-2 text-xs uppercase tracking-[0.22em] text-slate-400">
-          <Plane className="h-4 w-4" />
-          Friend itineraries
+      {!identifiers.length ? (
+        <div className="rounded-2xl border border-dashed border-white/10 bg-slate-950/35 p-4 text-sm text-slate-400">
+          No friend itineraries are configured yet. Add the crew details on the config page first.
         </div>
+      ) : null}
 
-        {!identifiers.length ? (
-          <div className="rounded-2xl border border-dashed border-white/10 bg-slate-950/35 p-4 text-sm text-slate-400">
-            No friend itineraries are configured yet. Add the crew details on the config page first.
-          </div>
-        ) : null}
-
-        {config.friends.map((friend) => {
-          const friendStatuses = statuses.filter((status) => status.friend.id === friend.id);
-
-          return (
-            <article key={friend.id} className="rounded-2xl border border-white/10 bg-slate-950/55 p-4">
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <div className="text-base font-semibold text-white">{friend.name}</div>
-                  <div className="text-xs text-slate-400">{friendStatuses.length} configured leg{friendStatuses.length === 1 ? '' : 's'}</div>
-                </div>
-                <span className="rounded-full bg-slate-900/80 px-2.5 py-1 text-[11px] font-semibold text-slate-200">
-                  {friendStatuses.filter((status) => status.flight).length}/{friendStatuses.length} on map
-                </span>
-              </div>
-
-              <div className="mt-3 space-y-2">
-                {friendStatuses.map((status, index) => {
-                  const flightColor = status.flight ? getFlightMapColor(index, false) : 'rgba(148,163,184,0.7)';
-                  return (
-                    <div key={status.leg.id} className="rounded-2xl border border-white/10 bg-slate-950/70 p-3 text-sm">
-                      <div className="flex items-start justify-between gap-3">
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <span
-                              role="img"
-                              aria-label={`Map color for ${status.label}`}
-                              className="inline-block h-2.5 w-2.5 rounded-full border border-white/60 shadow-sm"
-                              style={{ backgroundColor: flightColor }}
-                            />
-                            <span className="font-semibold text-white">{status.leg.flightNumber || 'Flight TBD'}</span>
-                            <span className={`rounded-full px-2 py-0.5 text-[11px] font-semibold ${getStatusClasses(status.status)}`}>
-                              {status.status === 'matched' ? 'on map' : status.status}
-                            </span>
-                          </div>
-                          <div className="mt-1 flex items-center gap-2 text-xs text-slate-400">
-                            <CalendarClock className="h-3.5 w-3.5" />
-                            <span>{formatScheduledDateTime(status.leg.departureTime, locale)} UTC</span>
-                          </div>
-                          {status.leg.from || status.leg.to ? (
-                            <div className="mt-1 text-xs text-slate-400">
-                              {(status.leg.from ?? '—')} → {(status.leg.to ?? '—')}
-                            </div>
-                          ) : null}
-                          {status.leg.note ? (
-                            <div className="mt-1 text-xs text-slate-300">{status.leg.note}</div>
-                          ) : null}
-                        </div>
-
-                        {status.leg.resolvedIcao24 ? (
-                          <span className="rounded-full border border-cyan-400/30 bg-cyan-500/10 px-2 py-0.5 text-[11px] font-semibold text-cyan-100">
-                            {status.leg.resolvedIcao24}
-                          </span>
-                        ) : null}
-                      </div>
-
-                      {status.flight ? (
-                        <div className="mt-3 grid grid-cols-2 gap-2 text-xs text-slate-300 [&>div]:min-w-0 [&_span]:break-words">
-                          <div className="flex items-center gap-2">
-                            <Clock3 className="h-3.5 w-3.5 shrink-0 text-slate-500" />
-                            <span>{formatRelativeSeconds(status.flight.lastContact)}</span>
-                          </div>
-                          <div className="flex items-center gap-2">
-                            <Gauge className="h-3.5 w-3.5 shrink-0 text-slate-500" />
-                            <span>{formatSpeed(status.flight.velocity)}</span>
-                          </div>
-                          <div className="col-span-2 flex items-center gap-2">
-                            <Route className="h-3.5 w-3.5 shrink-0 text-slate-500" />
-                            <span>
-                              {status.flight.route.departureAirport ?? status.leg.from ?? '—'} → {status.flight.route.arrivalAirport ?? status.leg.to ?? '—'}
-                            </span>
-                          </div>
-                        </div>
-                      ) : (
-                        <div className="mt-3 text-xs text-slate-400">
-                          Waiting for this leg to resolve into a live aircraft. The map will pick it up automatically once telemetry appears.
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            </article>
-          );
-        })}
-      </section>
+      {config.friends.map((friend) => {
+        const friendStatuses = statuses.filter((status) => status.friend.id === friend.id);
+        return (
+          <FriendTimelineCard
+            key={friend.id}
+            friend={friend}
+            friendStatuses={friendStatuses}
+            destinationAirport={destinationAirport}
+            now={now}
+          />
+        );
+      })}
     </div>
   );
 

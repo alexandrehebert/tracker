@@ -2,7 +2,7 @@
 
 import { useRef, useState, type ChangeEvent } from 'react';
 import { useLocale } from 'next-intl';
-import { ArrowRight, Camera, Clock3, Download, PlaneTakeoff, Play, Plus, RefreshCw, Save, Settings2, Trash2, Upload, Users } from 'lucide-react';
+import { ArrowRight, Camera, Clock3, Download, MapPin, PlaneTakeoff, Play, Plus, RefreshCw, Save, Settings2, Trash2, Upload, Users } from 'lucide-react';
 import { Link } from '~/i18n/navigation';
 import {
   createEmptyFriendConfig,
@@ -146,6 +146,7 @@ export function FriendsConfigClient({
   const locale = useLocale();
   const normalizedConfig = normalizeFriendsTrackerConfig(initialConfig);
   const [friends, setFriends] = useState(normalizedConfig.friends);
+  const [destinationAirport, setDestinationAirport] = useState(normalizedConfig.destinationAirport ?? '');
   const [cronEnabled, setCronEnabled] = useState(normalizedConfig.cronEnabled ?? initialCronDashboard.config.enabled);
   const [cronDashboard, setCronDashboard] = useState(initialCronDashboard);
   const [isSaving, setIsSaving] = useState(false);
@@ -179,6 +180,7 @@ export function FriendsConfigClient({
       updatedAt: lastSavedAt,
       updatedBy: normalizedConfig.updatedBy ?? 'chantal config page',
       cronEnabled,
+      destinationAirport,
       friends,
     });
   }
@@ -186,6 +188,7 @@ export function FriendsConfigClient({
   function applySavedConfig(nextConfig: FriendsTrackerConfig) {
     const normalizedNextConfig = normalizeFriendsTrackerConfig(nextConfig);
     setFriends(normalizedNextConfig.friends);
+    setDestinationAirport(normalizedNextConfig.destinationAirport ?? '');
     setCronEnabled(normalizedNextConfig.cronEnabled ?? true);
     setLastSavedAt(normalizedNextConfig.updatedAt);
     setCronDashboard((currentDashboard) => ({
@@ -322,6 +325,7 @@ export function FriendsConfigClient({
 
       setFriends(importedConfig.friends);
       setCronEnabled(importedConfig.cronEnabled ?? true);
+      setDestinationAirport(importedConfig.destinationAirport ?? '');
       setLastSavedAt(importedConfig.updatedAt);
       setNotice({
         type: 'success',
@@ -348,6 +352,7 @@ export function FriendsConfigClient({
         body: JSON.stringify({
           updatedBy: 'chantal config page',
           cronEnabled,
+          destinationAirport,
           friends,
         }),
       });
@@ -502,6 +507,31 @@ export function FriendsConfigClient({
             <div className="mt-1 font-semibold text-white">{formatDateTime(latestCronRun?.startedAt ?? null, locale)}</div>
             <div className="mt-1 text-xs text-slate-400">{latestCronRun ? latestCronRun.status : 'No runs yet'}</div>
           </div>
+        </div>
+      </section>
+
+      <section className="rounded-3xl border border-white/10 bg-slate-950/55 p-5 backdrop-blur-sm">
+        <div className="flex items-center gap-2 text-sky-200">
+          <MapPin className="h-4 w-4" />
+          <p className="text-xs uppercase tracking-[0.24em]">Meeting destination</p>
+        </div>
+        <p className="mt-3 max-w-3xl text-sm text-slate-300">
+          Set the final meeting point for the whole crew. The Chantal map will use this airport to split each friend&apos;s itinerary into their outbound and return trip, and only display the relevant legs on the timeline.
+        </p>
+        <div className="mt-4 max-w-xs">
+          <label className="mb-2 block text-xs font-medium uppercase tracking-[0.2em] text-slate-400">
+            Destination airport code
+          </label>
+          <input
+            value={destinationAirport}
+            onChange={(event) => setDestinationAirport(event.target.value.toUpperCase())}
+            placeholder="e.g. MIA, LIS, CDG"
+            maxLength={10}
+            className="w-full rounded-2xl border border-white/10 bg-slate-950/90 px-3 py-2 text-sm text-slate-100 outline-none transition focus:border-cyan-400/60 focus:ring-2 focus:ring-cyan-500/20"
+          />
+          <p className="mt-2 text-xs text-slate-400">
+            Use the IATA or ICAO code matching what you enter in the &quot;To&quot; field of each leg (e.g. MIA, KMIA).
+          </p>
         </div>
       </section>
 
