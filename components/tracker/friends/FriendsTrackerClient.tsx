@@ -130,8 +130,8 @@ function FriendsTrackerTopBar({
   const { topBarRef } = useTrackerLayout();
 
   return (
-    <div ref={topBarRef} className="absolute inset-x-0 top-0 z-30 flex flex-wrap items-center justify-between gap-3 px-3 py-3 md:px-4">
-      <div className="rounded-2xl border border-white/12 bg-slate-950/80 px-4 py-3 shadow-xl backdrop-blur-md">
+    <div ref={topBarRef} className="pointer-events-none absolute inset-x-0 top-0 z-40 flex flex-wrap items-start justify-between gap-3 p-3 md:p-4">
+      <div className="pointer-events-auto rounded-2xl border border-white/10 bg-slate-950/75 px-4 py-3 shadow-xl backdrop-blur-md">
         <div className="text-[11px] uppercase tracking-[0.24em] text-cyan-200">Chantal crew tracker</div>
         <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-slate-100">
           <span>{friendCount} friends</span>
@@ -141,7 +141,7 @@ function FriendsTrackerTopBar({
         <div className="mt-1 text-xs text-slate-400">Updated {formatDateTimeMillis(lastUpdated)}</div>
       </div>
 
-      <div className="flex flex-wrap items-center justify-end gap-2">
+      <div className="pointer-events-auto flex flex-wrap items-center justify-end gap-2">
         <Link
           href="/chantal/config"
           className="inline-flex items-center gap-2 rounded-full border border-white/12 bg-slate-950/80 px-3 py-2 text-sm font-medium text-slate-100 shadow backdrop-blur-sm transition hover:border-white/20 hover:bg-slate-900"
