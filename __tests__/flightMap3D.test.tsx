@@ -445,7 +445,8 @@ describe('FlightMap3D', () => {
     expect(altitudeGuidePath.points).toHaveLength(2);
     expect(altitudeGuidePath.points[0].alt).toBeCloseTo(markerAltitude, 5);
     expect(altitudeGuidePath.points[1].alt).toBeGreaterThan(altitudeGuidePath.points[0].alt);
-    expect(mainPath.points.at(-1)?.alt).toBeCloseTo(altitudeGuidePath.points[1].alt, 5);
+    expect(altitudeGuidePath.points[1].alt).toBeGreaterThanOrEqual(mainPath.points.at(-1)?.alt ?? 0);
+    expect(altitudeGuidePath.points[1].alt - (mainPath.points.at(-1)?.alt ?? 0)).toBeLessThan(0.002);
   });
 
   it('uses the same multi-point forecast path shape as the 2D map', async () => {

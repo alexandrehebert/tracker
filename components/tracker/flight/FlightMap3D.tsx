@@ -35,6 +35,8 @@ const SELECTED_POINT_MARKER_ALTITUDE = COUNTRY_ALTITUDE + 0.0016;
 const POINT_ALTITUDE_OFFSET = 0.018;
 const SELECTED_POINT_ALTITUDE_OFFSET = 0.03;
 const ALTITUDE_GUIDE_STROKE = 0.14;
+const ALTITUDE_GUIDE_TOP_OVERLAP = 0.0008;
+const ALTITUDE_GUIDE_COLOR = ['rgba(255,255,255,0.82)', 'rgba(255,255,255,0.34)', 'rgba(255,255,255,0.14)'];
 const PATH_POINT_DUPLICATE_DISTANCE_KM = 12;
 const GROUND_RING_ALTITUDE = COUNTRY_ALTITUDE + 0.001;
 const FRIEND_AVATAR_CLUSTER_DEGREES = 2.5;
@@ -674,11 +676,11 @@ function buildFlightPathData(
 
   if (selected && lastObservedPoint && !lastObservedPoint.onGround && (lastObservedPoint.altitude ?? 0) > 0) {
     const guideBaseAltitude = SELECTED_POINT_MARKER_ALTITUDE;
-    const guideTopAltitude = liveRouteAltitude;
+    const guideTopAltitude = liveRouteAltitude + ALTITUDE_GUIDE_TOP_OVERLAP;
 
     paths.push({
       id: `${flight.icao24}:guide`,
-      color: ['rgba(255,255,255,0.78)', 'rgba(255,255,255,0.26)', 'rgba(255,255,255,0)'],
+      color: ALTITUDE_GUIDE_COLOR,
       selected,
       variant: 'guide',
       points: [
