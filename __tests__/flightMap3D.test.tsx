@@ -399,7 +399,7 @@ describe('FlightMap3D', () => {
     expect(ringAltitudeAccessor(renderedRings[0])).toBeLessThan(pointAltitudeAccessor(selectedPoint));
   });
 
-  it('uses a small ground dot for the plane position and a thin fading guide toward the sky', async () => {
+  it('keeps the plane marker low and sizes the white guide to the live route altitude', async () => {
     const { globe } = createGlobeMock();
     globeFactory.mockReturnValue(() => globe);
 
@@ -430,9 +430,10 @@ describe('FlightMap3D', () => {
     const pointAltitudeAccessor = globe.pointAltitude.mock.calls.at(-1)?.[0];
     const renderedPoints = globe.pointsData.mock.calls.at(-1)?.[0] ?? [];
     const selectedPoint = renderedPoints.find((point: { selected: boolean }) => point.selected);
+    const markerAltitude = pointAltitudeAccessor(selectedPoint);
 
     expect(selectedPoint).toBeDefined();
-    expect(pointAltitudeAccessor(selectedPoint)).toBeLessThan(0.01);
+    expect(markerAltitude).toBeLessThan(0.01);
 
     const renderedPaths = globe.pathsData.mock.calls.at(-1)?.[0] ?? [];
     const altitudeGuidePath = renderedPaths.find((path: { variant?: string }) => path.variant === 'guide');
@@ -442,6 +443,7 @@ describe('FlightMap3D', () => {
     expect(mainPath).toBeDefined();
     expect(Array.isArray(altitudeGuidePath.color)).toBe(true);
     expect(altitudeGuidePath.points).toHaveLength(2);
+    expect(altitudeGuidePath.points[0].alt).toBeCloseTo(markerAltitude, 5);
     expect(altitudeGuidePath.points[1].alt).toBeGreaterThan(altitudeGuidePath.points[0].alt);
     expect(mainPath.points.at(-1)?.alt).toBeCloseTo(altitudeGuidePath.points[1].alt, 5);
   });
@@ -479,6 +481,61 @@ describe('FlightMap3D', () => {
     expect(forecastPath).toBeDefined();
     expect(forecastPath.points.length).toBeGreaterThan(5);
     expect(forecastPath.points[1].lat).not.toBe(forecastPath.points.at(-1)?.lat);
+  });
+
+  it('keeps the airborne forecast at the same altitude band as the live route line', async () => {
+    const { globe } = createGlobeMock();
+    globeFactory.mockReturnValue(() => globe);
+
+    const airborneHistoryFlight: TrackedFlight = {
+      ...airborneFlight,
+      track: [
+        {
+          ...airborneFlight.current!,
+          time: (airborneFlight.current?.time ?? 1_700_000_060) - 60,
+          latitude: 47.92,
+          longitude: 1.91,
+          altitude: 10_600,
+          heading: 44,
+          onGround: false,
+        },
+      ],
+    };
+
+    render(
+      <TrackerMapProvider
+        value={{
+          globeRef: { current: null },
+          setGlobeRef: vi.fn(),
+          svgRef: { current: null },
+          mapTransform: { x: 0, y: 0, k: 1, apply: vi.fn(), applyX: vi.fn(), applyY: vi.fn(), invert: vi.fn(), invertX: vi.fn(), invertY: vi.fn(), rescaleX: vi.fn(), rescaleY: vi.fn(), scale: vi.fn(), translate: vi.fn(), toString: vi.fn(() => 'translate(0,0) scale(1)') },
+          zoomBy: vi.fn(),
+          resetZoom: vi.fn(),
+        }}
+      >
+        <FlightMap3D
+          flights={[airborneHistoryFlight]}
+          selectedIcao24={airborneHistoryFlight.icao24}
+          selectedFlightDetails={{ ...selectedFlightDetails, icao24: airborneHistoryFlight.icao24, callsign: airborneHistoryFlight.callsign }}
+        />
+      </TrackerMapProvider>,
+    );
+
+    await waitFor(() => {
+      expect(globe.pathsData).toHaveBeenCalled();
+    });
+
+    const renderedPaths = globe.pathsData.mock.calls.at(-1)?.[0] ?? [];
+    const mainPath = renderedPaths.find((path: { variant?: string }) => path.variant === 'main');
+    const forecastPath = renderedPaths.find((path: { variant?: string }) => path.variant === 'forecast');
+    const routeAltitude = mainPath?.points.at(-1)?.alt ?? null;
+    const approachAltitude = mainPath?.points.at(-2)?.alt ?? null;
+
+    expect(forecastPath).toBeDefined();
+    expect(routeAltitude).not.toBeNull();
+    expect(approachAltitude).toBeCloseTo(routeAltitude, 5);
+    expect(forecastPath.points[0]?.alt).toBeCloseTo(routeAltitude, 5);
+    expect(forecastPath.points.at(-1)?.alt).toBeCloseTo(routeAltitude, 5);
   });
 
   it('keeps the main route ending at the live plane position when the origin point has no timestamp', async () => {

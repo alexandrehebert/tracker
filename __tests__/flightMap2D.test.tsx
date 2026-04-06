@@ -205,6 +205,7 @@ describe('FlightMap2D', () => {
       selectedFlightDetails: selectionDetails = null,
       airportMarkers: mapAirportMarkers = [],
       staticFriendMarkers = [],
+      selectionMode = 'single',
       mapTransform = zoomIdentity,
       focusBounds = vi.fn() as FocusBoundsHandler,
     }: {
@@ -213,6 +214,7 @@ describe('FlightMap2D', () => {
       selectedFlightDetails?: SelectedFlightDetails | null;
       airportMarkers?: FlightMapAirportMarker[];
       staticFriendMarkers?: FriendAvatarMarker[];
+      selectionMode?: 'single' | 'all';
       mapTransform?: typeof zoomIdentity;
       focusBounds?: FocusBoundsHandler;
     } = {},
@@ -246,6 +248,7 @@ describe('FlightMap2D', () => {
           selectedFlightDetails={selectionDetails}
           airportMarkers={mapAirportMarkers}
           staticFriendMarkers={staticFriendMarkers}
+          selectionMode={selectionMode}
         />
       </TrackerMapProvider>,
     );
@@ -970,6 +973,21 @@ describe('FlightMap2D', () => {
     const forecastPath = Array.from(container.querySelectorAll('path')).find(
       (path) => path.getAttribute('stroke-dasharray') === '8 8'
         && (path.getAttribute('stroke') ?? '').includes('selected-flight-forecast-gradient'),
+    );
+
+    expect(forecastPath).toBeTruthy();
+  });
+
+  it('shows an airborne forecast preview in all-flight mode on the flat map', () => {
+    const { container } = renderMap(false, {
+      flights: [trackedFlight],
+      selectedIcao24: null,
+      selectionMode: 'all',
+      selectedFlightDetails,
+    });
+
+    const forecastPath = Array.from(container.querySelectorAll('path')).find(
+      (path) => path.getAttribute('stroke-dasharray') === '8 8',
     );
 
     expect(forecastPath).toBeTruthy();

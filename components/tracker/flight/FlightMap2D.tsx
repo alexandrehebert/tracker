@@ -1099,6 +1099,7 @@ export default function FlightMap2D({
             const isSelected = selectionMode === 'single' && flight.icao24 === selectedFlight?.icao24;
             const isHighlighted = selectionMode === 'all' || isSelected;
             const shouldShowRoute = selectionMode === 'all' || isSelected;
+            const shouldShowForecast = selectionMode === 'all' || isSelected;
             const visibleRoutePoints = getVisibleRoutePoints(flight);
             const routePoints = shouldShowRoute ? (isSelected ? selectedRoutePoints : visibleRoutePoints) : [];
             const routePath = buildRoutePath(routePoints);
@@ -1112,10 +1113,10 @@ export default function FlightMap2D({
             const strokeColor = selectionMode === 'all'
               ? getFlightMapColor(colorIndex, false)
               : getFlightMapColor(colorIndex, isSelected);
-            const activeSelectedFlightDetails = isSelected && selectedFlightDetails?.icao24 === flight.icao24
+            const activeSelectedFlightDetails = isHighlighted && selectedFlightDetails?.icao24 === flight.icao24
               ? selectedFlightDetails
               : null;
-            const forecastRoutePoints = isSelected
+            const forecastRoutePoints = shouldShowForecast
               ? getForecastRoutePoints({
                   flight,
                   selectedFlightDetails: activeSelectedFlightDetails,

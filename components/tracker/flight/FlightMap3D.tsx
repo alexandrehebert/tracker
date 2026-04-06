@@ -141,6 +141,19 @@ function getAltitudeRatio(point: FlightMapPoint | null): number {
   return Math.min(0.16, Math.max(0.012, point.altitude / 160_000));
 }
 
+function getFlightDisplayAltitude(point: FlightMapPoint | null, selected: boolean): number {
+  if (!point || point.onGround || (point.altitude ?? 0) <= 0) {
+    return selected ? SELECTED_POINT_MARKER_ALTITUDE : POINT_MARKER_ALTITUDE;
+  }
+
+  return getAltitudeRatio(point) + (selected ? SELECTED_POINT_ALTITUDE_OFFSET : POINT_ALTITUDE_OFFSET);
+}
+
+function getRoutePathAltitude(point: FlightMapPoint | null, emphasized: boolean): number {
+  const altitudeOffset = emphasized ? SELECTED_POINT_ALTITUDE_OFFSET : PATH_ALTITUDE_OFFSET;
+  return getAltitudeRatio(point) + altitudeOffset;
+}
+
 interface FriendGeoMarker {
   key: string;
   lat: number;
@@ -594,6 +607,13 @@ function buildFlightPathData(
 
   const paths: GlobePathDatum[] = [];
 
+  const highlightedSegmentStartIndex = selected && lastObservedPoint && !lastObservedPoint.onGround
+    ? Math.max(0, mainPoints.length - 2)
+    : Number.POSITIVE_INFINITY;
+  const liveRouteAltitude = lastObservedPoint && !lastObservedPoint.onGround
+    ? getRoutePathAltitude(lastObservedPoint, true)
+    : FORECAST_PATH_ALTITUDE;
+
   if (mainPoints.length >= 2) {
     paths.push(
       {
@@ -613,15 +633,12 @@ function buildFlightPathData(
         selected,
         variant: 'main',
         points: mainPoints.map((point, index) => {
-          const isSelectedAirborneEndpoint = selected
-            && index === mainPoints.length - 1
-            && point === lastObservedPoint
-            && !point.onGround;
+          const isHighlightedAirborneSegment = index >= highlightedSegmentStartIndex && !point.onGround;
 
           return {
             lat: point.latitude,
             lng: point.longitude,
-            alt: getAltitudeRatio(point) + (isSelectedAirborneEndpoint ? SELECTED_POINT_ALTITUDE_OFFSET : PATH_ALTITUDE_OFFSET),
+            alt: isHighlightedAirborneSegment ? liveRouteAltitude : getRoutePathAltitude(point, false),
           };
         }),
       },
@@ -638,6 +655,9 @@ function buildFlightPathData(
 
   if (forecastPoints.length > 1) {
     const smoothedForecastPoints = smoothForecastPathPoints(forecastPoints);
+    const forecastPathAltitude = lastObservedPoint && !lastObservedPoint.onGround
+      ? liveRouteAltitude
+      : FORECAST_PATH_ALTITUDE;
 
     paths.push({
       id: `${flight.icao24}:forecast`,
@@ -647,16 +667,14 @@ function buildFlightPathData(
       points: smoothedForecastPoints.map((point) => ({
         lat: point.latitude,
         lng: point.longitude,
-        alt: FORECAST_PATH_ALTITUDE,
+        alt: forecastPathAltitude,
       })),
     });
   }
 
   if (selected && lastObservedPoint && !lastObservedPoint.onGround && (lastObservedPoint.altitude ?? 0) > 0) {
-    const guideTopAltitude = Math.max(
-      SELECTED_POINT_MARKER_ALTITUDE + 0.02,
-      getAltitudeRatio(lastObservedPoint) + SELECTED_POINT_ALTITUDE_OFFSET,
-    );
+    const guideBaseAltitude = SELECTED_POINT_MARKER_ALTITUDE;
+    const guideTopAltitude = liveRouteAltitude;
 
     paths.push({
       id: `${flight.icao24}:guide`,
@@ -664,7 +682,7 @@ function buildFlightPathData(
       selected,
       variant: 'guide',
       points: [
-        { lat: lastObservedPoint.latitude, lng: lastObservedPoint.longitude, alt: SELECTED_POINT_MARKER_ALTITUDE },
+        { lat: lastObservedPoint.latitude, lng: lastObservedPoint.longitude, alt: guideBaseAltitude },
         { lat: lastObservedPoint.latitude, lng: lastObservedPoint.longitude, alt: guideTopAltitude },
       ],
     });
@@ -782,7 +800,7 @@ export default function FlightMap3D({
 
         const selected = selectionMode === 'single' && flight.icao24 === selectedIcao24;
         const highlighted = selectionMode === 'all' || selected;
-        const flightAltitude = getAltitudeRatio(currentPoint) + (highlighted ? SELECTED_POINT_ALTITUDE_OFFSET : POINT_ALTITUDE_OFFSET);
+        const flightAltitude = getFlightDisplayAltitude(currentPoint, highlighted);
 
         return {
           icao24: flight.icao24,
