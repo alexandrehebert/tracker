@@ -338,6 +338,28 @@ describe('FriendsConfigClient', () => {
     expect(screen.queryByRole('listbox', { name: /departure airport suggestions for leg 1/i })).not.toBeInTheDocument();
   });
 
+  it('marks the current airport value as selected and closes when clicking it', async () => {
+    const user = userEvent.setup();
+
+    render(<FriendsConfigClient initialConfig={initialConfig} initialCronDashboard={initialCronDashboard} />);
+
+    const aliceCard = screen.getByDisplayValue('Alice').closest('section');
+    expect(aliceCard).not.toBeNull();
+
+    const aliceQueries = within(aliceCard as HTMLElement);
+    const [fromInput] = aliceQueries.getAllByLabelText(/from/i) as HTMLInputElement[];
+
+    await user.click(fromInput);
+    const listbox = await screen.findByRole('listbox', { name: /departure airport suggestions for leg 1/i });
+    const selectedOption = within(listbox).getByRole('option', { name: /cdg — charles de gaulle airport/i });
+
+    expect(selectedOption).toHaveAttribute('aria-selected', 'true');
+    expect(selectedOption).toHaveClass('bg-cyan-500/15');
+
+    await user.click(selectedOption);
+    expect(screen.queryByRole('listbox', { name: /departure airport suggestions for leg 1/i })).not.toBeInTheDocument();
+  });
+
   it('enables save only when there are pending changes', async () => {
     const user = userEvent.setup();
 
@@ -365,6 +387,38 @@ describe('FriendsConfigClient', () => {
     await user.type(screen.getByPlaceholderText('Weekend in Lisbon'), 'Demo / Test Trip custom');
 
     expect(screen.getByRole('button', { name: /save config/i })).toBeEnabled();
+  });
+
+  it('persists the selected current trip immediately when publishing it live', async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.mocked(window.fetch);
+    const multiTripConfig: FriendsTrackerConfig = {
+      ...initialConfig,
+      currentTripId: 'trip-1',
+      trips: [
+        ...(initialConfig.trips ?? []),
+        {
+          id: 'trip-2',
+          name: 'Tokyo',
+          destinationAirport: 'HND',
+          friends: [],
+        },
+      ],
+    };
+
+    render(<FriendsConfigClient initialConfig={multiTripConfig} initialCronDashboard={initialCronDashboard} />);
+
+    await user.click(screen.getByRole('button', { name: /tokyo/i }));
+    await user.click(screen.getByRole('button', { name: /set as current trip/i }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith('/api/chantal/config', expect.objectContaining({
+        method: 'PUT',
+        body: expect.stringContaining('"currentTripId":"trip-2"'),
+      }));
+    });
+
+    expect(await screen.findByRole('button', { name: /current on \/chantal/i })).toBeInTheDocument();
   });
 
   it('renders the departure field in the persisted departure timezone', async () => {

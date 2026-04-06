@@ -469,6 +469,12 @@ export function FriendsConfigClient({
       return;
     }
 
+    const normalizedQueryCode = normalizeAirportCode(query);
+    const existingSuggestion = airportSuggestions.find((airport) => getAirportSuggestionCode(airport) === normalizedQueryCode);
+    if (existingSuggestion) {
+      setAirportSuggestions([existingSuggestion]);
+    }
+
     let isCancelled = false;
     const timeoutId = window.setTimeout(() => {
       void (async () => {
@@ -745,6 +751,47 @@ export function FriendsConfigClient({
         type: 'error',
         text: error instanceof Error ? error.message : 'Unable to import the JSON config.',
       });
+    }
+  }
+
+  async function handlePublishCurrentTrip(nextTripId: string) {
+    const previousTripId = currentTripId;
+    setCurrentTripId(nextTripId);
+    setIsSaving(true);
+    setNotice(null);
+
+    try {
+      const response = await fetch('/api/chantal/config', {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          updatedBy: 'chantal current trip publish',
+          cronEnabled,
+          currentTripId: nextTripId,
+          trips,
+        }),
+      });
+
+      const payload = await response.json() as FriendsTrackerConfig & { error?: string };
+      if (!response.ok) {
+        throw new Error(payload.error || 'Unable to publish the selected trip live on /chantal.');
+      }
+
+      applySavedConfig(payload);
+      setNotice({
+        type: 'success',
+        text: 'Current /chantal trip updated.',
+      });
+    } catch (error) {
+      setCurrentTripId(previousTripId);
+      setNotice({
+        type: 'error',
+        text: error instanceof Error ? error.message : 'Unable to publish the selected trip live on /chantal.',
+      });
+    } finally {
+      setIsSaving(false);
     }
   }
 
@@ -1025,7 +1072,7 @@ export function FriendsConfigClient({
                   <p className="mt-2 text-xs text-slate-400">
                     {selectedTrip.id === currentTripId
                       ? 'This trip is already the one shown live on `/chantal`.'
-                      : 'This trip stays as a draft until you set it as current and save.'}
+                      : 'This trip stays as a draft until you set it as current.'}
                   </p>
                 </div>
               </div>
@@ -1039,14 +1086,19 @@ export function FriendsConfigClient({
                   <div className="text-xs uppercase tracking-[0.2em] text-slate-400">Shown right now on `/chantal`</div>
                   <div className="mt-1 font-semibold text-white">{currentTrip?.name ?? '—'}</div>
                   <div className="mt-1 text-xs text-slate-400">
-                    {selectedTrip.id === currentTripId ? 'This trip is already live.' : 'Switch to this trip when you are ready, then save.'}
+                    {selectedTrip.id === currentTripId ? 'This trip is already live.' : 'Switch to this trip when you are ready — it updates `/chantal` immediately.'}
                   </div>
                 </div>
 
                 <button
                   type="button"
-                  onClick={() => setCurrentTripId(selectedTrip.id)}
-                  className={`inline-flex w-full items-center justify-center rounded-full px-4 py-2 text-sm font-medium transition ${selectedTrip.id === currentTripId
+                  onClick={() => {
+                    if (selectedTrip.id !== currentTripId) {
+                      void handlePublishCurrentTrip(selectedTrip.id);
+                    }
+                  }}
+                  disabled={selectedTrip.id === currentTripId || isSaving || isSavingCronToggle}
+                  className={`inline-flex w-full items-center justify-center rounded-full px-4 py-2 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-60 ${selectedTrip.id === currentTripId
                     ? 'border border-emerald-400/40 bg-emerald-500/10 text-emerald-100'
                     : 'border border-sky-400/40 bg-sky-500/10 text-sky-100 hover:bg-sky-500/20'}`}
                 >
@@ -1235,9 +1287,10 @@ export function FriendsConfigClient({
                 const toSuggestions = activeAirportField === toFieldKey ? airportSuggestions : [];
                 const showFromSuggestions = fromSuggestions.length > 0;
                 const showToSuggestions = toSuggestions.length > 0;
+                const hasOpenSuggestions = showFromSuggestions || showToSuggestions;
 
                 return (
-                  <div key={leg.id} className="rounded-2xl border border-white/10 bg-slate-950/70 p-4">
+                  <div key={leg.id} className={`relative rounded-2xl border border-white/10 bg-slate-950/70 p-4 ${hasOpenSuggestions ? 'z-30' : 'z-0'}`}>
                   <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
                     <div className="flex items-center gap-2 text-sm font-semibold text-white">
                       <PlaneTakeoff className="h-4 w-4 text-sky-300" />
@@ -1342,7 +1395,13 @@ export function FriendsConfigClient({
                         aria-autocomplete="list"
                         aria-expanded={showFromSuggestions}
                         value={leg.from ?? ''}
-                        onFocus={() => setActiveAirportField(fromFieldKey)}
+                        onFocus={() => {
+                          const selectedCode = normalizeAirportCode(leg.from);
+                          setActiveAirportField(fromFieldKey);
+                          setAirportSuggestions((currentSuggestions) => selectedCode
+                            ? currentSuggestions.filter((airport) => getAirportSuggestionCode(airport) === selectedCode)
+                            : []);
+                        }}
                         onBlur={() => setActiveAirportField((currentField) => currentField === fromFieldKey ? null : currentField)}
                         onChange={(event) => {
                           const from = event.target.value.toUpperCase();
@@ -1363,21 +1422,24 @@ export function FriendsConfigClient({
                         <div
                           role="listbox"
                           aria-label={`Departure airport suggestions for leg ${legIndex + 1}`}
-                          className="absolute z-10 mt-1 max-h-44 w-full overflow-y-auto rounded-2xl border border-white/10 bg-slate-950/95 p-1 shadow-lg shadow-slate-950/40"
+                          className="absolute left-0 right-0 z-50 mt-1 max-h-44 w-full overflow-y-auto rounded-2xl border border-white/10 bg-slate-950/95 p-1 shadow-lg shadow-slate-950/40"
                         >
                           {fromSuggestions.map((airport) => {
                             const suggestionCode = getAirportSuggestionCode(airport);
                             const location = [airport.city, airport.country].filter(Boolean).join(', ');
+                            const isSelected = normalizeAirportCode(leg.from) === suggestionCode;
 
                             return (
                               <div
                                 key={`from-${leg.id}-${suggestionCode}`}
                                 role="option"
                                 tabIndex={0}
-                                aria-selected={normalizeAirportCode(leg.from) === suggestionCode}
+                                aria-selected={isSelected}
                                 onMouseDown={(event) => event.preventDefault()}
                                 onClick={() => {
                                   const nextDepartureTimezone = airport.timezone?.trim() || airportTimezones[suggestionCode] || null;
+                                  setActiveAirportField(null);
+                                  setAirportSuggestions([]);
                                   updateFriend(friend.id, (currentFriend) => ({
                                     ...currentFriend,
                                     flights: currentFriend.flights.map((currentLeg) => currentLeg.id === leg.id
@@ -1389,6 +1451,8 @@ export function FriendsConfigClient({
                                   if (event.key === 'Enter' || event.key === ' ') {
                                     event.preventDefault();
                                     const nextDepartureTimezone = airport.timezone?.trim() || airportTimezones[suggestionCode] || null;
+                                    setActiveAirportField(null);
+                                    setAirportSuggestions([]);
                                     updateFriend(friend.id, (currentFriend) => ({
                                       ...currentFriend,
                                       flights: currentFriend.flights.map((currentLeg) => currentLeg.id === leg.id
@@ -1397,7 +1461,9 @@ export function FriendsConfigClient({
                                     }));
                                   }
                                 }}
-                                className="flex cursor-pointer flex-col rounded-xl px-3 py-2 text-left text-sm text-slate-100 transition hover:bg-slate-900 focus:bg-slate-900 focus:outline-none"
+                                className={`flex cursor-pointer flex-col rounded-xl px-3 py-2 text-left text-sm transition focus:outline-none ${isSelected
+                                  ? 'bg-cyan-500/15 text-cyan-50 ring-1 ring-cyan-400/50'
+                                  : 'text-slate-100 hover:bg-slate-900 focus:bg-slate-900'}`}
                               >
                                 <span>{formatAirportSuggestionLabel(airport)}</span>
                                 {location ? <span className="text-[11px] text-slate-400">{location}</span> : null}
@@ -1414,7 +1480,13 @@ export function FriendsConfigClient({
                         aria-autocomplete="list"
                         aria-expanded={showToSuggestions}
                         value={leg.to ?? ''}
-                        onFocus={() => setActiveAirportField(toFieldKey)}
+                        onFocus={() => {
+                          const selectedCode = normalizeAirportCode(leg.to);
+                          setActiveAirportField(toFieldKey);
+                          setAirportSuggestions((currentSuggestions) => selectedCode
+                            ? currentSuggestions.filter((airport) => getAirportSuggestionCode(airport) === selectedCode)
+                            : []);
+                        }}
                         onBlur={() => setActiveAirportField((currentField) => currentField === toFieldKey ? null : currentField)}
                         onChange={(event) => {
                           const to = event.target.value.toUpperCase();
@@ -1434,20 +1506,23 @@ export function FriendsConfigClient({
                         <div
                           role="listbox"
                           aria-label={`Arrival airport suggestions for leg ${legIndex + 1}`}
-                          className="absolute z-10 mt-1 max-h-44 w-full overflow-y-auto rounded-2xl border border-white/10 bg-slate-950/95 p-1 shadow-lg shadow-slate-950/40"
+                          className="absolute left-0 right-0 z-50 mt-1 max-h-44 w-full overflow-y-auto rounded-2xl border border-white/10 bg-slate-950/95 p-1 shadow-lg shadow-slate-950/40"
                         >
                           {toSuggestions.map((airport) => {
                             const suggestionCode = getAirportSuggestionCode(airport);
                             const location = [airport.city, airport.country].filter(Boolean).join(', ');
+                            const isSelected = normalizeAirportCode(leg.to) === suggestionCode;
 
                             return (
                               <div
                                 key={`to-${leg.id}-${suggestionCode}`}
                                 role="option"
                                 tabIndex={0}
-                                aria-selected={normalizeAirportCode(leg.to) === suggestionCode}
+                                aria-selected={isSelected}
                                 onMouseDown={(event) => event.preventDefault()}
                                 onClick={() => {
+                                  setActiveAirportField(null);
+                                  setAirportSuggestions([]);
                                   updateFriend(friend.id, (currentFriend) => ({
                                     ...currentFriend,
                                     flights: currentFriend.flights.map((currentLeg) => currentLeg.id === leg.id
@@ -1458,6 +1533,8 @@ export function FriendsConfigClient({
                                 onKeyDown={(event) => {
                                   if (event.key === 'Enter' || event.key === ' ') {
                                     event.preventDefault();
+                                    setActiveAirportField(null);
+                                    setAirportSuggestions([]);
                                     updateFriend(friend.id, (currentFriend) => ({
                                       ...currentFriend,
                                       flights: currentFriend.flights.map((currentLeg) => currentLeg.id === leg.id
@@ -1466,7 +1543,9 @@ export function FriendsConfigClient({
                                     }));
                                   }
                                 }}
-                                className="flex cursor-pointer flex-col rounded-xl px-3 py-2 text-left text-sm text-slate-100 transition hover:bg-slate-900 focus:bg-slate-900 focus:outline-none"
+                                className={`flex cursor-pointer flex-col rounded-xl px-3 py-2 text-left text-sm transition focus:outline-none ${isSelected
+                                  ? 'bg-cyan-500/15 text-cyan-50 ring-1 ring-cyan-400/50'
+                                  : 'text-slate-100 hover:bg-slate-900 focus:bg-slate-900'}`}
                               >
                                 <span>{formatAirportSuggestionLabel(airport)}</span>
                                 {location ? <span className="text-[11px] text-slate-400">{location}</span> : null}
