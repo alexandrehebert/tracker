@@ -3,6 +3,7 @@
 import { geoNaturalEarth1 } from 'd3-geo';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { buildSmoothRoutePath } from '~/lib/utils/routePath';
+import { getFriendInitials } from '~/lib/utils/friendInitials';
 import type { WorldMapPayload } from '~/lib/server/worldMap';
 import { useTrackerLayout } from '../contexts/TrackerLayoutContext';
 import { useTrackerMap } from '../contexts/TrackerMapContext';
@@ -430,14 +431,6 @@ function getRouteBounds(points: FlightMapPoint[]) {
 function getFixedSizeTransform(point: FlightMapPoint, zoomScale: number): string {
   const safeScale = zoomScale > 0 ? 1 / zoomScale : 1;
   return `translate(${point.x} ${point.y}) scale(${safeScale})`;
-}
-
-function getFriendInitials(name: string): string {
-  const parts = name.trim().split(/\s+/);
-  if (parts.length >= 2) {
-    return `${parts[0]![0] ?? ''}${parts[parts.length - 1]![0] ?? ''}`.toUpperCase();
-  }
-  return name.slice(0, 2).toUpperCase();
 }
 
 interface FriendSvgMarker {

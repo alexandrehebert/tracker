@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTrackerLayout } from '../contexts/TrackerLayoutContext';
 import { useTrackerMap } from '../contexts/TrackerMapContext';
 import { getFlightMapColor, SELECTED_FLIGHT_COLOR } from './colors';
+import { getFriendInitials } from '~/lib/utils/friendInitials';
 import type { FlightMapAirportMarker, FlightMapPoint, FriendAvatarInfo, FriendAvatarMarker, SelectedFlightDetails, TrackedFlight } from './types';
 
 const DEFAULT_ALT = 1.65;
@@ -136,14 +137,6 @@ function getAltitudeRatio(point: FlightMapPoint | null): number {
   }
 
   return Math.min(0.16, Math.max(0.012, point.altitude / 160_000));
-}
-
-function getFriendInitials3D(name: string): string {
-  const parts = name.trim().split(/\s+/);
-  if (parts.length >= 2) {
-    return `${parts[0]![0] ?? ''}${parts[parts.length - 1]![0] ?? ''}`.toUpperCase();
-  }
-  return name.slice(0, 2).toUpperCase();
 }
 
 interface FriendGeoMarker {
@@ -1256,7 +1249,7 @@ export default function FlightMap3D({
               bubble.appendChild(img);
             } else {
               const initials = document.createElement('span');
-              initials.textContent = getFriendInitials3D(firstMember.name);
+              initials.textContent = getFriendInitials(firstMember.name);
               initials.style.color = 'white';
               initials.style.fontSize = '11px';
               initials.style.fontWeight = '700';
@@ -1316,7 +1309,7 @@ export default function FlightMap3D({
                 thumb.appendChild(img);
               } else {
                 const initSpan = document.createElement('span');
-                initSpan.textContent = getFriendInitials3D(member.name).slice(0, 1);
+                initSpan.textContent = getFriendInitials(member.name).slice(0, 1);
                 initSpan.style.color = 'white';
                 initSpan.style.fontSize = '6px';
                 initSpan.style.fontWeight = '700';

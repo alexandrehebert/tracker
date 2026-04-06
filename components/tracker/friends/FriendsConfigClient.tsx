@@ -13,6 +13,7 @@ import {
   type FriendTravelConfig,
   type FriendsTrackerConfig,
 } from '~/lib/friendsTracker';
+import { getFriendInitials } from '~/lib/utils/friendInitials';
 import type { TrackerCronDashboard, TrackerCronRun } from '~/lib/server/trackerCron';
 
 async function resizeImageToDataUrl(file: File, size = 80): Promise<string> {
@@ -42,14 +43,6 @@ async function resizeImageToDataUrl(file: File, size = 80): Promise<string> {
     reader.onerror = () => reject(new Error('Failed to read file'));
     reader.readAsDataURL(file);
   });
-}
-
-function getFriendInitialsForPreview(name: string): string {
-  const parts = name.trim().split(/\s+/);
-  if (parts.length >= 2) {
-    return `${parts[0]![0] ?? ''}${parts[parts.length - 1]![0] ?? ''}`.toUpperCase();
-  }
-  return name.slice(0, 2).toUpperCase() || '?';
 }
 
 function createClientId(prefix: string): string {
@@ -570,7 +563,7 @@ export function FriendsConfigClient({
                       />
                     ) : (
                       <div className="flex h-full w-full items-center justify-center text-lg font-bold text-white/60">
-                        {getFriendInitialsForPreview(friend.name || `F${friendIndex + 1}`)}
+                        {getFriendInitials(friend.name || `F${friendIndex + 1}`)}
                       </div>
                     )}
                     <div className="absolute inset-0 flex items-center justify-center rounded-full bg-black/40 opacity-0 transition hover:opacity-100">
