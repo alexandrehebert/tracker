@@ -2,7 +2,7 @@
 
 import { useRef, useState, type ChangeEvent } from 'react';
 import { useLocale } from 'next-intl';
-import { ArrowRight, Clock3, Download, PlaneTakeoff, Play, Plus, RefreshCw, Save, Settings2, Trash2, Upload, Users } from 'lucide-react';
+import { ArrowRight, Camera, Clock3, Download, PlaneTakeoff, Play, Plus, RefreshCw, Save, Settings2, Trash2, Upload, Users } from 'lucide-react';
 import { Link } from '~/i18n/navigation';
 import {
   createEmptyFriendConfig,
@@ -14,6 +14,43 @@ import {
   type FriendsTrackerConfig,
 } from '~/lib/friendsTracker';
 import type { TrackerCronDashboard, TrackerCronRun } from '~/lib/server/trackerCron';
+
+async function resizeImageToDataUrl(file: File, size = 80): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        canvas.width = size;
+        canvas.height = size;
+        const ctx = canvas.getContext('2d');
+        if (!ctx) {
+          reject(new Error('Could not get canvas context'));
+          return;
+        }
+
+        const sourceSize = Math.min(img.width, img.height);
+        const offsetX = (img.width - sourceSize) / 2;
+        const offsetY = (img.height - sourceSize) / 2;
+        ctx.drawImage(img, offsetX, offsetY, sourceSize, sourceSize, 0, 0, size, size);
+        resolve(canvas.toDataURL('image/jpeg', 0.85));
+      };
+      img.onerror = () => reject(new Error('Failed to load image'));
+      img.src = event.target?.result as string;
+    };
+    reader.onerror = () => reject(new Error('Failed to read file'));
+    reader.readAsDataURL(file);
+  });
+}
+
+function getFriendInitialsForPreview(name: string): string {
+  const parts = name.trim().split(/\s+/);
+  if (parts.length >= 2) {
+    return `${parts[0]![0] ?? ''}${parts[parts.length - 1]![0] ?? ''}`.toUpperCase();
+  }
+  return name.slice(0, 2).toUpperCase() || '?';
+}
 
 function createClientId(prefix: string): string {
   return `${prefix}-${Math.random().toString(36).slice(2, 10)}`;
@@ -500,22 +537,81 @@ export function FriendsConfigClient({
         {friends.map((friend, friendIndex) => (
           <section key={friend.id} className="rounded-3xl border border-white/10 bg-slate-950/55 p-5 backdrop-blur-sm">
             <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-              <div className="flex-1">
-                <label className="mb-2 block text-xs font-medium uppercase tracking-[0.2em] text-slate-400">
-                  Friend name
-                </label>
-                <input
-                  value={friend.name}
-                  onChange={(event) => {
-                    const name = event.target.value;
-                    updateFriend(friend.id, (currentFriend) => ({
-                      ...currentFriend,
-                      name,
-                    }));
-                  }}
-                  placeholder={`Friend ${friendIndex + 1}`}
-                  className="w-full rounded-2xl border border-white/10 bg-slate-950/90 px-3 py-2 text-sm text-slate-100 outline-none transition focus:border-cyan-400/60 focus:ring-2 focus:ring-cyan-500/20"
-                />
+              <div className="flex items-start gap-4">
+                <div className="relative shrink-0">
+                  <div
+                    className="relative h-16 w-16 cursor-pointer overflow-hidden rounded-full border-2 border-white/20 bg-slate-800 transition hover:border-cyan-400/60"
+                    title="Click to upload avatar photo"
+                    onClick={() => {
+                      const input = document.createElement('input');
+                      input.type = 'file';
+                      input.accept = 'image/*';
+                      input.onchange = async (event) => {
+                        const file = (event.target as HTMLInputElement).files?.[0];
+                        if (!file) return;
+                        try {
+                          const dataUrl = await resizeImageToDataUrl(file);
+                          updateFriend(friend.id, (currentFriend) => ({
+                            ...currentFriend,
+                            avatarUrl: dataUrl,
+                          }));
+                        } catch {
+                          /* ignore */
+                        }
+                      };
+                      input.click();
+                    }}
+                  >
+                    {friend.avatarUrl ? (
+                      <img
+                        src={friend.avatarUrl}
+                        alt={friend.name || `Friend ${friendIndex + 1}`}
+                        className="h-full w-full object-cover"
+                      />
+                    ) : (
+                      <div className="flex h-full w-full items-center justify-center text-lg font-bold text-white/60">
+                        {getFriendInitialsForPreview(friend.name || `F${friendIndex + 1}`)}
+                      </div>
+                    )}
+                    <div className="absolute inset-0 flex items-center justify-center rounded-full bg-black/40 opacity-0 transition hover:opacity-100">
+                      <Camera className="h-5 w-5 text-white" />
+                    </div>
+                  </div>
+                  {friend.avatarUrl ? (
+                    <button
+                      type="button"
+                      title="Remove avatar"
+                      className="absolute -right-1 -top-1 flex h-5 w-5 items-center justify-center rounded-full border border-white/20 bg-rose-500/80 text-white transition hover:bg-rose-500"
+                      onClick={() => {
+                        updateFriend(friend.id, (currentFriend) => ({
+                          ...currentFriend,
+                          avatarUrl: null,
+                        }));
+                      }}
+                    >
+                      <span className="text-[10px] font-bold leading-none">×</span>
+                    </button>
+                  ) : null}
+                </div>
+
+                <div className="flex-1">
+                  <label className="mb-2 block text-xs font-medium uppercase tracking-[0.2em] text-slate-400">
+                    Friend name
+                  </label>
+                  <input
+                    value={friend.name}
+                    onChange={(event) => {
+                      const name = event.target.value;
+                      updateFriend(friend.id, (currentFriend) => ({
+                        ...currentFriend,
+                        name,
+                      }));
+                    }}
+                    placeholder={`Friend ${friendIndex + 1}`}
+                    className="w-full rounded-2xl border border-white/10 bg-slate-950/90 px-3 py-2 text-sm text-slate-100 outline-none transition focus:border-cyan-400/60 focus:ring-2 focus:ring-cyan-500/20"
+                  />
+                  <p className="mt-1.5 text-xs text-slate-500">Click the avatar to upload a photo (shown as bubble on map)</p>
+                </div>
               </div>
 
               <button

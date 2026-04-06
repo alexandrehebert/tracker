@@ -7,7 +7,7 @@ import type { WorldMapPayload } from '~/lib/server/worldMap';
 import { useTrackerLayout } from '../contexts/TrackerLayoutContext';
 import { useTrackerMap } from '../contexts/TrackerMapContext';
 import { getFlightMapColor } from './colors';
-import type { FlightMapAirportMarker, FlightMapPoint, SelectedFlightDetails, TrackedFlight } from './types';
+import type { FlightMapAirportMarker, FlightMapPoint, FriendAvatarInfo, FriendAvatarMarker, SelectedFlightDetails, TrackedFlight } from './types';
 
 interface FlightMap2DProps {
   map: WorldMapPayload;
@@ -19,6 +19,8 @@ interface FlightMap2DProps {
   onInitialZoomEnd?: () => void;
   selectionMode?: 'single' | 'all';
   flightLabels?: Record<string, string>;
+  flightAvatars?: Record<string, FriendAvatarInfo[]>;
+  staticFriendMarkers?: FriendAvatarMarker[];
   emptyOverlayMessage?: string | null;
 }
 
@@ -430,6 +432,70 @@ function getFixedSizeTransform(point: FlightMapPoint, zoomScale: number): string
   return `translate(${point.x} ${point.y}) scale(${safeScale})`;
 }
 
+function getFriendInitials(name: string): string {
+  const parts = name.trim().split(/\s+/);
+  if (parts.length >= 2) {
+    return `${parts[0]![0] ?? ''}${parts[parts.length - 1]![0] ?? ''}`.toUpperCase();
+  }
+  return name.slice(0, 2).toUpperCase();
+}
+
+interface FriendSvgMarker {
+  key: string;
+  friendId: string;
+  name: string;
+  avatarUrl: string | null;
+  color: string;
+  x: number;
+  y: number;
+  icao24?: string;
+}
+
+interface FriendSvgCluster {
+  x: number;
+  y: number;
+  members: FriendSvgMarker[];
+}
+
+const FRIEND_CLUSTER_RADIUS_PX = 40;
+
+function clusterFriendSvgMarkers(markers: FriendSvgMarker[], clusterRadiusPx: number, zoomScale: number): FriendSvgCluster[] {
+  if (markers.length === 0) {
+    return [];
+  }
+
+  const svgRadius = zoomScale > 0 ? clusterRadiusPx / zoomScale : clusterRadiusPx;
+  const clusters: FriendSvgCluster[] = [];
+  const assigned = new Set<string>();
+
+  for (const marker of markers) {
+    if (assigned.has(marker.key)) {
+      continue;
+    }
+
+    const members: FriendSvgMarker[] = [marker];
+    assigned.add(marker.key);
+
+    for (const other of markers) {
+      if (other.key === marker.key || assigned.has(other.key)) {
+        continue;
+      }
+
+      const dist = Math.hypot(marker.x - other.x, marker.y - other.y);
+      if (dist <= svgRadius) {
+        members.push(other);
+        assigned.add(other.key);
+      }
+    }
+
+    const cx = members.reduce((sum, m) => sum + m.x, 0) / members.length;
+    const cy = members.reduce((sum, m) => sum + m.y, 0) / members.length;
+    clusters.push({ x: cx, y: cy, members });
+  }
+
+  return clusters;
+}
+
 function getCallsignLabelWidth(callsign: string): number {
   const normalizedCallsign = callsign.trim();
 
@@ -675,6 +741,8 @@ export default function FlightMap2D({
   onInitialZoomEnd,
   selectionMode = 'single',
   flightLabels,
+  flightAvatars,
+  staticFriendMarkers,
   emptyOverlayMessage = 'Search one or more live flight identifiers to draw their route, origin, and current position on the map.',
 }: FlightMap2DProps) {
   const { isMobile } = useTrackerLayout();
@@ -682,6 +750,7 @@ export default function FlightMap2D({
   const preserveAspectRatio = 'xMidYMid slice';
   const lastAutoFocusedFlightRef = useRef<string | null>(null);
   const [hoveredAirportId, setHoveredAirportId] = useState<string | null>(null);
+  const [hoveredClusterKey, setHoveredClusterKey] = useState<string | null>(null);
 
   const projectPoint = useMemo(
     () => createFlightMapPointProjector(map),
@@ -729,6 +798,72 @@ export default function FlightMap2D({
   const hoveredAirportLabelWidth = hoveredAirport
     ? Math.max(34, Math.ceil(hoveredAirport.code.length * 7.5) + 14)
     : 0;
+
+  const allFriendSvgMarkers = useMemo<FriendSvgMarker[]>(() => {
+    const markers: FriendSvgMarker[] = [];
+
+    if (flightAvatars) {
+      for (const flight of flights) {
+        const avatarInfos = flightAvatars[flight.icao24];
+        if (!avatarInfos?.length) {
+          continue;
+        }
+
+        const currentPoint = flight.current ?? flight.track.at(-1) ?? flight.originPoint;
+        if (!currentPoint) {
+          continue;
+        }
+
+        for (const info of avatarInfos) {
+          markers.push({
+            key: `fly-${info.friendId}-${flight.icao24}`,
+            friendId: info.friendId,
+            name: info.name,
+            avatarUrl: info.avatarUrl,
+            color: info.color,
+            x: currentPoint.x,
+            y: currentPoint.y,
+            icao24: flight.icao24,
+          });
+        }
+      }
+    }
+
+    if (staticFriendMarkers) {
+      for (const marker of staticFriendMarkers) {
+        const point = projectPoint({
+          latitude: marker.latitude,
+          longitude: marker.longitude,
+          altitude: 0,
+          onGround: true,
+        });
+
+        if (!point) {
+          continue;
+        }
+
+        markers.push({
+          key: `static-${marker.id}`,
+          friendId: marker.id,
+          name: marker.name,
+          avatarUrl: marker.avatarUrl,
+          color: marker.color,
+          x: point.x,
+          y: point.y,
+        });
+      }
+    }
+
+    return markers;
+  }, [flightAvatars, flights, staticFriendMarkers, projectPoint]);
+
+  const friendSvgClusters = useMemo<FriendSvgCluster[]>(() => {
+    return clusterFriendSvgMarkers(allFriendSvgMarkers, FRIEND_CLUSTER_RADIUS_PX, mapTransform.k);
+  }, [allFriendSvgMarkers, mapTransform.k]);
+
+  const friendIcao24Set = useMemo(() => {
+    return new Set(allFriendSvgMarkers.map((m) => m.icao24).filter(Boolean) as string[]);
+  }, [allFriendSvgMarkers]);
 
   const renderedFlights = useMemo(() => {
     if (!selectedFlight) {
@@ -956,7 +1091,8 @@ export default function FlightMap2D({
             const displayCallsign = flightLabels?.[flight.icao24]?.trim() || flight.callsign.trim() || flight.icao24.toUpperCase();
             const labelWidth = getCallsignLabelWidth(displayCallsign);
             const labelHeight = 26;
-            const labelPlacement = isHighlighted && labelPoint
+            const hasFriendAvatar = friendIcao24Set.has(flight.icao24);
+            const labelPlacement = isHighlighted && labelPoint && !hasFriendAvatar
               ? getSelectedLabelPlacement({
                   point: labelPoint,
                   labelWidth,
@@ -1060,7 +1196,7 @@ export default function FlightMap2D({
                   </g>
                 ) : null}
 
-                {routeCurrentPoint && markerTransform ? (
+                {routeCurrentPoint && markerTransform && !hasFriendAvatar ? (
                   <g
                     transform={markerTransform}
                     className="cursor-pointer"
@@ -1086,7 +1222,7 @@ export default function FlightMap2D({
                   </g>
                 ) : null}
 
-                {isHighlighted && labelPoint && labelTransform && labelPlacement ? (
+                {isHighlighted && labelPoint && labelTransform && labelPlacement && !hasFriendAvatar ? (
                   <g transform={labelTransform} pointerEvents="none">
                     <line
                       x1="0"
@@ -1125,6 +1261,192 @@ export default function FlightMap2D({
                     </g>
                   </g>
                 ) : null}
+              </g>
+            );
+          })}
+
+          {friendSvgClusters.map((cluster) => {
+            const clusterKey = cluster.members.map((m) => m.key).join('|');
+            const isHovered = hoveredClusterKey === clusterKey;
+            const isSingle = cluster.members.length === 1;
+            const firstMember = cluster.members[0]!;
+            const outerRadius = isSingle ? 17 : 20;
+            const innerRadius = isSingle ? 14 : 17;
+            const clusterTransform = `translate(${cluster.x} ${cluster.y}) scale(${mapTransform.k > 0 ? 1 / mapTransform.k : 1})`;
+            const labelText = isSingle
+              ? firstMember.name
+              : cluster.members.length <= 3
+                ? cluster.members.map((m) => m.name).join(', ')
+                : `${cluster.members.slice(0, 2).map((m) => m.name).join(', ')} +${cluster.members.length - 2}`;
+            const estimatedLabelWidth = Math.max(60, labelText.length * 7 + 20);
+
+            return (
+              <g key={clusterKey} transform={clusterTransform}>
+                {isSingle ? (
+                  <>
+                    <defs>
+                      <clipPath id={`friend-avatar-clip-${firstMember.key}`}>
+                        <circle cx="0" cy="0" r={innerRadius} />
+                      </clipPath>
+                    </defs>
+                    <circle cx="0" cy="0" r={outerRadius} fill={firstMember.color} fillOpacity="0.22" />
+                    <circle cx="0" cy="0" r={innerRadius} fill={firstMember.color} />
+                    {firstMember.avatarUrl ? (
+                      <image
+                        href={firstMember.avatarUrl}
+                        x={-innerRadius}
+                        y={-innerRadius}
+                        width={innerRadius * 2}
+                        height={innerRadius * 2}
+                        clipPath={`url(#friend-avatar-clip-${firstMember.key})`}
+                        preserveAspectRatio="xMidYMid slice"
+                      />
+                    ) : (
+                      <text
+                        x="0"
+                        y="0"
+                        textAnchor="middle"
+                        dominantBaseline="middle"
+                        fill="white"
+                        fontSize="11"
+                        fontWeight="700"
+                        fontFamily="ui-sans-serif, system-ui, sans-serif"
+                      >
+                        {getFriendInitials(firstMember.name)}
+                      </text>
+                    )}
+                    <circle
+                      cx="0"
+                      cy="0"
+                      r={innerRadius}
+                      fill="none"
+                      stroke="white"
+                      strokeWidth="2"
+                      vectorEffect="non-scaling-stroke"
+                    />
+                  </>
+                ) : (
+                  <>
+                    {cluster.members.slice(0, 3).map((member, memberIndex) => {
+                      const memberCount = Math.min(cluster.members.length, 3);
+                      const angle = (memberIndex / memberCount) * 2 * Math.PI - Math.PI / 2;
+                      const offset = memberCount === 2 ? 8 : 10;
+                      const tx = Math.cos(angle) * offset;
+                      const ty = Math.sin(angle) * offset;
+                      const thumbClipId = `friend-cluster-clip-${member.key}`;
+
+                      return (
+                        <g key={member.key} transform={`translate(${tx} ${ty})`}>
+                          <defs>
+                            <clipPath id={thumbClipId}>
+                              <circle cx="0" cy="0" r="7" />
+                            </clipPath>
+                          </defs>
+                          <circle cx="0" cy="0" r="7" fill={member.color} />
+                          {member.avatarUrl && (
+                            <image
+                              href={member.avatarUrl}
+                              x="-7"
+                              y="-7"
+                              width="14"
+                              height="14"
+                              clipPath={`url(#${thumbClipId})`}
+                              preserveAspectRatio="xMidYMid slice"
+                            />
+                          )}
+                          {!member.avatarUrl && (
+                            <text
+                              x="0"
+                              y="0"
+                              textAnchor="middle"
+                              dominantBaseline="middle"
+                              fill="white"
+                              fontSize="7"
+                              fontWeight="700"
+                              fontFamily="ui-sans-serif, system-ui, sans-serif"
+                            >
+                              {getFriendInitials(member.name)}
+                            </text>
+                          )}
+                          <circle
+                            cx="0"
+                            cy="0"
+                            r="7"
+                            fill="none"
+                            stroke="rgba(255,255,255,0.85)"
+                            strokeWidth="1.5"
+                            vectorEffect="non-scaling-stroke"
+                          />
+                        </g>
+                      );
+                    })}
+                    <circle
+                      cx="0"
+                      cy="0"
+                      r={innerRadius - 2}
+                      fill="rgba(2,6,23,0.88)"
+                      stroke="white"
+                      strokeWidth="2"
+                      vectorEffect="non-scaling-stroke"
+                    />
+                    <text
+                      x="0"
+                      y="0"
+                      textAnchor="middle"
+                      dominantBaseline="middle"
+                      fill="white"
+                      fontSize="10"
+                      fontWeight="700"
+                      fontFamily="ui-sans-serif, system-ui, sans-serif"
+                    >
+                      {cluster.members.length}
+                    </text>
+                  </>
+                )}
+
+                {isHovered ? (
+                  <g transform={`translate(${-(estimatedLabelWidth / 2)} ${-(outerRadius + 22)})`} pointerEvents="none">
+                    <rect
+                      x="0"
+                      y="0"
+                      width={estimatedLabelWidth}
+                      height="20"
+                      rx="10"
+                      fill="rgba(2,6,23,0.92)"
+                      stroke="rgba(56,189,248,0.65)"
+                      strokeWidth="1"
+                      vectorEffect="non-scaling-stroke"
+                    />
+                    <text
+                      x={estimatedLabelWidth / 2}
+                      y="10"
+                      textAnchor="middle"
+                      dominantBaseline="middle"
+                      fill="#e2e8f0"
+                      fontSize="10"
+                      fontWeight="700"
+                      fontFamily="ui-sans-serif, system-ui, sans-serif"
+                    >
+                      {labelText}
+                    </text>
+                  </g>
+                ) : null}
+
+                <circle
+                  cx="0"
+                  cy="0"
+                  r={outerRadius + 4}
+                  fill="transparent"
+                  style={{ cursor: 'pointer' }}
+                  onMouseEnter={() => setHoveredClusterKey(clusterKey)}
+                  onMouseLeave={() => setHoveredClusterKey(null)}
+                  onClick={() => {
+                    const icao24 = firstMember.icao24;
+                    if (icao24) {
+                      onSelectFlight?.(icao24);
+                    }
+                  }}
+                />
               </g>
             );
           })}
