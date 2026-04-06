@@ -2,7 +2,7 @@ import { notFound } from 'next/navigation';
 import { FriendsConfigClient } from '~/components/tracker/friends/FriendsConfigClient';
 import { Link } from '~/i18n/navigation';
 import { isValidLocale } from '~/i18n/routing';
-import { readFriendsTrackerConfig } from '~/lib/server/friendsTracker';
+import { readFriendsTrackerConfigWithAirportTimezones } from '~/lib/server/friendsTracker';
 import { getTrackerCronDashboard } from '~/lib/server/trackerCron';
 
 export const dynamic = 'force-dynamic';
@@ -21,7 +21,7 @@ export default async function ChantalConfigPage({ params }: ChantalConfigPagePro
   const demoReferenceTime = Date.now();
 
   const [initialConfig, initialCronDashboard] = await Promise.all([
-    readFriendsTrackerConfig(),
+    readFriendsTrackerConfigWithAirportTimezones(),
     getTrackerCronDashboard(5),
   ]);
 

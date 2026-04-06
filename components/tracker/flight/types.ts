@@ -125,6 +125,7 @@ export interface AirportDirectoryResponse {
   total: number;
   mapped: number;
   airports: AirportMapEntry[];
+  timezones?: Record<string, string>;
 }
 
 export interface SelectedFlightDetails {

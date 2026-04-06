@@ -1,5 +1,9 @@
 import { NextResponse } from 'next/server';
-import { readFriendsTrackerConfig, writeFriendsTrackerConfig } from '~/lib/server/friendsTracker';
+import {
+  readFriendsTrackerConfigWithAirportTimezones,
+  withFriendsTrackerAirportTimezones,
+  writeFriendsTrackerConfig,
+} from '~/lib/server/friendsTracker';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -16,7 +20,7 @@ function buildJsonResponse(body: unknown, status = 200) {
 
 export async function GET() {
   try {
-    return buildJsonResponse(await readFriendsTrackerConfig());
+    return buildJsonResponse(await readFriendsTrackerConfigWithAirportTimezones());
   } catch (error) {
     return buildJsonResponse({
       error: error instanceof Error ? error.message : 'Unable to load the Chantal tracker config.',
@@ -52,7 +56,7 @@ export async function PUT(request: Request) {
       friends: Array.isArray(body.friends) ? body.friends : undefined,
     });
 
-    return buildJsonResponse(payload);
+    return buildJsonResponse(await withFriendsTrackerAirportTimezones(payload));
   } catch (error) {
     return buildJsonResponse({
       error: error instanceof Error ? error.message : 'Unable to save the Chantal tracker config.',

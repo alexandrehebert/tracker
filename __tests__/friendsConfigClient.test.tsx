@@ -83,9 +83,22 @@ const initialCronDashboard: TrackerCronDashboard = {
 
 const airportDirectoryResponse = {
   fetchedAt: Date.now(),
-  total: 3,
+  total: 4,
   mapped: 0,
   airports: [
+    {
+      code: 'SJC',
+      iata: 'SJC',
+      icao: 'KSJC',
+      name: 'San Jose Mineta International Airport',
+      city: 'San Jose',
+      country: 'United States',
+      latitude: 37.3639,
+      longitude: -121.9289,
+      timezone: 'America/Los_Angeles',
+      x: null,
+      y: null,
+    },
     {
       code: 'CDG',
       iata: 'CDG',
@@ -128,6 +141,57 @@ const airportDirectoryResponse = {
   ],
 };
 
+function buildAirportFixtureTimezoneLookup(airports: typeof airportDirectoryResponse.airports): Record<string, string> {
+  return airports.reduce<Record<string, string>>((lookup, airport) => {
+    if (!airport.timezone) {
+      return lookup;
+    }
+
+    for (const code of [airport.code, airport.iata, airport.icao]) {
+      if (code) {
+        lookup[code] = airport.timezone;
+      }
+    }
+
+    return lookup;
+  }, {});
+}
+
+function buildAirportFixtureSearchValue(airport: typeof airportDirectoryResponse.airports[number]): string {
+  return [airport.code, airport.iata, airport.icao, airport.name, airport.city, airport.country, airport.timezone]
+    .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+    .join(' ')
+    .toLowerCase();
+}
+
+function getAirportFixtureScore(airport: typeof airportDirectoryResponse.airports[number], query: string): number {
+  const normalizedSearch = query.toLowerCase();
+  const normalizedCode = query.toUpperCase();
+  const codes = [airport.code, airport.iata, airport.icao].filter(Boolean) as string[];
+  const textFields = [airport.name, airport.city, airport.country, airport.timezone]
+    .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+    .map((value) => value.toLowerCase());
+
+  let score = 0;
+
+  if (codes.some((code) => code === normalizedCode)) score += 1000;
+  if (codes.some((code) => code.startsWith(normalizedCode))) score += 700;
+  if (textFields.some((field) => field === normalizedSearch)) score += 450;
+  if (textFields.some((field) => field.startsWith(normalizedSearch))) score += 300;
+  if (textFields.some((field) => field.split(/[\s,/()-]+/).some((word) => word.startsWith(normalizedSearch)))) score += 180;
+  if (textFields.some((field) => field.includes(normalizedSearch))) score += 90;
+
+  return score;
+}
+
+function searchAirportFixture(query: string): typeof airportDirectoryResponse.airports {
+  const normalizedSearch = query.trim().toLowerCase();
+
+  return [...airportDirectoryResponse.airports]
+    .filter((airport) => buildAirportFixtureSearchValue(airport).includes(normalizedSearch))
+    .sort((left, right) => getAirportFixtureScore(right, query) - getAirportFixtureScore(left, query));
+}
+
 describe('FriendsConfigClient', () => {
   beforeEach(() => {
     vi.restoreAllMocks();
@@ -139,7 +203,22 @@ describe('FriendsConfigClient', () => {
           : input.url;
 
       if (url.includes('/api/airports')) {
-        return new Response(JSON.stringify(airportDirectoryResponse), {
+        const parsedUrl = new URL(url, 'http://localhost');
+        const query = parsedUrl.searchParams.get('query')?.trim() ?? '';
+        const codesParam = parsedUrl.searchParams.get('codes')?.trim() ?? '';
+
+        const airports = codesParam
+          ? airportDirectoryResponse.airports.filter((airport) => codesParam.split(',').map((code) => code.trim().toUpperCase()).includes(airport.code))
+          : query
+            ? searchAirportFixture(query)
+            : airportDirectoryResponse.airports;
+
+        return new Response(JSON.stringify({
+          ...airportDirectoryResponse,
+          total: airports.length,
+          airports,
+          timezones: buildAirportFixtureTimezoneLookup(airports),
+        }), {
           status: 200,
           headers: { 'Content-Type': 'application/json' },
         });
@@ -197,9 +276,66 @@ describe('FriendsConfigClient', () => {
     await user.clear(toInput);
     await user.type(toInput, 'amst');
 
-    const toSuggestion = await screen.findByRole('option', { name: /ams — amsterdam airport schiphol/i });
+    const arrivalListbox = await screen.findByRole('listbox', { name: /arrival airport suggestions for leg 2/i });
+    const toSuggestion = within(arrivalListbox).getByRole('option', { name: /ams — amsterdam airport schiphol/i });
     await user.click(toSuggestion);
     expect(toInput).toHaveValue('AMS');
+  });
+
+  it('orders airport suggestions by relevance instead of raw directory order', async () => {
+    const user = userEvent.setup();
+
+    render(<FriendsConfigClient initialConfig={initialConfig} initialCronDashboard={initialCronDashboard} />);
+
+    const aliceCard = screen.getByDisplayValue('Alice').closest('section');
+    expect(aliceCard).not.toBeNull();
+
+    const aliceQueries = within(aliceCard as HTMLElement);
+    const [fromInput] = aliceQueries.getAllByLabelText(/from/i) as HTMLInputElement[];
+    await user.clear(fromInput);
+    await user.type(fromInput, 'jo');
+
+    const listbox = await screen.findByRole('listbox', { name: /departure airport suggestions for leg 1/i });
+    const options = within(listbox).getAllByRole('option');
+
+    expect(options[0]).toHaveTextContent('JFK — John F. Kennedy International Airport');
+  });
+
+  it('keeps the dropdown open for a unique exact airport code match so the name stays visible', async () => {
+    const user = userEvent.setup();
+
+    render(<FriendsConfigClient initialConfig={initialConfig} initialCronDashboard={initialCronDashboard} />);
+
+    const aliceCard = screen.getByDisplayValue('Alice').closest('section');
+    expect(aliceCard).not.toBeNull();
+
+    const aliceQueries = within(aliceCard as HTMLElement);
+    const [fromInput] = aliceQueries.getAllByLabelText(/from/i) as HTMLInputElement[];
+    await user.clear(fromInput);
+    await user.type(fromInput, 'jfk');
+
+    const listbox = await screen.findByRole('listbox', { name: /departure airport suggestions for leg 1/i });
+    expect(within(listbox).getByRole('option', { name: /jfk — john f\. kennedy international airport/i })).toBeVisible();
+    expect(fromInput).toHaveValue('JFK');
+  });
+
+  it('hides the airport dropdown once the input loses focus', async () => {
+    const user = userEvent.setup();
+
+    render(<FriendsConfigClient initialConfig={initialConfig} initialCronDashboard={initialCronDashboard} />);
+
+    const aliceCard = screen.getByDisplayValue('Alice').closest('section');
+    expect(aliceCard).not.toBeNull();
+
+    const aliceQueries = within(aliceCard as HTMLElement);
+    const [fromInput] = aliceQueries.getAllByLabelText(/from/i) as HTMLInputElement[];
+    await user.clear(fromInput);
+    await user.type(fromInput, 'par');
+
+    await screen.findByRole('listbox', { name: /departure airport suggestions for leg 1/i });
+    await user.click(aliceQueries.getByDisplayValue('Alice'));
+
+    expect(screen.queryByRole('listbox', { name: /departure airport suggestions for leg 1/i })).not.toBeInTheDocument();
   });
 
   it('enables save only when there are pending changes', async () => {
@@ -237,6 +373,10 @@ describe('FriendsConfigClient', () => {
 
     const timezoneConfig: FriendsTrackerConfig = {
       ...initialConfig,
+      airportTimezones: {
+        JFK: 'America/New_York',
+        KJFK: 'America/New_York',
+      },
       trips: [
         {
           ...baseTrip!,
@@ -258,14 +398,20 @@ describe('FriendsConfigClient', () => {
       ],
     };
 
-    render(<FriendsConfigClient initialConfig={timezoneConfig} initialCronDashboard={initialCronDashboard} />);
+    render(
+      <FriendsConfigClient
+        initialConfig={timezoneConfig}
+        initialCronDashboard={initialCronDashboard}
+      />,
+    );
 
     const departureInput = screen.getByLabelText(/estimated departure/i) as HTMLInputElement;
+
+    expect(departureInput.value).toBe('2026-04-14T05:30');
+    expect(screen.getByText(/Uses America\/New_York for JFK\./i)).toBeInTheDocument();
 
     await waitFor(() => {
       expect(departureInput.value).toBe('2026-04-14T05:30');
     });
-
-    expect(screen.getByText(/Uses America\/New_York for JFK\./i)).toBeInTheDocument();
   });
 });

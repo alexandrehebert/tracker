@@ -37,6 +37,7 @@ export interface FriendsTrackerConfig {
   currentTripId?: string | null;
   trips?: FriendsTrackerTripConfig[];
   destinationAirport?: string | null;
+  airportTimezones?: Record<string, string> | null;
   friends: FriendTravelConfig[];
 }
 

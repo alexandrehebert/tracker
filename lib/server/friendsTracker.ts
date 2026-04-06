@@ -8,6 +8,7 @@ import {
   normalizeFriendsTrackerTripConfig,
   type FriendsTrackerConfig,
 } from '~/lib/friendsTracker';
+import { buildAirportTimezoneLookup, lookupAirportDetails } from './airports';
 import { writeTrackerCronConfig } from './trackerCron';
 
 const DEFAULT_DB_NAME = 'tracker';
@@ -100,6 +101,34 @@ async function syncFriendsTrackerCron(config: FriendsTrackerConfig): Promise<voi
   }
 }
 
+function collectFriendsTrackerAirportCodes(config: FriendsTrackerConfig): string[] {
+  return Array.from(new Set(
+    (config.trips ?? []).flatMap((trip) => trip.friends.flatMap((friend) => friend.flights.flatMap((leg) => [
+      typeof leg.from === 'string' ? leg.from.trim().toUpperCase() : '',
+      typeof leg.to === 'string' ? leg.to.trim().toUpperCase() : '',
+    ]))),
+  )).filter(Boolean)
+}
+
+export async function withFriendsTrackerAirportTimezones(config: FriendsTrackerConfig): Promise<FriendsTrackerConfig> {
+  const airportCodes = collectFriendsTrackerAirportCodes(config)
+
+  if (airportCodes.length === 0) {
+    return {
+      ...config,
+      airportTimezones: {},
+    }
+  }
+
+  const airports = (await Promise.all(airportCodes.map((code) => lookupAirportDetails(code))))
+    .filter((airport): airport is NonNullable<typeof airport> => Boolean(airport))
+
+  return {
+    ...config,
+    airportTimezones: buildAirportTimezoneLookup(airports),
+  }
+}
+
 export async function readFriendsTrackerConfig(): Promise<FriendsTrackerConfig> {
   const collection = await getFriendsTrackerConfigCollection();
 
@@ -114,6 +143,10 @@ export async function readFriendsTrackerConfig(): Promise<FriendsTrackerConfig> 
     logMongoWarning(error);
     return normalizeFriendsTrackerConfig(DEFAULT_CONFIG);
   }
+}
+
+export async function readFriendsTrackerConfigWithAirportTimezones(): Promise<FriendsTrackerConfig> {
+  return withFriendsTrackerAirportTimezones(await readFriendsTrackerConfig())
 }
 
 export async function writeFriendsTrackerConfig(input: Partial<FriendsTrackerConfig> | null | undefined): Promise<FriendsTrackerConfig> {

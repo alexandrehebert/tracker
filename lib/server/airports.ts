@@ -88,6 +88,79 @@ function compareAirports(left: AirportDetails, right: AirportDetails): number {
   return left.code.localeCompare(right.code, 'en', { sensitivity: 'base' })
 }
 
+export function buildAirportTimezoneLookup(airports: AirportDetails[]): Record<string, string> {
+  return airports.reduce<Record<string, string>>((lookup, airport) => {
+    const timezone = typeof airport.timezone === 'string' && airport.timezone.trim()
+      ? airport.timezone.trim()
+      : null
+
+    if (!timezone) {
+      return lookup
+    }
+
+    for (const code of [airport.code, airport.iata, airport.icao]) {
+      const normalizedCode = normalizeAirportCode(code)
+      if (normalizedCode) {
+        lookup[normalizedCode] = timezone
+      }
+    }
+
+    return lookup
+  }, {})
+}
+
+function buildAirportSearchHaystack(airport: AirportDetails): string {
+  return [
+    airport.code,
+    airport.iata,
+    airport.icao,
+    airport.name,
+    airport.city,
+    airport.country,
+    airport.timezone,
+  ]
+    .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
+    .join(' ')
+    .toLowerCase()
+}
+
+function getAirportSearchScore(airport: AirportDetails, searchTerm: string, searchCode: string): number {
+  const codes = [airport.code, airport.iata, airport.icao]
+    .map((value) => normalizeAirportCode(value))
+    .filter((value) => value.length > 0)
+  const textFields = [airport.name, airport.city, airport.country, airport.timezone]
+    .map((value) => normalizeAirportText(value))
+    .filter((value) => value.length > 0)
+
+  let score = 0
+
+  if (codes.some((code) => code === searchCode)) {
+    score += 1000
+  }
+
+  if (codes.some((code) => code.startsWith(searchCode))) {
+    score += 700
+  }
+
+  if (textFields.some((field) => field === searchTerm)) {
+    score += 450
+  }
+
+  if (textFields.some((field) => field.startsWith(searchTerm))) {
+    score += 300
+  }
+
+  if (textFields.some((field) => field.split(/[\s,/()-]+/).some((word) => word.startsWith(searchTerm)))) {
+    score += 180
+  }
+
+  if (textFields.some((field) => field.includes(searchTerm))) {
+    score += 90
+  }
+
+  return score
+}
+
 function toRadians(value: number): number {
   return value * (Math.PI / 180)
 }
@@ -280,28 +353,25 @@ export async function listAirportDetails(options: {
 } = {}): Promise<AirportDetails[]> {
   const { airports } = await loadAirportDirectory()
   const searchTerm = normalizeAirportText(options.search)
+  const searchCode = normalizeAirportCode(options.search)
 
   let result = options.mappedOnly
     ? airports.filter((airport) => airport.latitude != null && airport.longitude != null)
     : airports
 
   if (searchTerm) {
-    result = result.filter((airport) => {
-      const haystack = [
-        airport.code,
-        airport.iata,
-        airport.icao,
-        airport.name,
-        airport.city,
-        airport.country,
-        airport.timezone,
-      ]
-        .filter((value): value is string => typeof value === 'string' && value.trim().length > 0)
-        .join(' ')
-        .toLowerCase()
+    result = result
+      .filter((airport) => buildAirportSearchHaystack(airport).includes(searchTerm))
+      .sort((left, right) => {
+        const scoreDelta = getAirportSearchScore(right, searchTerm, searchCode)
+          - getAirportSearchScore(left, searchTerm, searchCode)
 
-      return haystack.includes(searchTerm)
-    })
+        if (scoreDelta !== 0) {
+          return scoreDelta
+        }
+
+        return compareAirports(left, right)
+      })
   }
 
   if (options.limit && options.limit > 0) {
