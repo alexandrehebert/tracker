@@ -663,6 +663,51 @@ describe('FlightMap3D', () => {
     expect(renderedHtmlElements.some((item: { type?: string; usage?: string; code?: string }) => item.type === 'airport' && item.usage === 'arrival' && item.code === 'CDG')).toBe(true);
   });
 
+  it('renders friend avatars above airport pins on the globe', async () => {
+    const { globe } = createGlobeMock();
+    globeFactory.mockReturnValue(() => globe);
+
+    render(
+      <TrackerMapProvider
+        value={{
+          globeRef: { current: null },
+          setGlobeRef: vi.fn(),
+          svgRef: { current: null },
+          mapTransform: { x: 0, y: 0, k: 1, apply: vi.fn(), applyX: vi.fn(), applyY: vi.fn(), invert: vi.fn(), invertX: vi.fn(), invertY: vi.fn(), rescaleX: vi.fn(), rescaleY: vi.fn(), scale: vi.fn(), translate: vi.fn(), toString: vi.fn(() => 'translate(0,0) scale(1)') },
+          zoomBy: vi.fn(),
+          resetZoom: vi.fn(),
+        }}
+      >
+        <FlightMap3D
+          flights={[trackedFlight]}
+          selectedIcao24={null}
+          selectionMode="all"
+          airportMarkers={airportMarkers}
+          flightAvatars={{
+            [trackedFlight.icao24]: [{
+              friendId: 'friend-1',
+              name: 'Alice Demo',
+              avatarUrl: null,
+              color: '#22c55e',
+            }],
+          }}
+        />
+      </TrackerMapProvider>,
+    );
+
+    await waitFor(() => {
+      expect(globe.htmlElementsData).toHaveBeenCalled();
+    });
+
+    const renderedHtmlElements = globe.htmlElementsData.mock.calls.at(-1)?.[0] ?? [];
+    const airportOverlay = renderedHtmlElements.find((item: { type?: string; code?: string }) => item.type === 'airport' && item.code === 'CDG');
+    const friendOverlay = renderedHtmlElements.find((item: { type?: string }) => item.type === 'friend-avatar');
+
+    expect(airportOverlay).toBeDefined();
+    expect(friendOverlay).toBeDefined();
+    expect(friendOverlay.altitude).toBeGreaterThan(airportOverlay.altitude);
+  });
+
   it('renders an orange departure marker for the selected route like the 2D map', async () => {
     const { globe } = createGlobeMock();
     globeFactory.mockReturnValue(() => globe);
@@ -785,5 +830,66 @@ describe('FlightMap3D', () => {
     departureElement?.dispatchEvent(new MouseEvent('click', { bubbles: true }));
 
     expect(onSelectFlight).toHaveBeenCalledWith(preDepartureFlight.icao24);
+  });
+
+  it('does not recenter the globe again when all-flight data refreshes', async () => {
+    const { globe } = createGlobeMock();
+    globeFactory.mockReturnValue(() => globe);
+
+    const initialFlights = [trackedFlight, secondaryFlight];
+    const refreshedFlights: TrackedFlight[] = [
+      {
+        ...trackedFlight,
+        current: trackedFlight.current
+          ? {
+            ...trackedFlight.current,
+            latitude: trackedFlight.current.latitude + 0.35,
+            longitude: trackedFlight.current.longitude + 0.4,
+          }
+          : null,
+      },
+      secondaryFlight,
+    ];
+
+    const providerValue = {
+      globeRef: { current: null },
+      setGlobeRef: vi.fn(),
+      svgRef: { current: null },
+      mapTransform: { x: 0, y: 0, k: 1, apply: vi.fn(), applyX: vi.fn(), applyY: vi.fn(), invert: vi.fn(), invertX: vi.fn(), invertY: vi.fn(), rescaleX: vi.fn(), rescaleY: vi.fn(), scale: vi.fn(), translate: vi.fn(), toString: vi.fn(() => 'translate(0,0) scale(1)') },
+      zoomBy: vi.fn(),
+      resetZoom: vi.fn(),
+    };
+
+    const { rerender } = render(
+      <TrackerMapProvider value={providerValue}>
+        <FlightMap3D
+          flights={initialFlights}
+          selectedIcao24={null}
+          selectionMode="all"
+        />
+      </TrackerMapProvider>,
+    );
+
+    await waitFor(() => {
+      expect(globe.pointOfView.mock.calls.length).toBeGreaterThanOrEqual(2);
+    });
+
+    const initialPointOfViewCalls = globe.pointOfView.mock.calls.length;
+
+    rerender(
+      <TrackerMapProvider value={providerValue}>
+        <FlightMap3D
+          flights={refreshedFlights}
+          selectedIcao24={null}
+          selectionMode="all"
+        />
+      </TrackerMapProvider>,
+    );
+
+    await waitFor(() => {
+      expect(globe.pointsData.mock.calls.length).toBeGreaterThanOrEqual(2);
+    });
+
+    expect(globe.pointOfView).toHaveBeenCalledTimes(initialPointOfViewCalls);
   });
 });

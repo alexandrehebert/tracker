@@ -174,6 +174,93 @@ describe('friends tracker helpers', () => {
 
     expect(config.destinationAirport).toBe('mia');
   });
+
+  it('migrates a legacy single-trip config into trips and injects the demo test trip', () => {
+    const config = normalizeFriendsTrackerConfig({
+      destinationAirport: 'LIS',
+      friends: [
+        {
+          id: 'friend-1',
+          name: 'Alice',
+          flights: [
+            {
+              id: 'leg-1',
+              flightNumber: 'AF123',
+              departureTime: '2026-04-14T09:30:00.000Z',
+              from: 'CDG',
+              to: 'LIS',
+            },
+          ],
+        },
+      ],
+    } as Partial<FriendsTrackerConfig>);
+
+    expect(config.trips.length).toBeGreaterThanOrEqual(2);
+    expect(config.currentTripId).toBeTruthy();
+
+    const currentTrip = config.trips.find((trip) => trip.id === config.currentTripId);
+    expect(currentTrip?.destinationAirport).toBe('LIS');
+    expect(currentTrip?.friends[0]?.name).toBe('Alice');
+
+    const demoTrip = config.trips.find((trip) => trip.id === 'demo-test-trip');
+    expect(demoTrip).toBeTruthy();
+    expect(demoTrip?.friends).toHaveLength(3);
+    expect(demoTrip?.friends.flatMap((friend) => friend.flights.map((leg) => leg.flightNumber))).toEqual(
+      expect.arrayContaining(['TEST1', 'TEST2', 'TEST3']),
+    );
+  });
+
+  it('exposes only the selected current trip at the top level for the live map and cron sync', () => {
+    const config = normalizeFriendsTrackerConfig({
+      currentTripId: 'demo-trip',
+      trips: [
+        {
+          id: 'live-trip',
+          name: 'Live trip',
+          destinationAirport: 'LIS',
+          friends: [
+            {
+              id: 'friend-1',
+              name: 'Alice',
+              flights: [
+                {
+                  id: 'leg-1',
+                  flightNumber: 'AF123',
+                  departureTime: '2026-04-14T09:30:00.000Z',
+                  from: 'CDG',
+                  to: 'LIS',
+                },
+              ],
+            },
+          ],
+        },
+        {
+          id: 'demo-trip',
+          name: 'Demo trip',
+          destinationAirport: 'JFK',
+          friends: [
+            {
+              id: 'friend-2',
+              name: 'Bob',
+              flights: [
+                {
+                  id: 'leg-2',
+                  flightNumber: 'TEST2',
+                  departureTime: '2026-04-15T12:30:00.000Z',
+                  from: 'LHR',
+                  to: 'JFK',
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    } as Partial<FriendsTrackerConfig>);
+
+    expect(config.destinationAirport).toBe('JFK');
+    expect(config.friends.map((friend) => friend.name)).toEqual(['Bob']);
+    expect(extractFriendTrackerIdentifiers(config)).toEqual(['TEST2']);
+  });
 });
 
 describe('buildAirportChain', () => {

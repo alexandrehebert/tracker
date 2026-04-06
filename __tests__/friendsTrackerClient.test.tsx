@@ -42,6 +42,7 @@ const initialConfig: FriendsTrackerConfig = {
     {
       id: 'friend-1',
       name: 'Alice',
+      avatarUrl: 'data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32"><rect width="32" height="32" fill="%230ea5e9"/></svg>',
       flights: [
         {
           id: 'leg-1',
@@ -92,6 +93,19 @@ describe('FriendsTrackerClient', () => {
     vi.unstubAllGlobals();
   });
 
+  it('renders the configured friend avatar in the sidebar card with the same color coding as the map', async () => {
+    render(<FriendsTrackerClient map={map} initialConfig={initialConfig} airportMarkers={[]} />);
+
+    expect(await screen.findByText(/chantal crew tracker/i)).toBeInTheDocument();
+
+    const avatarImage = screen.getByRole('img', { name: /alice/i });
+    expect(avatarImage).toHaveAttribute('src', expect.stringContaining('data:image/svg+xml'));
+    expect(avatarImage.parentElement).toHaveStyle({
+      borderColor: 'hsl(0, 78%, 64%)',
+      backgroundColor: 'hsla(0, 78%, 64%, 0.18)',
+    });
+  });
+
   it('keeps the transparent gaps in the top action area from blocking map hover targets', async () => {
     const user = userEvent.setup();
     const fetchMock = vi.spyOn(window, 'fetch');
@@ -110,5 +124,65 @@ describe('FriendsTrackerClient', () => {
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith('/api/tracker?q=AF123&refresh=1', { cache: 'no-store' });
     });
+  });
+
+  it('sizes timeline legs from airport distance while keeping short hops readable', async () => {
+    const distanceConfig: FriendsTrackerConfig = {
+      ...initialConfig,
+      friends: [
+        {
+          ...initialConfig.friends[0]!,
+          flights: [
+            {
+              id: 'leg-1',
+              flightNumber: 'AF123',
+              departureTime: '2026-04-14T09:30:00.000Z',
+              from: 'ORY',
+              to: 'CDG',
+            },
+            {
+              id: 'leg-2',
+              flightNumber: 'AF456',
+              departureTime: '2026-04-14T12:00:00.000Z',
+              from: 'CDG',
+              to: 'BRU',
+            },
+            {
+              id: 'leg-3',
+              flightNumber: 'AF789',
+              departureTime: '2026-04-15T08:00:00.000Z',
+              from: 'BRU',
+              to: 'JFK',
+            },
+          ],
+        },
+      ],
+    };
+
+    render(
+      <FriendsTrackerClient
+        map={map}
+        initialConfig={distanceConfig}
+        airportMarkers={[
+          { id: 'ory', code: 'ORY', label: 'Paris Orly', latitude: 48.7262, longitude: 2.3652, usage: 'both' },
+          { id: 'cdg', code: 'CDG', label: 'Paris Charles de Gaulle', latitude: 49.0097, longitude: 2.5479, usage: 'both' },
+          { id: 'bru', code: 'BRU', label: 'Brussels', latitude: 50.9014, longitude: 4.4844, usage: 'both' },
+          { id: 'jfk', code: 'JFK', label: 'New York JFK', latitude: 40.6413, longitude: -73.7781, usage: 'both' },
+        ]}
+      />,
+    );
+
+    expect(await screen.findByText(/alice/i)).toBeInTheDocument();
+
+    const hopOne = screen.getByTitle(/ory to cdg/i);
+    const hopTwo = screen.getByTitle(/cdg to bru/i);
+    const longHaul = screen.getByTitle(/bru to jfk/i);
+
+    const hopOneGrow = Number.parseFloat((hopOne as HTMLElement).style.flexGrow);
+    const hopTwoGrow = Number.parseFloat((hopTwo as HTMLElement).style.flexGrow);
+    const longHaulGrow = Number.parseFloat((longHaul as HTMLElement).style.flexGrow);
+
+    expect(hopOneGrow).toBeCloseTo(hopTwoGrow, 5);
+    expect(longHaulGrow).toBeGreaterThan(hopTwoGrow);
   });
 });

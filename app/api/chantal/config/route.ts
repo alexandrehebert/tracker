@@ -29,14 +29,26 @@ export async function PUT(request: Request) {
     const body = await request.json().catch(() => ({})) as {
       updatedBy?: string | null;
       cronEnabled?: boolean;
+      currentTripId?: string | null;
       destinationAirport?: string | null;
+      trips?: unknown;
       friends?: unknown;
     };
 
     const payload = await writeFriendsTrackerConfig({
       updatedBy: typeof body.updatedBy === 'string' ? body.updatedBy : null,
       cronEnabled: typeof body.cronEnabled === 'boolean' ? body.cronEnabled : undefined,
-      destinationAirport: typeof body.destinationAirport === 'string' ? body.destinationAirport : undefined,
+      currentTripId: typeof body.currentTripId === 'string'
+        ? body.currentTripId
+        : body.currentTripId === null
+        ? null
+        : undefined,
+      destinationAirport: typeof body.destinationAirport === 'string'
+        ? body.destinationAirport
+        : body.destinationAirport === null
+        ? null
+        : undefined,
+      trips: Array.isArray(body.trips) ? body.trips : undefined,
       friends: Array.isArray(body.friends) ? body.friends : undefined,
     });
 

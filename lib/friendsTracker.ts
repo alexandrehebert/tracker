@@ -21,13 +21,30 @@ export interface FriendTravelConfig {
   flights: FriendFlightLeg[];
 }
 
+export interface FriendsTrackerTripConfig {
+  id: string;
+  name: string;
+  destinationAirport?: string | null;
+  friends: FriendTravelConfig[];
+  isDemo?: boolean | null;
+}
+
 export interface FriendsTrackerConfig {
   updatedAt: number | null;
   updatedBy: string | null;
   cronEnabled?: boolean | null;
+  currentTripId?: string | null;
+  trips?: FriendsTrackerTripConfig[];
   destinationAirport?: string | null;
   friends: FriendTravelConfig[];
 }
+
+export type NormalizedFriendsTrackerConfig = FriendsTrackerConfig & {
+  currentTripId: string | null;
+  trips: FriendsTrackerTripConfig[];
+  destinationAirport: string | null;
+  friends: FriendTravelConfig[];
+};
 
 export interface FriendFlightStatus {
   friend: FriendTravelConfig;
@@ -97,6 +114,8 @@ export function createEmptyFriendFlightLeg(): FriendFlightLeg {
   };
 }
 
+const DEFAULT_DEMO_TRIP_ID = 'demo-test-trip';
+
 export function createEmptyFriendConfig(): FriendTravelConfig {
   return {
     id: '',
@@ -104,6 +123,85 @@ export function createEmptyFriendConfig(): FriendTravelConfig {
     avatarUrl: null,
     flights: [createEmptyFriendFlightLeg()],
   };
+}
+
+export function createEmptyTripConfig(): FriendsTrackerTripConfig {
+  return {
+    id: '',
+    name: '',
+    destinationAirport: null,
+    friends: [],
+    isDemo: false,
+  };
+}
+
+function buildDefaultDemoTrip(now = Date.now()): FriendsTrackerTripConfig {
+  return {
+    id: DEFAULT_DEMO_TRIP_ID,
+    name: 'Demo / Test Trip',
+    destinationAirport: 'JFK',
+    isDemo: true,
+    friends: [
+      {
+        id: 'demo-friend-1',
+        name: 'Alice Demo',
+        flights: [
+          {
+            id: 'demo-leg-1',
+            flightNumber: 'TEST1',
+            departureTime: new Date(now + (45 * 60 * 1000)).toISOString(),
+            from: 'CDG',
+            to: 'JFK',
+            note: 'Preset demo leg: pre-departure at Paris CDG.',
+          },
+        ],
+      },
+      {
+        id: 'demo-friend-2',
+        name: 'Bruno Demo',
+        flights: [
+          {
+            id: 'demo-leg-2',
+            flightNumber: 'TEST2',
+            departureTime: new Date(now - (2 * 60 * 60 * 1000)).toISOString(),
+            from: 'LHR',
+            to: 'JFK',
+            note: 'Preset demo leg: already airborne across the Atlantic.',
+          },
+        ],
+      },
+      {
+        id: 'demo-friend-3',
+        name: 'Chloe Demo',
+        flights: [
+          {
+            id: 'demo-leg-3a',
+            flightNumber: 'TEST3',
+            departureTime: new Date(now - (5 * 60 * 60 * 1000)).toISOString(),
+            from: 'MEX',
+            to: 'ATL',
+            note: 'Preset demo leg: first hop already completed.',
+          },
+          {
+            id: 'demo-leg-3b',
+            flightNumber: 'DL045',
+            departureTime: new Date(now + (90 * 60 * 1000)).toISOString(),
+            from: 'ATL',
+            to: 'JFK',
+            note: 'Preset demo connection into New York.',
+          },
+        ],
+      },
+    ],
+  };
+}
+
+function ensureDemoTrip(trips: FriendsTrackerTripConfig[]): FriendsTrackerTripConfig[] {
+  if (trips.some((trip) => trip.id === DEFAULT_DEMO_TRIP_ID)) {
+    return trips;
+  }
+
+  return [...trips, buildDefaultDemoTrip()];
 }
 
 export function normalizeFriendFlightLeg(
@@ -144,28 +242,96 @@ export function normalizeFriendConfig(
   };
 }
 
+export function normalizeFriendsTrackerTripConfig(
+  input: Partial<FriendsTrackerTripConfig> | null | undefined,
+  tripIndex = 0,
+  fallbackName?: string,
+): FriendsTrackerTripConfig {
+  const friends = Array.isArray(input?.friends)
+    ? input.friends.map((friend, friendIndex) => normalizeFriendConfig(friend, friendIndex))
+    : [];
+
+  return {
+    id: typeof input?.id === 'string' && input.id.trim() ? input.id.trim() : getFallbackId('trip', tripIndex),
+    name: typeof input?.name === 'string' && input.name.trim() ? input.name.trim() : (fallbackName ?? `Trip ${tripIndex + 1}`),
+    destinationAirport: normalizeOptionalText(input?.destinationAirport),
+    friends,
+    isDemo: typeof input?.isDemo === 'boolean' ? input.isDemo : false,
+  };
+}
+
+export function getCurrentTripConfig(config: FriendsTrackerConfig): FriendsTrackerTripConfig | null {
+  const currentTripId = normalizeOptionalText(config.currentTripId);
+  const trips = config.trips ?? [];
+
+  return trips.find((trip) => trip.id === currentTripId)
+    ?? trips.find((trip) => !trip.isDemo)
+    ?? trips[0]
+    ?? null;
+}
+
 export function normalizeFriendsTrackerConfig(
   input: Partial<FriendsTrackerConfig> | null | undefined,
-): FriendsTrackerConfig {
+): NormalizedFriendsTrackerConfig {
+  const normalizedTrips = Array.isArray(input?.trips) && input.trips.length > 0
+    ? input.trips.map((trip, tripIndex) => normalizeFriendsTrackerTripConfig(trip, tripIndex))
+    : (() => {
+      const legacyTrip = normalizeFriendsTrackerTripConfig({
+        id: 'primary-trip',
+        name: 'Main trip',
+        destinationAirport: input?.destinationAirport,
+        friends: Array.isArray(input?.friends) ? input.friends : [],
+      }, 0, 'Main trip');
+
+      return legacyTrip.destinationAirport || legacyTrip.friends.length > 0
+        ? [legacyTrip]
+        : [];
+    })();
+
+  const trips = ensureDemoTrip(normalizedTrips);
+  const requestedCurrentTripId = normalizeOptionalText(input?.currentTripId);
+  const currentTrip = trips.find((trip) => trip.id === requestedCurrentTripId)
+    ?? trips.find((trip) => !trip.isDemo)
+    ?? trips[0]
+    ?? null;
+
   return {
     updatedAt: typeof input?.updatedAt === 'number' && Number.isFinite(input.updatedAt) ? input.updatedAt : null,
     updatedBy: normalizeOptionalText(input?.updatedBy),
     cronEnabled: typeof input?.cronEnabled === 'boolean' ? input.cronEnabled : true,
-    destinationAirport: normalizeOptionalText(input?.destinationAirport),
-    friends: Array.isArray(input?.friends)
-      ? input.friends.map((friend, friendIndex) => normalizeFriendConfig(friend, friendIndex))
-      : [],
+    currentTripId: currentTrip?.id ?? null,
+    trips,
+    destinationAirport: currentTrip?.destinationAirport ?? null,
+    friends: currentTrip?.friends ?? [],
   };
 }
 
 export function extractFriendTrackerIdentifiers(config: FriendsTrackerConfig): string[] {
+  const friends = getCurrentTripConfig(config)?.friends ?? config.friends;
+
   return Array.from(
     new Set(
-      config.friends.flatMap((friend) => friend.flights)
+      friends.flatMap((friend) => friend.flights)
         .map((leg) => normalizeFriendFlightIdentifier(leg.resolvedIcao24 || leg.flightNumber))
         .filter(Boolean),
     ),
   );
+}
+
+function updateCurrentTripInConfig(
+  config: FriendsTrackerConfig,
+  updater: (trip: FriendsTrackerTripConfig) => FriendsTrackerTripConfig,
+): NormalizedFriendsTrackerConfig {
+  const currentTrip = getCurrentTripConfig(config);
+  if (!currentTrip) {
+    return normalizeFriendsTrackerConfig(config);
+  }
+
+  return normalizeFriendsTrackerConfig({
+    ...config,
+    currentTripId: currentTrip.id,
+    trips: (config.trips ?? []).map((trip) => trip.id === currentTrip.id ? updater(trip) : trip),
+  });
 }
 
 export function buildFriendFlightLabel(friend: FriendTravelConfig, _leg: FriendFlightLeg, legIndex: number): string {
@@ -276,7 +442,7 @@ export function applyAutoLockedFriendFlights(
   config: FriendsTrackerConfig,
   flights: TrackedFlight[],
   now = Date.now(),
-): { config: FriendsTrackerConfig; changed: boolean } {
+): { config: NormalizedFriendsTrackerConfig; changed: boolean } {
   const statuses = buildFriendFlightStatuses(config, flights, now);
   const lockedIcao24ByLegId = new Map(
     statuses
@@ -285,13 +451,13 @@ export function applyAutoLockedFriendFlights(
   );
 
   if (lockedIcao24ByLegId.size === 0) {
-    return { config, changed: false };
+    return { config: normalizeFriendsTrackerConfig(config), changed: false };
   }
 
   let changed = false;
-  const nextConfig = normalizeFriendsTrackerConfig({
-    ...config,
-    friends: config.friends.map((friend) => ({
+  const nextConfig = updateCurrentTripInConfig(config, (trip) => ({
+    ...trip,
+    friends: trip.friends.map((friend) => ({
       ...friend,
       flights: friend.flights.map((leg) => {
         const lockedIcao24 = lockedIcao24ByLegId.get(leg.id);
@@ -307,7 +473,7 @@ export function applyAutoLockedFriendFlights(
         } satisfies FriendFlightLeg;
       }),
     })),
-  });
+  }));
 
   return {
     config: nextConfig,

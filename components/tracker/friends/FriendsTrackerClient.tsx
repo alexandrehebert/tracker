@@ -18,6 +18,7 @@ import {
   buildAirportChain,
   buildFriendFlightStatuses,
   extractFriendTrackerIdentifiers,
+  getCurrentTripConfig,
   getCurrentTripLegs,
   normalizeFriendsTrackerConfig,
   type FriendFlightLeg,
@@ -37,6 +38,8 @@ import type { FlightMapAirportMarker, FriendAvatarInfo, FriendAvatarMarker, Trac
 
 const AUTO_REFRESH_MS = 60_000;
 const MIN_MAP_LOADING_MS = 2_000;
+const TIMELINE_MIN_SEGMENT_DISTANCE_KM = 600;
+const TIMELINE_FALLBACK_SEGMENT_DISTANCE_KM = 1_200;
 
 interface FriendsTrackerClientProps {
   map: WorldMapPayload;
@@ -89,6 +92,72 @@ function getFriendInitials(name: string): string {
     return `${parts[0]![0]}${parts[parts.length - 1]![0]}`.toUpperCase();
   }
   return name.slice(0, 2).toUpperCase() || '?';
+}
+
+function withAlphaColor(color: string, alpha: number): string {
+  const normalizedAlpha = Math.min(Math.max(alpha, 0), 1);
+
+  if (color.startsWith('hsl(')) {
+    return color.replace(/^hsl\((.*)\)$/, `hsla($1, ${normalizedAlpha})`);
+  }
+
+  if (color.startsWith('rgb(')) {
+    return color.replace(/^rgb\((.*)\)$/, `rgba($1, ${normalizedAlpha})`);
+  }
+
+  return color;
+}
+
+function toRadians(value: number): number {
+  return value * (Math.PI / 180);
+}
+
+function computeAirportDistanceKm(from: FlightMapAirportMarker, to: FlightMapAirportMarker): number {
+  const earthRadiusKm = 6_371;
+  const latitudeDelta = toRadians(to.latitude - from.latitude);
+  const longitudeDelta = toRadians(to.longitude - from.longitude);
+  const fromLatitude = toRadians(from.latitude);
+  const toLatitude = toRadians(to.latitude);
+
+  const a = Math.sin(latitudeDelta / 2) ** 2
+    + Math.cos(fromLatitude) * Math.cos(toLatitude) * Math.sin(longitudeDelta / 2) ** 2;
+
+  return earthRadiusKm * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function estimateTimelineSegmentWeight(distanceKm: number | null): number {
+  const normalizedDistanceKm = Math.max(
+    distanceKm ?? TIMELINE_FALLBACK_SEGMENT_DISTANCE_KM,
+    TIMELINE_MIN_SEGMENT_DISTANCE_KM,
+  );
+
+  return Math.sqrt(normalizedDistanceKm / TIMELINE_MIN_SEGMENT_DISTANCE_KM);
+}
+
+function computeTimelineCursorFraction(cursorRaw: number | null, segmentWeights: number[]): number | null {
+  if (cursorRaw == null || segmentWeights.length === 0) {
+    return null;
+  }
+
+  const totalWeight = segmentWeights.reduce((sum, weight) => sum + weight, 0);
+  if (!(totalWeight > 0)) {
+    return null;
+  }
+
+  const clampedCursor = Math.min(Math.max(cursorRaw, 0), segmentWeights.length);
+  let traversedWeight = 0;
+
+  for (let i = 0; i < segmentWeights.length; i++) {
+    const weight = segmentWeights[i] ?? 1;
+    if (clampedCursor <= i + 1) {
+      const segmentProgress = Math.max(0, Math.min(clampedCursor - i, 1));
+      return (traversedWeight + segmentProgress * weight) / totalWeight;
+    }
+
+    traversedWeight += weight;
+  }
+
+  return 1;
 }
 
 /**
@@ -150,18 +219,49 @@ function FriendTimelineCard({
   friendStatuses,
   destinationAirport,
   now,
+  airportMarkers,
+  accentColor,
 }: {
   friend: FriendTravelConfig;
   friendStatuses: FriendFlightStatus[];
   destinationAirport: string | null;
   now: number;
+  airportMarkers: FlightMapAirportMarker[];
+  accentColor: string;
 }) {
   const currentTripLegs = getCurrentTripLegs(friend, friendStatuses, destinationAirport, now);
   const airports = buildAirportChain(currentTripLegs);
   const cursorRaw = computeTimelineCursorPosition(currentTripLegs, friendStatuses, now);
 
-  const numSegments = Math.max(airports.length - 1, 1);
-  const cursorFraction = cursorRaw != null ? cursorRaw / numSegments : null;
+  const airportMarkerByCode = useMemo(() => {
+    return new Map(
+      airportMarkers.map((marker) => [marker.code.toUpperCase().trim(), marker] as const),
+    );
+  }, [airportMarkers]);
+
+  const timelineSegments = useMemo(() => {
+    return airports.slice(0, -1).map((fromAirport, index) => {
+      const toAirport = airports[index + 1]!;
+      const fromMarker = airportMarkerByCode.get(fromAirport);
+      const toMarker = airportMarkerByCode.get(toAirport);
+      const distanceKm = fromMarker && toMarker
+        ? computeAirportDistanceKm(fromMarker, toMarker)
+        : null;
+
+      return {
+        id: currentTripLegs[index]?.id ?? `${fromAirport}-${toAirport}-${index}`,
+        fromAirport,
+        toAirport,
+        distanceKm,
+        weight: estimateTimelineSegmentWeight(distanceKm),
+      };
+    });
+  }, [airports, airportMarkerByCode, currentTripLegs]);
+
+  const cursorFraction = computeTimelineCursorFraction(
+    cursorRaw,
+    timelineSegments.map((segment) => segment.weight),
+  );
 
   // Determine how many airports are "completed" (friend has already passed through them).
   // Airport at index j is completed if leg j-1 is done and not currently active.
@@ -193,12 +293,28 @@ function FriendTimelineCard({
     <article className="rounded-2xl border border-white/10 bg-slate-950/55 p-3">
       {/* Header row: avatar + name + last seen */}
       <div className="flex items-center gap-3">
-        {/* Avatar placeholder */}
         <div
-          className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full border border-white/15 bg-slate-800 text-[11px] font-bold uppercase tracking-wide text-slate-300"
-          aria-label={`Avatar for ${friend.name}`}
+          className="flex h-9 w-9 shrink-0 items-center justify-center overflow-hidden rounded-full border p-[1.5px] text-[11px] font-bold uppercase tracking-wide text-slate-100"
+          style={{
+            borderColor: accentColor,
+            backgroundColor: withAlphaColor(accentColor, 0.18),
+            boxShadow: `0 0 0 3px ${withAlphaColor(accentColor, 0.12)}`,
+          }}
         >
-          {initials}
+          {friend.avatarUrl ? (
+            <img
+              src={friend.avatarUrl}
+              alt={friend.name}
+              className="h-full w-full rounded-full object-cover"
+            />
+          ) : (
+            <div
+              aria-label={`Avatar for ${friend.name}`}
+              className="flex h-full w-full items-center justify-center rounded-full bg-slate-950/35"
+            >
+              {initials}
+            </div>
+          )}
         </div>
 
         <div className="min-w-0 flex-1">
@@ -229,30 +345,77 @@ function FriendTimelineCard({
       {airports.length >= 2 ? (
         <div className="mt-3 px-1">
           <div className="relative">
-            {/* Base track line */}
-            <div className="absolute top-[7px] left-0 right-0 h-px bg-slate-700" />
-
-            {/* Completed track (colored portion up to cursor) */}
-            {cursorFraction != null && (
-              <div
-                className="absolute top-[7px] left-0 h-px bg-cyan-500/70 transition-all duration-500"
-                style={{ width: `${Math.min(cursorFraction * 100, 100)}%` }}
-              />
-            )}
-
-            {/* Airport nodes */}
-            <div className="relative flex items-start justify-between">
-              {airports.map((airport, i) => {
+            <div className="relative flex items-start">
+              {timelineSegments.map((segment, index) => {
+                const airport = airports[index]!;
                 const isDest = destinationAirport != null && airport === destinationAirport.toUpperCase().trim();
-                const isCompleted = i < completedAirportCount;
-                const isActive = i === completedAirportCount && activeLegIndex >= 0;
+                const isCompleted = activeLegIndex >= 0
+                  ? index < completedAirportCount
+                  : (cursorRaw != null && index <= cursorRaw);
+                const isActive = index === completedAirportCount && activeLegIndex >= 0;
+                const segmentFill = cursorRaw == null
+                  ? 0
+                  : Math.max(0, Math.min(cursorRaw - index, 1));
+
                 return (
-                  <div key={`${airport}-${i}`} className="flex flex-col items-center" style={{ minWidth: 0 }}>
+                  <div
+                    key={segment.id}
+                    className="flex min-w-[3.5rem] items-start"
+                    style={{ flexGrow: segment.weight, flexBasis: 0 }}
+                    title={segment.distanceKm != null
+                      ? `${segment.fromAirport} to ${segment.toAirport} · ~${Math.round(segment.distanceKm).toLocaleString()} km`
+                      : `${segment.fromAirport} to ${segment.toAirport}`}
+                  >
+                    <div className="flex shrink-0 flex-col items-center" style={{ minWidth: 0 }}>
+                      <div
+                        className={`h-3.5 w-3.5 rounded-full border transition-colors ${
+                          isDest
+                            ? 'border-amber-400 bg-amber-400/80 shadow-sm shadow-amber-400/40'
+                            : isCompleted || isActive
+                            ? 'border-cyan-400 bg-cyan-400'
+                            : 'border-slate-500 bg-slate-800'
+                        }`}
+                      />
+                      <span
+                        className={`mt-1 max-w-[40px] truncate text-center text-[9px] leading-none ${
+                          isDest
+                            ? 'font-semibold text-amber-300'
+                            : isCompleted || isActive
+                            ? 'text-cyan-300'
+                            : 'text-slate-500'
+                        }`}
+                        title={airport}
+                      >
+                        {airport}
+                      </span>
+                    </div>
+
+                    <div className="relative mx-1.5 mt-[7px] h-px flex-1 bg-slate-700">
+                      {segmentFill > 0 ? (
+                        <div
+                          className="absolute inset-y-0 left-0 bg-cyan-500/70 transition-all duration-500"
+                          style={{ width: `${segmentFill * 100}%` }}
+                        />
+                      ) : null}
+                    </div>
+                  </div>
+                );
+              })}
+
+              {(() => {
+                const finalAirport = airports[airports.length - 1]!;
+                const isDest = destinationAirport != null && finalAirport === destinationAirport.toUpperCase().trim();
+                const isCompleted = activeLegIndex >= 0
+                  ? airports.length - 1 < completedAirportCount
+                  : (cursorRaw != null && airports.length - 1 <= cursorRaw);
+
+                return (
+                  <div className="flex shrink-0 flex-col items-center" style={{ minWidth: 0 }}>
                     <div
                       className={`h-3.5 w-3.5 rounded-full border transition-colors ${
                         isDest
                           ? 'border-amber-400 bg-amber-400/80 shadow-sm shadow-amber-400/40'
-                          : isCompleted || isActive
+                          : isCompleted
                           ? 'border-cyan-400 bg-cyan-400'
                           : 'border-slate-500 bg-slate-800'
                       }`}
@@ -261,34 +424,34 @@ function FriendTimelineCard({
                       className={`mt-1 max-w-[40px] truncate text-center text-[9px] leading-none ${
                         isDest
                           ? 'font-semibold text-amber-300'
-                          : isCompleted || isActive
+                          : isCompleted
                           ? 'text-cyan-300'
                           : 'text-slate-500'
                       }`}
-                      title={airport}
+                      title={finalAirport}
                     >
-                      {airport}
+                      {finalAirport}
                     </span>
                   </div>
                 );
-              })}
-            </div>
+              })()}
 
-            {/* Cursor (plane icon) — floats above the track */}
-            {cursorFraction != null && (
-              <div
-                className="pointer-events-none absolute top-0"
-                style={{
-                  left: `calc(${Math.min(cursorFraction * 100, 100)}% - 6px)`,
-                  transition: 'left 0.5s ease',
-                }}
-              >
-                <Plane
-                  className="h-3 w-3 -rotate-45 text-cyan-300 drop-shadow-[0_0_4px_rgba(103,232,249,0.8)]"
-                  aria-label={activeLegFlightNumber ? `Flight ${activeLegFlightNumber}` : 'Current position'}
-                />
-              </div>
-            )}
+              {/* Cursor (plane icon) — floats above the track */}
+              {cursorFraction != null && (
+                <div
+                  className="pointer-events-none absolute top-0"
+                  style={{
+                    left: `calc(${Math.min(cursorFraction * 100, 100)}% - 6px)`,
+                    transition: 'left 0.5s ease',
+                  }}
+                >
+                  <Plane
+                    className="h-3 w-3 -rotate-45 text-cyan-300 drop-shadow-[0_0_4px_rgba(103,232,249,0.8)]"
+                    aria-label={activeLegFlightNumber ? `Flight ${activeLegFlightNumber}` : 'Current position'}
+                  />
+                </div>
+              )}
+            </div>
           </div>
 
           {/* Flight number label under cursor */}
@@ -314,6 +477,7 @@ function FriendTimelineCard({
 }
 
 function FriendsTrackerTopBar({
+  tripName,
   friendCount,
   trackedCount,
   lastUpdated,
@@ -322,6 +486,7 @@ function FriendsTrackerTopBar({
   mapView,
   onMapViewChange,
 }: {
+  tripName: string | null;
   friendCount: number;
   trackedCount: number;
   lastUpdated: number | null;
@@ -338,6 +503,11 @@ function FriendsTrackerTopBar({
       <div className="pointer-events-auto min-w-0 max-w-full justify-self-start rounded-2xl border border-white/10 bg-slate-950/75 px-4 py-3 shadow-xl backdrop-blur-md">
         <div className="text-[11px] uppercase tracking-[0.24em] text-cyan-200">Chantal crew tracker</div>
         <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-slate-100">
+          {tripName ? (
+            <span className="rounded-full border border-cyan-400/30 bg-cyan-500/10 px-2 py-0.5 text-[11px] font-semibold text-cyan-100">
+              {tripName}
+            </span>
+          ) : null}
           <span>{friendCount} friends</span>
           <span className="text-slate-500">•</span>
           <span>{trackedCount} flights on the map</span>
@@ -482,6 +652,32 @@ function FriendsTrackerDashboard({
       });
   }, [statuses, airportMarkers]);
 
+  const friendAccentColors = useMemo(() => {
+    const result = new Map<string, string>();
+
+    for (const avatarInfos of Object.values(flightAvatars)) {
+      for (const info of avatarInfos) {
+        if (!result.has(info.friendId)) {
+          result.set(info.friendId, info.color);
+        }
+      }
+    }
+
+    for (const marker of staticFriendMarkers) {
+      if (!result.has(marker.id)) {
+        result.set(marker.id, marker.color);
+      }
+    }
+
+    config.friends.forEach((friend, index) => {
+      if (!result.has(friend.id)) {
+        result.set(friend.id, getFlightMapColor(index, false));
+      }
+    });
+
+    return result;
+  }, [config.friends, flightAvatars, staticFriendMarkers]);
+
   const runSearch = useCallback(async (
     options: {
       background?: boolean;
@@ -568,7 +764,7 @@ function FriendsTrackerDashboard({
     }
 
     autoLockSignatureRef.current = signature;
-    setConfig(nextState.config);
+    setConfig(normalizeFriendsTrackerConfig(nextState.config));
 
     void fetch('/api/chantal/config', {
       method: 'PUT',
@@ -592,6 +788,7 @@ function FriendsTrackerDashboard({
       .catch(() => undefined);
   }, [config, data?.flights]);
 
+  const currentTrip = getCurrentTripConfig(config);
   const totalFriends = config.friends.length;
   const now = Date.now();
   const destinationAirport = config.destinationAirport ?? null;
@@ -637,7 +834,7 @@ function FriendsTrackerDashboard({
         </div>
       ) : null}
 
-      {config.friends.map((friend) => {
+      {config.friends.map((friend, index) => {
         const friendStatuses = statuses.filter((status) => status.friend.id === friend.id);
         return (
           <FriendTimelineCard
@@ -646,6 +843,8 @@ function FriendsTrackerDashboard({
             friendStatuses={friendStatuses}
             destinationAirport={destinationAirport}
             now={now}
+            airportMarkers={airportMarkers}
+            accentColor={friendAccentColors.get(friend.id) ?? getFlightMapColor(index, false)}
           />
         );
       })}
@@ -656,6 +855,7 @@ function FriendsTrackerDashboard({
     <TrackerShell
       topBar={
         <FriendsTrackerTopBar
+          tripName={currentTrip?.name ?? null}
           friendCount={totalFriends}
           trackedCount={visibleFlights.length}
           lastUpdated={data?.fetchedAt ?? null}

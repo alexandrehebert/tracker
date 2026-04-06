@@ -37,6 +37,7 @@ const SELECTED_POINT_ALTITUDE_OFFSET = 0.03;
 const ALTITUDE_GUIDE_STROKE = 0.14;
 const GROUND_RING_ALTITUDE = COUNTRY_ALTITUDE + 0.001;
 const FRIEND_AVATAR_CLUSTER_DEGREES = 2.5;
+const FRIEND_AVATAR_ALTITUDE = DEPARTURE_MARKER_ALTITUDE + 0.006;
 
 interface FlightMap3DProps {
   flights: TrackedFlight[];
@@ -682,7 +683,18 @@ export default function FlightMap3D({
   const { setGlobeRef } = useTrackerMap();
   const containerRef = useRef<HTMLDivElement>(null);
   const globeRef = useRef<any>(null);
+  const lastAutoFocusKeyRef = useRef<string | null>(null);
+  const setGlobeRefRef = useRef(setGlobeRef);
+  const onInitialZoomEndRef = useRef(onInitialZoomEnd);
   const [globeReady, setGlobeReady] = useState(false);
+
+  useEffect(() => {
+    setGlobeRefRef.current = setGlobeRef;
+  }, [setGlobeRef]);
+
+  useEffect(() => {
+    onInitialZoomEndRef.current = onInitialZoomEnd;
+  }, [onInitialZoomEnd]);
 
   const friendIcao24Set = useMemo(() => {
     if (!flightAvatars) {
@@ -743,7 +755,7 @@ export default function FlightMap3D({
       key: cluster.members.map((m) => m.key).join('|'),
       lat: cluster.lat,
       lng: cluster.lng,
-      altitude: SELECTED_POINT_MARKER_ALTITUDE + 0.005,
+      altitude: FRIEND_AVATAR_ALTITUDE,
       members: cluster.members.map((m) => ({
         friendId: m.friendId,
         name: m.name,
@@ -900,6 +912,7 @@ export default function FlightMap3D({
     }
 
     let mounted = true;
+    lastAutoFocusKeyRef.current = null;
     setGlobeReady(false);
     let removeResizeListener: (() => void) | null = null;
     const container = containerRef.current;
@@ -963,12 +976,12 @@ export default function FlightMap3D({
       removeResizeListener = () => window.removeEventListener('resize', onResize);
 
       globeRef.current = globe;
-      setGlobeRef(globe);
+      setGlobeRefRef.current(globe);
       setGlobeReady(true);
 
       window.setTimeout(() => {
         if (mounted) {
-          onInitialZoomEnd?.();
+          onInitialZoomEndRef.current?.();
         }
       }, 450);
     };
@@ -987,13 +1000,13 @@ export default function FlightMap3D({
       }
 
       globeRef.current = null;
-      setGlobeRef(null);
+      setGlobeRefRef.current(null);
 
       if (containerRef.current) {
         containerRef.current.replaceChildren();
       }
     };
-  }, [isMobile, onInitialZoomEnd, setGlobeRef]);
+  }, [isMobile]);
 
   useEffect(() => {
     if (!globeReady || !globeRef.current) {
@@ -1385,6 +1398,15 @@ export default function FlightMap3D({
     const focusPoint = selectionMode === 'single'
       ? pointData.find((point) => point.selected) ?? pointData[0] ?? null
       : pointData[0] ?? null;
+    const autoFocusKey = selectionMode === 'single'
+      ? `single:${selectedIcao24 ?? focusPoint?.icao24 ?? 'none'}:${isMobile ? 'mobile' : 'desktop'}`
+      : `all:${focusPoint ? 'ready' : 'empty'}:${isMobile ? 'mobile' : 'desktop'}`;
+
+    if (lastAutoFocusKeyRef.current === autoFocusKey) {
+      return;
+    }
+
+    lastAutoFocusKeyRef.current = autoFocusKey;
     const globe = globeRef.current as any;
 
     if (!focusPoint) {

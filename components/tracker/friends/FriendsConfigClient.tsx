@@ -7,11 +7,14 @@ import { Link } from '~/i18n/navigation';
 import {
   createEmptyFriendConfig,
   createEmptyFriendFlightLeg,
+  createEmptyTripConfig,
   extractFriendTrackerIdentifiers,
+  getCurrentTripConfig,
   normalizeFriendsTrackerConfig,
   type FriendFlightLeg,
   type FriendTravelConfig,
   type FriendsTrackerConfig,
+  type FriendsTrackerTripConfig,
 } from '~/lib/friendsTracker';
 import { getFriendInitials } from '~/lib/utils/friendInitials';
 import type { TrackerCronDashboard, TrackerCronRun } from '~/lib/server/trackerCron';
@@ -100,6 +103,15 @@ function createDraftLeg(): FriendFlightLeg {
   };
 }
 
+function createDraftTrip(): FriendsTrackerTripConfig {
+  const trip = createEmptyTripConfig();
+  return {
+    ...trip,
+    id: createClientId('trip'),
+    name: 'New trip',
+  };
+}
+
 function ToggleSwitch({
   checked,
   onToggle,
@@ -145,8 +157,10 @@ export function FriendsConfigClient({
 }) {
   const locale = useLocale();
   const normalizedConfig = normalizeFriendsTrackerConfig(initialConfig);
-  const [friends, setFriends] = useState(normalizedConfig.friends);
-  const [destinationAirport, setDestinationAirport] = useState(normalizedConfig.destinationAirport ?? '');
+  const initialCurrentTrip = getCurrentTripConfig(normalizedConfig);
+  const [trips, setTrips] = useState(normalizedConfig.trips ?? []);
+  const [currentTripId, setCurrentTripId] = useState<string | null>(normalizedConfig.currentTripId ?? initialCurrentTrip?.id ?? null);
+  const [selectedTripId, setSelectedTripId] = useState<string | null>(normalizedConfig.currentTripId ?? initialCurrentTrip?.id ?? normalizedConfig.trips?.[0]?.id ?? null);
   const [cronEnabled, setCronEnabled] = useState(normalizedConfig.cronEnabled ?? initialCronDashboard.config.enabled);
   const [cronDashboard, setCronDashboard] = useState(initialCronDashboard);
   const [isSaving, setIsSaving] = useState(false);
@@ -155,7 +169,11 @@ export function FriendsConfigClient({
   const [notice, setNotice] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [lastSavedAt, setLastSavedAt] = useState<number | null>(normalizedConfig.updatedAt);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const trackedIdentifiers = extractFriendTrackerIdentifiers({ ...normalizedConfig, cronEnabled, friends });
+  const selectedTrip = trips.find((trip) => trip.id === selectedTripId) ?? trips[0] ?? null;
+  const currentTrip = trips.find((trip) => trip.id === currentTripId) ?? selectedTrip;
+  const friends = selectedTrip?.friends ?? [];
+  const destinationAirport = selectedTrip?.destinationAirport ?? '';
+  const trackedIdentifiers = extractFriendTrackerIdentifiers(buildExportPayload());
   const latestCronRun = cronDashboard.history[0] ?? null;
 
   async function refreshCronDashboard() {
@@ -171,24 +189,52 @@ export function FriendsConfigClient({
     return payload;
   }
 
-  function updateFriend(friendId: string, updater: (friend: FriendTravelConfig) => FriendTravelConfig) {
-    setFriends((currentFriends) => currentFriends.map((friend) => friend.id === friendId ? updater(friend) : friend));
+  function updateTrip(tripId: string, updater: (trip: FriendsTrackerTripConfig) => FriendsTrackerTripConfig) {
+    setTrips((currentTrips) => currentTrips.map((trip) => trip.id === tripId ? updater(trip) : trip));
   }
 
-  function buildExportPayload(): FriendsTrackerConfig {
+  function updateSelectedTrip(updater: (trip: FriendsTrackerTripConfig) => FriendsTrackerTripConfig) {
+    if (!selectedTrip) {
+      return;
+    }
+
+    updateTrip(selectedTrip.id, updater);
+  }
+
+  function updateSelectedTripFriends(updater: (friends: FriendTravelConfig[]) => FriendTravelConfig[]) {
+    updateSelectedTrip((trip) => ({
+      ...trip,
+      friends: updater(trip.friends),
+    }));
+  }
+
+  function updateFriend(friendId: string, updater: (friend: FriendTravelConfig) => FriendTravelConfig) {
+    updateSelectedTripFriends((currentFriends) => currentFriends.map((friend) => friend.id === friendId ? updater(friend) : friend));
+  }
+
+  function buildExportPayload(nextState?: {
+    trips?: FriendsTrackerTripConfig[];
+    currentTripId?: string | null;
+  }): FriendsTrackerConfig {
     return normalizeFriendsTrackerConfig({
       updatedAt: lastSavedAt,
       updatedBy: normalizedConfig.updatedBy ?? 'chantal config page',
       cronEnabled,
-      destinationAirport,
-      friends,
+      currentTripId: nextState?.currentTripId ?? currentTripId ?? selectedTrip?.id ?? null,
+      trips: nextState?.trips ?? trips,
     });
   }
 
   function applySavedConfig(nextConfig: FriendsTrackerConfig) {
     const normalizedNextConfig = normalizeFriendsTrackerConfig(nextConfig);
-    setFriends(normalizedNextConfig.friends);
-    setDestinationAirport(normalizedNextConfig.destinationAirport ?? '');
+    const nextTrips = normalizedNextConfig.trips ?? [];
+    const nextSelectedTripId = nextTrips.some((trip) => trip.id === selectedTripId)
+      ? selectedTripId
+      : (normalizedNextConfig.currentTripId ?? nextTrips[0]?.id ?? null);
+
+    setTrips(nextTrips);
+    setCurrentTripId(normalizedNextConfig.currentTripId ?? nextTrips[0]?.id ?? null);
+    setSelectedTripId(nextSelectedTripId);
     setCronEnabled(normalizedNextConfig.cronEnabled ?? true);
     setLastSavedAt(normalizedNextConfig.updatedAt);
     setCronDashboard((currentDashboard) => ({
@@ -228,9 +274,7 @@ export function FriendsConfigClient({
         throw new Error(payload.error || 'Unable to save the cron setting.');
       }
 
-      const nextConfig = normalizeFriendsTrackerConfig(payload);
-      setCronEnabled(nextConfig.cronEnabled ?? nextValue);
-      setLastSavedAt(nextConfig.updatedAt);
+      const nextConfig = applySavedConfig(payload);
       await refreshCronDashboard();
       setNotice({
         type: 'success',
@@ -323,13 +367,22 @@ export function FriendsConfigClient({
           : parsedValue,
       );
 
-      setFriends(importedConfig.friends);
+      const importedTripCount = Array.isArray(parsedValue)
+        ? 1
+        : Array.isArray(parsedValue.trips) && parsedValue.trips.length > 0
+        ? parsedValue.trips.length
+        : 1;
+
+      const importedTrips = importedConfig.trips ?? [];
+
+      setTrips(importedTrips);
+      setCurrentTripId(importedConfig.currentTripId ?? importedTrips[0]?.id ?? null);
+      setSelectedTripId(importedConfig.currentTripId ?? importedTrips[0]?.id ?? null);
       setCronEnabled(importedConfig.cronEnabled ?? true);
-      setDestinationAirport(importedConfig.destinationAirport ?? '');
       setLastSavedAt(importedConfig.updatedAt);
       setNotice({
         type: 'success',
-        text: `Imported ${importedConfig.friends.length} friend${importedConfig.friends.length === 1 ? '' : 's'} from JSON. Click “Save config” to persist it.`,
+        text: `Imported ${importedTripCount} trip${importedTripCount === 1 ? '' : 's'} from JSON. Click “Save config” to persist it.`,
       });
     } catch (error) {
       setNotice({
@@ -352,8 +405,8 @@ export function FriendsConfigClient({
         body: JSON.stringify({
           updatedBy: 'chantal config page',
           cronEnabled,
-          destinationAirport,
-          friends,
+          currentTripId: currentTripId ?? selectedTrip?.id ?? null,
+          trips,
         }),
       });
 
@@ -384,9 +437,8 @@ export function FriendsConfigClient({
               <p className="text-xs uppercase tracking-[0.24em]">What this page does</p>
             </div>
             <p className="mt-3 max-w-3xl text-sm text-slate-300">
-              Add one card per friend, then add as many flight legs as needed for connections and return trips.
-              Each save updates the live `/chantal` view and mirrors the flight identifiers into the tracker cron.
-              You can also import a JSON backup or export the full crew config at any time.
+              Manage multiple destination-based group trips in one place, choose which trip is currently live on `/chantal`,
+              and keep a built-in demo itinerary ready for map and UI testing.
             </p>
             <div className="mt-3 text-xs text-slate-400">
               Last saved (UTC): {formatDateTime(lastSavedAt, locale)}
@@ -450,6 +502,115 @@ export function FriendsConfigClient({
         <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
           <div>
             <div className="flex items-center gap-2 text-sky-200">
+              <Users className="h-4 w-4" />
+              <p className="text-xs uppercase tracking-[0.24em]">Group trips</p>
+            </div>
+            <p className="mt-3 max-w-3xl text-sm text-slate-300">
+              Create one reusable trip per destination, switch between them for editing, and choose which one should power the live `/chantal` map.
+            </p>
+          </div>
+
+          <button
+            type="button"
+            onClick={() => {
+              const newTrip = createDraftTrip();
+              setTrips((currentTrips) => [...currentTrips, newTrip]);
+              setSelectedTripId(newTrip.id);
+            }}
+            className="inline-flex items-center gap-2 self-start rounded-full border border-white/12 bg-slate-950/80 px-4 py-2 text-sm font-medium text-slate-100 transition hover:border-white/20 hover:bg-slate-900"
+          >
+            <Plus className="h-4 w-4" />
+            Add trip
+          </button>
+        </div>
+
+        <div className="mt-4 grid gap-3 xl:grid-cols-[minmax(0,240px)_minmax(0,1fr)]">
+          <div>
+            <label className="mb-2 block text-xs font-medium uppercase tracking-[0.2em] text-slate-400">
+              Trip to edit
+            </label>
+            <select
+              value={selectedTrip?.id ?? ''}
+              onChange={(event) => setSelectedTripId(event.target.value)}
+              className="w-full rounded-2xl border border-white/10 bg-slate-950/90 px-3 py-2 text-sm text-slate-100 outline-none transition focus:border-cyan-400/60 focus:ring-2 focus:ring-cyan-500/20"
+            >
+              {trips.map((trip) => (
+                <option key={trip.id} value={trip.id}>
+                  {trip.name}{trip.id === currentTripId ? ' • current' : ''}
+                </option>
+              ))}
+            </select>
+            <p className="mt-2 text-xs text-slate-400">
+              Current live trip: <span className="font-medium text-slate-200">{currentTrip?.name ?? '—'}</span>
+            </p>
+          </div>
+
+          {selectedTrip ? (
+            <div className="grid items-start gap-3 md:grid-cols-[minmax(0,1fr)_auto_auto] md:items-end">
+              <div>
+                <label className="mb-2 block text-xs font-medium uppercase tracking-[0.2em] text-slate-400">
+                  Trip name
+                </label>
+                <input
+                  value={selectedTrip.name}
+                  onChange={(event) => {
+                    const name = event.target.value;
+                    updateSelectedTrip((trip) => ({
+                      ...trip,
+                      name,
+                    }));
+                  }}
+                  placeholder="Weekend in Lisbon"
+                  className="w-full rounded-2xl border border-white/10 bg-slate-950/90 px-3 py-2 text-sm text-slate-100 outline-none transition focus:border-cyan-400/60 focus:ring-2 focus:ring-cyan-500/20"
+                />
+              </div>
+
+              <button
+                type="button"
+                onClick={() => setCurrentTripId(selectedTrip.id)}
+                className={`inline-flex self-start justify-self-start whitespace-nowrap items-center justify-center rounded-full px-4 py-2 text-sm font-medium transition ${selectedTrip.id === currentTripId
+                  ? 'border border-emerald-400/40 bg-emerald-500/10 text-emerald-100'
+                  : 'border border-sky-400/40 bg-sky-500/10 text-sky-100 hover:bg-sky-500/20'}`}
+              >
+                {selectedTrip.id === currentTripId ? 'Current on /chantal' : 'Set as current'}
+              </button>
+
+              {!selectedTrip.isDemo ? (
+                <button
+                  type="button"
+                  onClick={() => {
+                    const remainingTrips = trips.filter((trip) => trip.id !== selectedTrip.id);
+                    const fallbackTrip = remainingTrips.find((trip) => !trip.isDemo) ?? remainingTrips[0] ?? null;
+                    setTrips(remainingTrips);
+                    setSelectedTripId(fallbackTrip?.id ?? null);
+                    if (currentTripId === selectedTrip.id) {
+                      setCurrentTripId(fallbackTrip?.id ?? null);
+                    }
+                  }}
+                  className="inline-flex items-center justify-center rounded-full border border-rose-400/30 bg-rose-500/10 px-4 py-2 text-sm font-medium text-rose-100 transition hover:bg-rose-500/20"
+                >
+                  Remove trip
+                </button>
+              ) : (
+                <div className="inline-flex self-start justify-self-start whitespace-nowrap items-center justify-center rounded-full border border-sky-400/30 bg-sky-500/10 px-4 py-2 text-sm font-medium text-sky-100">
+                  Built-in demo trip
+                </div>
+              )}
+            </div>
+          ) : null}
+        </div>
+
+        {selectedTrip?.isDemo ? (
+          <div className="mt-4 rounded-2xl border border-sky-400/30 bg-sky-500/10 px-4 py-3 text-sm text-sky-100">
+            This preset test trip uses `TEST1`, `TEST2`, and `TEST3` so you can quickly preview different map states and timeline behaviors.
+          </div>
+        ) : null}
+      </section>
+
+      <section className="rounded-3xl border border-white/10 bg-slate-950/55 p-5 backdrop-blur-sm">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div>
+            <div className="flex items-center gap-2 text-sky-200">
               <Clock3 className="h-4 w-4" />
               <p className="text-xs uppercase tracking-[0.24em]">Background prefetch cron</p>
             </div>
@@ -500,7 +661,9 @@ export function FriendsConfigClient({
           <div className="rounded-2xl border border-white/10 bg-slate-950/70 p-3 text-sm text-slate-200">
             <div className="text-xs uppercase tracking-[0.2em] text-slate-400">Tracked identifiers</div>
             <div className="mt-1 font-semibold text-white">{trackedIdentifiers.length}</div>
-            <div className="mt-1 text-xs text-slate-400">{cronEnabled ? 'Cron ready for crew flight refreshes.' : 'Cron currently paused.'}</div>
+            <div className="mt-1 text-xs text-slate-400">
+              {cronEnabled ? `Currently tracking ${currentTrip?.name ?? 'the selected trip'}.` : 'Cron currently paused.'}
+            </div>
           </div>
           <div className="rounded-2xl border border-white/10 bg-slate-950/70 p-3 text-sm text-slate-200">
             <div className="text-xs uppercase tracking-[0.2em] text-slate-400">Latest run</div>
@@ -516,7 +679,7 @@ export function FriendsConfigClient({
           <p className="text-xs uppercase tracking-[0.24em]">Meeting destination</p>
         </div>
         <p className="mt-3 max-w-3xl text-sm text-slate-300">
-          Set the final meeting point for the whole crew. The Chantal map will use this airport to split each friend&apos;s itinerary into their outbound and return trip, and only display the relevant legs on the timeline.
+          Set the final meeting point for the trip you are editing. The Chantal map uses this airport to split each friend&apos;s itinerary into the relevant outbound or return segment.
         </p>
         <div className="mt-4 max-w-xs">
           <label className="mb-2 block text-xs font-medium uppercase tracking-[0.2em] text-slate-400">
@@ -524,7 +687,13 @@ export function FriendsConfigClient({
           </label>
           <input
             value={destinationAirport}
-            onChange={(event) => setDestinationAirport(event.target.value.toUpperCase())}
+            onChange={(event) => {
+              const nextDestinationAirport = event.target.value.toUpperCase();
+              updateSelectedTrip((trip) => ({
+                ...trip,
+                destinationAirport: nextDestinationAirport,
+              }));
+            }}
             placeholder="e.g. MIA, LIS, CDG"
             maxLength={10}
             className="w-full rounded-2xl border border-white/10 bg-slate-950/90 px-3 py-2 text-sm text-slate-100 outline-none transition focus:border-cyan-400/60 focus:ring-2 focus:ring-cyan-500/20"
@@ -532,17 +701,22 @@ export function FriendsConfigClient({
           <p className="mt-2 text-xs text-slate-400">
             Use the IATA or ICAO code matching what you enter in the &quot;To&quot; field of each leg (e.g. MIA, KMIA).
           </p>
+          <p className="mt-2 text-xs text-slate-500">
+            {selectedTrip?.id === currentTripId
+              ? 'This trip is currently live on `/chantal`.'
+              : 'This trip stays as a draft/alternate trip until you set it as current and save.'}
+          </p>
         </div>
       </section>
 
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2 text-sm text-slate-300">
           <Users className="h-4 w-4 text-sky-300" />
-          <span>{friends.length} friends configured</span>
+          <span>{friends.length} friends configured for {selectedTrip?.name ?? 'this trip'}</span>
         </div>
         <button
           type="button"
-          onClick={() => setFriends((currentFriends) => [...currentFriends, createDraftFriend()])}
+          onClick={() => updateSelectedTripFriends((currentFriends) => [...currentFriends, createDraftFriend()])}
           className="inline-flex items-center gap-2 rounded-full border border-white/12 bg-slate-950/80 px-4 py-2 text-sm font-medium text-slate-100 transition hover:border-white/20 hover:bg-slate-900"
         >
           <Plus className="h-4 w-4" />
@@ -552,7 +726,7 @@ export function FriendsConfigClient({
 
       {friends.length === 0 ? (
         <div className="rounded-3xl border border-dashed border-white/10 bg-slate-950/35 p-8 text-center text-sm text-slate-400">
-          No friends yet. Create the first itinerary card to start populating the `/chantal` map.
+          No friends yet for {selectedTrip?.name ?? 'this trip'}. Create the first itinerary card to start populating the `/chantal` map.
         </div>
       ) : null}
 
@@ -639,7 +813,7 @@ export function FriendsConfigClient({
 
               <button
                 type="button"
-                onClick={() => setFriends((currentFriends) => currentFriends.filter((currentFriend) => currentFriend.id !== friend.id))}
+                onClick={() => updateSelectedTripFriends((currentFriends) => currentFriends.filter((currentFriend) => currentFriend.id !== friend.id))}
                 className="inline-flex items-center gap-2 self-start rounded-full border border-rose-400/30 bg-rose-500/10 px-3 py-2 text-sm font-medium text-rose-100 transition hover:bg-rose-500/20"
               >
                 <Trash2 className="h-4 w-4" />

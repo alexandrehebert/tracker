@@ -3,6 +3,7 @@ import 'server-only';
 import { MongoClient, type Collection } from 'mongodb';
 import {
   extractFriendTrackerIdentifiers,
+  getCurrentTripConfig,
   normalizeFriendsTrackerConfig,
   type FriendsTrackerConfig,
 } from '~/lib/friendsTracker';
@@ -15,6 +16,8 @@ const DEFAULT_CONFIG: FriendsTrackerConfig = {
   updatedAt: null,
   updatedBy: null,
   cronEnabled: true,
+  currentTripId: null,
+  trips: [],
   friends: [],
 };
 
@@ -127,11 +130,40 @@ export async function readFriendsTrackerConfig(): Promise<FriendsTrackerConfig> 
 
 export async function writeFriendsTrackerConfig(input: Partial<FriendsTrackerConfig> | null | undefined): Promise<FriendsTrackerConfig> {
   const currentConfig = await readFriendsTrackerConfig();
+  const requestedCurrentTripId = typeof input?.currentTripId === 'string' && input.currentTripId.trim()
+    ? input.currentTripId.trim()
+    : input?.currentTripId === null
+    ? null
+    : currentConfig.currentTripId;
+
+  let nextTrips = Array.isArray(input?.trips) ? input.trips : currentConfig.trips;
+  const destinationAirportProvided = Boolean(input && 'destinationAirport' in input);
+
+  if (!Array.isArray(input?.trips) && (Array.isArray(input?.friends) || destinationAirportProvided)) {
+    const baseConfig = normalizeFriendsTrackerConfig({
+      ...currentConfig,
+      currentTripId: requestedCurrentTripId,
+      trips: currentConfig.trips,
+    });
+    const currentTrip = getCurrentTripConfig(baseConfig);
+
+    if (currentTrip) {
+      nextTrips = baseConfig.trips.map((trip) => trip.id === currentTrip.id
+        ? {
+          ...trip,
+          destinationAirport: destinationAirportProvided ? input?.destinationAirport ?? null : trip.destinationAirport,
+          friends: Array.isArray(input?.friends) ? input.friends : trip.friends,
+        }
+        : trip);
+    }
+  }
+
   const nextConfig = normalizeFriendsTrackerConfig({
     ...currentConfig,
     ...input,
     cronEnabled: typeof input?.cronEnabled === 'boolean' ? input.cronEnabled : currentConfig.cronEnabled,
-    friends: Array.isArray(input?.friends) ? input.friends : currentConfig.friends,
+    currentTripId: requestedCurrentTripId,
+    trips: nextTrips,
     updatedAt: Date.now(),
   });
 
