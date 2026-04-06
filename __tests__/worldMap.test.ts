@@ -7,6 +7,11 @@ describe('getWorldMapPayload', () => {
 
     expect(map.viewBox.width).toBeGreaterThan(0);
     expect(map.viewBox.height).toBeGreaterThan(0);
+    expect(map.projection.scale).toBeGreaterThan(0);
+    expect(map.projection.translate[0]).toBeGreaterThan(0);
+    expect(map.projection.translate[0]).toBeLessThan(map.viewBox.width);
+    expect(map.projection.translate[1]).toBeGreaterThan(0);
+    expect(map.projection.translate[1]).toBeLessThan(map.viewBox.height);
     expect(map.countries.length).toBeGreaterThan(150);
 
     const france = map.countries.find((country) => country.code === 'FR');

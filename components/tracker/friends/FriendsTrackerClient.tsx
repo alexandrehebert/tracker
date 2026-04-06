@@ -355,25 +355,9 @@ function FriendsTrackerDashboard({
           </div>
         </div>
         {airportMarkers.length ? (
-          <div className="mt-4 space-y-2">
-            <div className="text-[11px] uppercase tracking-[0.2em] text-slate-400">Airport markers</div>
-            <div className="flex flex-wrap gap-2 text-[11px] text-slate-200">
-              <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-400/25 bg-amber-500/10 px-2.5 py-1">
-                <span className="h-2.5 w-2.5 rounded-full bg-amber-400" />
-                Departure
-              </span>
-              <span className="inline-flex items-center gap-1.5 rounded-full border border-cyan-400/25 bg-cyan-500/10 px-2.5 py-1">
-                <span className="h-2.5 w-2.5 rotate-45 rounded-[2px] bg-cyan-400" />
-                Arrival
-              </span>
-              <span className="inline-flex items-center gap-1.5 rounded-full border border-fuchsia-400/25 bg-fuchsia-500/10 px-2.5 py-1">
-                <span className="relative inline-flex h-2.5 w-2.5 items-center justify-center rounded-full bg-fuchsia-400">
-                  <span className="h-1.5 w-1.5 rotate-45 rounded-[1px] bg-cyan-200" />
-                </span>
-                Both
-              </span>
-            </div>
-          </div>
+          <p className="mt-4 text-xs text-slate-400">
+            {airportMarkers.length} shared airport marker{airportMarkers.length === 1 ? '' : 's'} remain visible on the crew map.
+          </p>
         ) : null}
       </section>
 

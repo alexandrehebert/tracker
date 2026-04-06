@@ -175,15 +175,8 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
 }
 
-function getSharedAirportMarkerColor(usage: FlightMapAirportMarker['usage']): string {
-  switch (usage) {
-    case 'departure':
-      return DEPARTURE_MARKER_COLOR;
-    case 'arrival':
-      return ARRIVAL_MARKER_COLOR;
-    default:
-      return SHARED_AIRPORT_MARKER_COLOR;
-  }
+function getSharedAirportMarkerColor(): string {
+  return SHARED_AIRPORT_MARKER_COLOR;
 }
 
 function unwrapLongitude(value: number, reference: number): number {
@@ -706,8 +699,8 @@ export default function FlightMap3D({
       label: airport.label,
       lat: airport.latitude,
       lng: airport.longitude,
-      altitude: DEPARTURE_MARKER_ALTITUDE + (airport.usage === 'both' ? 0.004 : airport.usage === 'arrival' ? 0.003 : 0.002),
-      color: getSharedAirportMarkerColor(airport.usage),
+      altitude: DEPARTURE_MARKER_ALTITUDE + 0.003,
+      color: getSharedAirportMarkerColor(),
       usage: airport.usage,
     })) satisfies GlobeAirportMarkerDatum[];
   }, [airportMarkers]);
@@ -970,34 +963,20 @@ export default function FlightMap3D({
           element.style.height = '0';
           element.style.cursor = 'default';
           element.style.transform = 'translate(-50%, -50%)';
+          element.style.zIndex = '20';
           element.title = `${item.label} (${item.code})`;
 
           const marker = document.createElement('div');
           marker.style.position = 'absolute';
           marker.style.left = '0';
           marker.style.top = '0';
-          marker.style.width = item.usage === 'both' ? '12px' : '10px';
-          marker.style.height = item.usage === 'both' ? '12px' : '10px';
-          marker.style.display = 'grid';
-          marker.style.placeItems = 'center';
+          marker.style.width = '10px';
+          marker.style.height = '10px';
           marker.style.background = item.color;
           marker.style.border = '2px solid rgba(255,255,255,0.9)';
           marker.style.boxShadow = '0 0 0 4px rgba(14,116,144,0.14), 0 6px 16px rgba(2,6,23,0.35)';
-          marker.style.borderRadius = item.usage === 'arrival' ? '2px' : '999px';
-          marker.style.transform = item.usage === 'arrival'
-            ? 'translate(-50%, -50%) rotate(45deg)'
-            : 'translate(-50%, -50%)';
-
-          if (item.usage === 'both') {
-            const center = document.createElement('div');
-            center.style.width = '5px';
-            center.style.height = '5px';
-            center.style.background = ARRIVAL_MARKER_COLOR;
-            center.style.border = '1px solid rgba(255,255,255,0.9)';
-            center.style.borderRadius = '1px';
-            center.style.transform = 'rotate(45deg)';
-            marker.append(center);
-          }
+          marker.style.borderRadius = '999px';
+          marker.style.transform = 'translate(-50%, -50%)';
 
           const badge = document.createElement('div');
           badge.textContent = item.code;
@@ -1020,10 +999,12 @@ export default function FlightMap3D({
           badge.style.transition = 'opacity 140ms ease, transform 140ms ease';
 
           element.addEventListener('mouseenter', () => {
+            element.style.zIndex = '40';
             badge.style.opacity = '1';
             badge.style.transform = 'translate(-50%, -100%) scale(1)';
           });
           element.addEventListener('mouseleave', () => {
+            element.style.zIndex = '20';
             badge.style.opacity = '0';
             badge.style.transform = 'translate(-50%, -100%) scale(0.96)';
           });

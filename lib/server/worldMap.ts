@@ -20,9 +20,15 @@ export interface WorldMapCountry {
   latlng: [number, number];
 }
 
+export interface WorldMapProjectionConfig {
+  scale: number;
+  translate: [number, number];
+}
+
 export interface WorldMapPayload {
   countries: WorldMapCountry[];
   viewBox: typeof MAP_VIEWBOX;
+  projection: WorldMapProjectionConfig;
 }
 
 type GeoFeature = GeoJSON.Feature<GeoJSON.Geometry>;
@@ -426,6 +432,10 @@ async function buildWorldMapPayload(locale: string): Promise<WorldMapPayload> {
   return {
     countries: mapCountries,
     viewBox: MAP_VIEWBOX,
+    projection: {
+      scale: projection.scale(),
+      translate: projection.translate() as [number, number],
+    },
   };
 }
 

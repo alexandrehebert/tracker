@@ -28,8 +28,7 @@ const COUNTRY_FILL = 'rgba(30,41,59,0.84)';
 const COUNTRY_STROKE = 'rgba(203,213,225,0.32)';
 const FORECAST_SHADOW_COLOR = 'rgba(8,17,32,0.7)';
 const DEPARTURE_AIRPORT_COLOR = '#f59e0b';
-const ARRIVAL_AIRPORT_COLOR = '#22d3ee';
-const SHARED_AIRPORT_COLOR = '#a855f7';
+const AIRPORT_MARKER_COLOR = '#a855f7';
 
 function getPointDistanceKm(first: FlightMapPoint, second: FlightMapPoint): number {
   const earthRadiusKm = 6371;
@@ -231,9 +230,12 @@ function getHeadingDeltaDegrees(first: number, second: number): number {
   return Math.abs((((first - second) % 360) + 540) % 360 - 180);
 }
 
-function createFlightMapPointProjector(viewBox: { width: number; height: number }) {
+function createFlightMapPointProjector(map: WorldMapPayload) {
   const projection = geoNaturalEarth1();
-  projection.fitSize([viewBox.width, viewBox.height], { type: 'Sphere' } as never);
+
+  projection
+    .scale(map.projection.scale)
+    .translate([...map.projection.translate]);
 
   return ({
     latitude,
@@ -680,8 +682,8 @@ export default function FlightMap2D({
   const [hoveredAirportId, setHoveredAirportId] = useState<string | null>(null);
 
   const projectPoint = useMemo(
-    () => createFlightMapPointProjector(map.viewBox),
-    [map.viewBox.height, map.viewBox.width],
+    () => createFlightMapPointProjector(map),
+    [map],
   );
 
   const selectedFlight = useMemo(() => {
@@ -716,6 +718,15 @@ export default function FlightMap2D({
       return point ? [{ ...airport, point }] : [];
     });
   }, [airportMarkers, projectPoint]);
+
+  const hoveredAirport = useMemo(
+    () => projectedAirportMarkers.find((airport) => airport.id === hoveredAirportId) ?? null,
+    [projectedAirportMarkers, hoveredAirportId],
+  );
+
+  const hoveredAirportLabelWidth = hoveredAirport
+    ? Math.max(34, Math.ceil(hoveredAirport.code.length * 7.5) + 14)
+    : 0;
 
   const renderedFlights = useMemo(() => {
     if (!selectedFlight) {
@@ -834,15 +845,8 @@ export default function FlightMap2D({
 
           {projectedAirportMarkers.map((airport) => {
             const markerTransform = getFixedSizeTransform(airport.point, mapTransform.k);
-            const labelWidth = Math.max(34, Math.ceil(airport.code.length * 7.5) + 14);
-            const markerColor = airport.usage === 'departure'
-              ? DEPARTURE_AIRPORT_COLOR
-              : airport.usage === 'arrival'
-                ? ARRIVAL_AIRPORT_COLOR
-                : SHARED_AIRPORT_COLOR;
-            const airportTitle = `${airport.label} (${airport.code}) • ${airport.usage === 'both' ? 'departure and arrival airport' : `${airport.usage} airport`}`;
-
-            const labelOffsetX = -(labelWidth / 2);
+            const isHovered = hoveredAirportId === airport.id;
+            const airportTitle = `${airport.label} (${airport.code})`;
 
             return (
               <g
@@ -853,74 +857,15 @@ export default function FlightMap2D({
                 onMouseLeave={() => setHoveredAirportId((current) => (current === airport.id ? null : current))}
               >
                 <title>{airportTitle}</title>
-                {airport.usage === 'arrival' ? (
-                  <rect
-                    x="-4.5"
-                    y="-4.5"
-                    width="9"
-                    height="9"
-                    rx="2"
-                    transform="rotate(45)"
-                    fill={markerColor}
-                    stroke="rgba(255,255,255,0.92)"
-                    strokeWidth="1.2"
-                    vectorEffect="non-scaling-stroke"
-                  />
-                ) : (
-                  <circle
-                    cx="0"
-                    cy="0"
-                    r={airport.usage === 'both' ? 5.4 : 4.8}
-                    fill={markerColor}
-                    stroke="rgba(255,255,255,0.92)"
-                    strokeWidth="1.2"
-                    vectorEffect="non-scaling-stroke"
-                  />
-                )}
-                {airport.usage === 'both' ? (
-                  <rect
-                    x="-2.1"
-                    y="-2.1"
-                    width="4.2"
-                    height="4.2"
-                    rx="1"
-                    transform="rotate(45)"
-                    fill={ARRIVAL_AIRPORT_COLOR}
-                    stroke="rgba(255,255,255,0.92)"
-                    strokeWidth="0.9"
-                    vectorEffect="non-scaling-stroke"
-                  />
-                ) : null}
-                <g
-                  transform={`translate(${labelOffsetX} -24)`}
-                  pointerEvents="none"
-                  opacity={hoveredAirportId === airport.id ? 1 : 0}
-                  style={{ transition: 'opacity 150ms ease' }}
-                >
-                  <rect
-                    x="0"
-                    y="0"
-                    width={labelWidth}
-                    height="18"
-                    rx="9"
-                    fill="rgba(2,6,23,0.84)"
-                    stroke={markerColor}
-                    strokeWidth="0.9"
-                    vectorEffect="non-scaling-stroke"
-                  />
-                  <text
-                    x={labelWidth / 2}
-                    y="9"
-                    fill="#e2e8f0"
-                    fontSize="9.5"
-                    fontWeight="700"
-                    fontFamily="ui-sans-serif, system-ui, sans-serif"
-                    textAnchor="middle"
-                    dominantBaseline="middle"
-                  >
-                    {airport.code}
-                  </text>
-                </g>
+                <circle
+                  cx="0"
+                  cy="0"
+                  r={isHovered ? 5.4 : 4.8}
+                  fill={AIRPORT_MARKER_COLOR}
+                  stroke="rgba(255,255,255,0.92)"
+                  strokeWidth="1.2"
+                  vectorEffect="non-scaling-stroke"
+                />
               </g>
             );
           })}
@@ -1136,6 +1081,39 @@ export default function FlightMap2D({
               </g>
             );
           })}
+
+          {hoveredAirport ? (
+            <g
+              transform={getFixedSizeTransform(hoveredAirport.point, mapTransform.k)}
+              pointerEvents="none"
+            >
+              <g transform={`translate(${-(hoveredAirportLabelWidth / 2)} -24)`}>
+                <rect
+                  x="0"
+                  y="0"
+                  width={hoveredAirportLabelWidth}
+                  height="18"
+                  rx="9"
+                  fill="rgba(2,6,23,0.88)"
+                  stroke={AIRPORT_MARKER_COLOR}
+                  strokeWidth="0.9"
+                  vectorEffect="non-scaling-stroke"
+                />
+                <text
+                  x={hoveredAirportLabelWidth / 2}
+                  y="9"
+                  fill="#e2e8f0"
+                  fontSize="9.5"
+                  fontWeight="700"
+                  fontFamily="ui-sans-serif, system-ui, sans-serif"
+                  textAnchor="middle"
+                  dominantBaseline="middle"
+                >
+                  {hoveredAirport.code}
+                </text>
+              </g>
+            </g>
+          ) : null}
         </g>
       </svg>
 
