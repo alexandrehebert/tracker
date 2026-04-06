@@ -2,7 +2,7 @@
 
 import { useRef, useState, type ChangeEvent } from 'react';
 import { useLocale } from 'next-intl';
-import { ArrowRight, Clock3, Download, MapPin, PlaneTakeoff, Play, Plus, RefreshCw, Save, Settings2, Trash2, Upload, Users } from 'lucide-react';
+import { ArrowRight, Camera, Clock3, Download, MapPin, PlaneTakeoff, Play, Plus, RefreshCw, Save, Settings2, Trash2, Upload, Users } from 'lucide-react';
 import { Link } from '~/i18n/navigation';
 import {
   createEmptyFriendConfig,
