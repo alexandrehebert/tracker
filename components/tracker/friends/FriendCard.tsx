@@ -14,7 +14,31 @@ interface FriendCardProps {
 }
 
 export function FriendCard({ friend, friendIndex }: FriendCardProps) {
-  const { updateFriend, updateSelectedTripFriends } = useFriendsConfig();
+  const { locale, updateFriend, updateSelectedTripFriends } = useFriendsConfig();
+
+  const itineraryPreview = friend.flights
+    .filter((leg) => {
+      const values = [leg.flightNumber, leg.departureTime, leg.from, leg.to];
+      return values.some((value) => typeof value === 'string' && value.trim().length > 0);
+    })
+    .map((leg) => {
+      const departureText = typeof leg.departureTime === 'string' ? leg.departureTime.trim() : '';
+      const parsedDeparture = departureText ? Date.parse(departureText) : Number.NaN;
+      const routeText = `${leg.from?.trim() || '???'} -> ${leg.to?.trim() || '???'}`;
+      const flightText = leg.flightNumber?.trim() || 'No flight #';
+      const timeText = Number.isNaN(parsedDeparture)
+        ? 'Invalid date'
+        : new Date(parsedDeparture).toLocaleString(locale, {
+          month: 'short',
+          day: '2-digit',
+          hour: '2-digit',
+          minute: '2-digit',
+          hour12: false,
+          timeZone: 'UTC',
+        });
+
+      return `${flightText} · ${routeText} · ${timeText} UTC`;
+    });
 
   return (
     <section className="rounded-3xl border border-white/10 bg-slate-950/55 p-5 backdrop-blur-sm">
@@ -107,6 +131,22 @@ export function FriendCard({ friend, friendIndex }: FriendCardProps) {
       </div>
 
       <div className="mt-4 space-y-3">
+        {itineraryPreview.length > 0 ? (
+          <div className="rounded-2xl border border-cyan-400/20 bg-cyan-500/5 p-3">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-cyan-200">Itinerary preview</p>
+            <div className="mt-2 flex flex-wrap gap-2">
+              {itineraryPreview.map((preview, index) => (
+                <span
+                  key={`${friend.id}-preview-${index}`}
+                  className="rounded-full border border-white/15 bg-slate-900/80 px-2.5 py-1 text-xs text-slate-100"
+                >
+                  {preview}
+                </span>
+              ))}
+            </div>
+          </div>
+        ) : null}
+
         {friend.flights.map((leg, legIndex) => (
           <FlightLegCard
             key={leg.id}

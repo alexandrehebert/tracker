@@ -17,6 +17,16 @@ import { getAirportSuggestionCode, normalizeAirportCode } from '~/lib/utils/airp
 import { buildSaveableConfigSnapshot, createClientId, createDraftTrip, moveArrayItem } from '~/lib/utils/friendsConfigUtils';
 import type { TrackerCronDashboard } from '~/lib/server/trackerCron';
 
+export interface FriendsConfigValidationIssue {
+  id: string;
+  friendId: string;
+  friendName: string;
+  legId: string;
+  legIndex: number;
+  code: 'invalid-date' | 'flight-order';
+  message: string;
+}
+
 function getCronDashboardChantalIdentifiers(dashboard: TrackerCronDashboard): string[] {
   return Array.isArray(dashboard.config.chantalIdentifiers) ? dashboard.config.chantalIdentifiers : [];
 }
@@ -131,6 +141,67 @@ function resolveImportedTripForMerge(
     ?? null;
 }
 
+function hasLegContent(leg: FriendTravelConfig['flights'][number]): boolean {
+  const values = [leg.flightNumber, leg.departureTime, leg.from, leg.to, leg.note, leg.resolvedIcao24];
+  return values.some((value) => typeof value === 'string' && value.trim().length > 0);
+}
+
+function getFriendDisplayName(friend: FriendTravelConfig, index: number): string {
+  const trimmedName = friend.name.trim();
+  return trimmedName || `Friend ${index + 1}`;
+}
+
+function buildValidationIssuesForTrip(trip: FriendsTrackerTripConfig | null): FriendsConfigValidationIssue[] {
+  if (!trip) {
+    return [];
+  }
+
+  const issues: FriendsConfigValidationIssue[] = [];
+
+  trip.friends.forEach((friend, friendIndex) => {
+    const friendName = getFriendDisplayName(friend, friendIndex);
+    let previousValidDeparture: { timestamp: number; legIndex: number } | null = null;
+
+    friend.flights.forEach((leg, legIndex) => {
+      if (!hasLegContent(leg)) {
+        return;
+      }
+
+      const departureText = typeof leg.departureTime === 'string' ? leg.departureTime.trim() : '';
+      const parsedDeparture = departureText ? Date.parse(departureText) : Number.NaN;
+
+      if (!departureText || Number.isNaN(parsedDeparture)) {
+        issues.push({
+          id: `${friend.id}:${leg.id}:invalid-date`,
+          friendId: friend.id,
+          friendName,
+          legId: leg.id,
+          legIndex,
+          code: 'invalid-date',
+          message: `${friendName} leg ${legIndex + 1}: enter a valid departure date/time.`,
+        });
+        return;
+      }
+
+      if (previousValidDeparture && parsedDeparture < previousValidDeparture.timestamp) {
+        issues.push({
+          id: `${friend.id}:${leg.id}:flight-order`,
+          friendId: friend.id,
+          friendName,
+          legId: leg.id,
+          legIndex,
+          code: 'flight-order',
+          message: `${friendName} leg ${legIndex + 1} departs before leg ${previousValidDeparture.legIndex + 1}.`,
+        });
+      }
+
+      previousValidDeparture = { timestamp: parsedDeparture, legIndex };
+    });
+  });
+
+  return issues;
+}
+
 export interface FriendsConfigContextValue {
   locale: string;
   demoReferenceTime: number;
@@ -167,6 +238,8 @@ export interface FriendsConfigContextValue {
   hasPendingChanges: boolean;
   trackedIdentifiers: string[];
   latestCronRun: TrackerCronDashboard['history'][number] | null;
+  validationIssues: FriendsConfigValidationIssue[];
+  hasValidationErrors: boolean;
   // Actions
   updateTrip: (tripId: string, updater: (trip: FriendsTrackerTripConfig) => FriendsTrackerTripConfig) => void;
   updateSelectedTrip: (updater: (trip: FriendsTrackerTripConfig) => FriendsTrackerTripConfig) => void;
@@ -258,6 +331,8 @@ export function FriendsConfigProvider({
   const hasPendingChanges = currentSnapshot !== savedSnapshot;
   const trackedIdentifiers = extractFriendTrackerIdentifiers(buildExportPayload());
   const latestCronRun = cronDashboard.history[0] ?? null;
+  const validationIssues = buildValidationIssuesForTrip(selectedTrip);
+  const hasValidationErrors = validationIssues.length > 0;
 
   useEffect(() => {
     setHasHydrated(true);
@@ -809,6 +884,8 @@ export function FriendsConfigProvider({
     hasPendingChanges,
     trackedIdentifiers,
     latestCronRun,
+    validationIssues,
+    hasValidationErrors,
     updateTrip,
     updateSelectedTrip,
     updateSelectedTripFriends,
@@ -849,6 +926,8 @@ export function FriendsConfigProvider({
     hasPendingChanges,
     trackedIdentifiers,
     latestCronRun,
+    validationIssues,
+    hasValidationErrors,
   ]);
 
   return (

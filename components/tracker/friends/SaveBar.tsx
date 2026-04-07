@@ -14,6 +14,8 @@ export function SaveBar() {
     lastSavedAt,
     selectedTrip,
     currentTrip,
+    validationIssues,
+    hasValidationErrors,
     handleSave,
   } = useFriendsConfig();
 
@@ -35,6 +37,18 @@ export function SaveBar() {
               : 'All changes are already saved. Make any edit to enable Save config.')}
           </p>
 
+          {hasValidationErrors ? (
+            <div className="rounded-2xl border border-amber-400/35 bg-amber-500/10 px-3 py-2 text-xs text-amber-100">
+              <p className="font-semibold">Fix {validationIssues.length} validation issue{validationIssues.length === 1 ? '' : 's'} before saving:</p>
+              <ul className="mt-1 space-y-0.5 text-amber-50/90">
+                {validationIssues.slice(0, 3).map((issue) => (
+                  <li key={issue.id}>• {issue.message}</li>
+                ))}
+              </ul>
+              {validationIssues.length > 3 ? <p className="mt-1 text-amber-100/80">+ {validationIssues.length - 3} more issue(s)</p> : null}
+            </div>
+          ) : null}
+
           <div className="flex flex-wrap gap-2 text-xs text-slate-300">
             <span className="rounded-full border border-white/10 bg-slate-900/80 px-3 py-1.5">
               Editing: <span className="font-semibold text-white">{selectedTrip?.name ?? 'No trip selected'}</span>
@@ -52,7 +66,7 @@ export function SaveBar() {
           type="button"
           onClick={handleSave}
           className="inline-flex w-full items-center justify-center gap-2 whitespace-nowrap rounded-full bg-cyan-500 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-cyan-400 disabled:cursor-not-allowed disabled:opacity-60 md:w-auto"
-          disabled={!hasPendingChanges || isSaving || isSavingCronToggle}
+          disabled={!hasPendingChanges || hasValidationErrors || isSaving || isSavingCronToggle}
         >
           {isSaving ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
           {isSaving ? 'Saving…' : 'Save config'}
