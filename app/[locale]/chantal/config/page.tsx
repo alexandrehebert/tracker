@@ -4,6 +4,7 @@ import { Link } from '~/i18n/navigation';
 import { isValidLocale } from '~/i18n/routing';
 import { readFriendsTrackerConfigWithAirportTimezones } from '~/lib/server/friendsTracker';
 import { getTrackerCronDashboard } from '~/lib/server/trackerCron';
+import { getProviderDisabledReason } from '~/lib/server/providers';
 
 export const dynamic = 'force-dynamic';
 
@@ -19,6 +20,8 @@ export default async function ChantalConfigPage({ params }: ChantalConfigPagePro
   }
 
   const demoReferenceTime = Date.now();
+  const flightAwareValidationNotice = getProviderDisabledReason('flightaware');
+  const isFlightAwareValidationEnabled = flightAwareValidationNotice == null;
 
   const [initialConfig, initialCronDashboard] = await Promise.all([
     readFriendsTrackerConfigWithAirportTimezones(),
@@ -51,6 +54,8 @@ export default async function ChantalConfigPage({ params }: ChantalConfigPagePro
             initialConfig={initialConfig}
             initialCronDashboard={initialCronDashboard}
             initialDemoReferenceTime={demoReferenceTime}
+            initialFlightAwareValidationEnabled={isFlightAwareValidationEnabled}
+            initialFlightAwareValidationNotice={flightAwareValidationNotice}
           />
         </div>
       </div>

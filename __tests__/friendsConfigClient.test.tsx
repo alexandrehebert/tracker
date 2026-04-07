@@ -422,6 +422,86 @@ describe('FriendsConfigClient', () => {
     expect(screen.getByRole('button', { name: /save config/i })).toBeEnabled();
   });
 
+  it('validates a configured leg on demand and surfaces live provider details', async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.mocked(window.fetch);
+    const matchedDepartureSeconds = Math.floor(Date.parse('2026-04-14T09:35:00.000Z') / 1000);
+    const matchedArrivalSeconds = Math.floor(Date.parse('2026-04-14T11:10:00.000Z') / 1000);
+
+    fetchMock.mockImplementation(async (input, init) => {
+      const url = typeof input === 'string'
+        ? input
+        : input instanceof URL
+          ? input.toString()
+          : input.url;
+
+      if (url.includes('/api/airports')) {
+        const parsedUrl = new URL(url, 'http://localhost');
+        const query = parsedUrl.searchParams.get('query')?.trim() ?? '';
+        const codesParam = parsedUrl.searchParams.get('codes')?.trim() ?? '';
+
+        const airports = codesParam
+          ? airportDirectoryResponse.airports.filter((airport) => codesParam.split(',').map((code) => code.trim().toUpperCase()).includes(airport.code))
+          : query
+            ? searchAirportFixture(query)
+            : airportDirectoryResponse.airports;
+
+        return new Response(JSON.stringify({
+          ...airportDirectoryResponse,
+          total: airports.length,
+          airports,
+          timezones: buildAirportFixtureTimezoneLookup(airports),
+        }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      if (url.includes('/api/chantal/validate-flight')) {
+        return new Response(JSON.stringify({
+          status: 'matched',
+          message: 'FlightAware matched AF123. Departure is +5 min vs the configured schedule. ICAO24 3C675A is available.',
+          providerLabel: 'FlightAware',
+          matchedIcao24: '3C675A',
+          matchedFlightNumber: 'AF123',
+          matchedDepartureTime: matchedDepartureSeconds * 1000,
+          matchedArrivalTime: matchedArrivalSeconds * 1000,
+          departureDeltaMinutes: 5,
+          matchedRoute: 'CDG → AMS',
+          lastCheckedAt: Date.now(),
+        }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      if (url.includes('/api/chantal/config') && init?.method === 'PUT') {
+        const body = typeof init.body === 'string' ? init.body : JSON.stringify(initialConfig);
+        return new Response(body, {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      return new Response(JSON.stringify(initialConfig), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    });
+
+    render(<FriendsConfigClient initialConfig={initialConfig} initialCronDashboard={initialCronDashboard} />);
+
+    const aliceCard = screen.getByDisplayValue('Alice').closest('section');
+    expect(aliceCard).not.toBeNull();
+
+    const aliceQueries = within(aliceCard as HTMLElement);
+    await user.click(aliceQueries.getByRole('button', { name: /validate flight for leg 1/i }));
+
+    expect(await screen.findByText(/Schedule match confirmed/i)).toBeInTheDocument();
+    expect((await screen.findAllByText(/3C675A/i)).length).toBeGreaterThan(0);
+    expect(await screen.findByText(/Arrival:/i)).toBeInTheDocument();
+  });
+
   it('enables save only when there are pending changes', async () => {
     const user = userEvent.setup();
 

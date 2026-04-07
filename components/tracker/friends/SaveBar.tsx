@@ -11,13 +11,23 @@ export function SaveBar() {
     hasPendingChanges,
     isSaving,
     isSavingCronToggle,
+    isValidatingFlights,
+    isFlightAwareValidationEnabled,
+    flightAwareValidationNotice,
     lastSavedAt,
     selectedTrip,
     currentTrip,
     validationIssues,
     hasValidationErrors,
+    flightValidationResults,
+    handleValidateSelectedTripFlights,
     handleSave,
   } = useFriendsConfig();
+
+  const liveValidationResults = selectedTrip?.friends.flatMap((friend) => friend.flights.map((leg) => flightValidationResults[leg.id])).filter(Boolean) ?? [];
+  const matchedLiveCount = liveValidationResults.filter((result) => result?.status === 'matched').length;
+  const warningLiveCount = liveValidationResults.filter((result) => result?.status === 'warning').length;
+  const unresolvedLiveCount = liveValidationResults.filter((result) => result?.status === 'not-found' || result?.status === 'error').length;
 
   return (
     <section className="sticky top-3 z-20 rounded-2xl border border-white/10 bg-slate-950/90 p-3 shadow-lg shadow-slate-950/25 backdrop-blur">
@@ -49,6 +59,20 @@ export function SaveBar() {
             </div>
           ) : null}
 
+          {!isFlightAwareValidationEnabled && flightAwareValidationNotice ? (
+            <div className="rounded-2xl border border-rose-400/35 bg-rose-500/10 px-3 py-2 text-xs text-rose-100">
+              <p className="font-semibold">Flight validation unavailable</p>
+              <p className="mt-1 text-rose-50/90">{flightAwareValidationNotice}</p>
+            </div>
+          ) : liveValidationResults.length > 0 ? (
+            <div className="rounded-2xl border border-sky-400/25 bg-sky-500/10 px-3 py-2 text-xs text-sky-100">
+              <p className="font-semibold">Flight provider validation</p>
+              <p className="mt-1 text-sky-50/90">
+                {matchedLiveCount} matched • {warningLiveCount} warning{warningLiveCount === 1 ? '' : 's'} • {unresolvedLiveCount} unresolved
+              </p>
+            </div>
+          ) : null}
+
           <div className="flex flex-wrap gap-2 text-xs text-slate-300">
             <span className="rounded-full border border-white/10 bg-slate-900/80 px-3 py-1.5">
               Editing: <span className="font-semibold text-white">{selectedTrip?.name ?? 'No trip selected'}</span>
@@ -62,15 +86,27 @@ export function SaveBar() {
           </div>
         </div>
 
-        <button
-          type="button"
-          onClick={handleSave}
-          className="inline-flex w-full items-center justify-center gap-2 whitespace-nowrap rounded-full bg-cyan-500 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-cyan-400 disabled:cursor-not-allowed disabled:opacity-60 md:w-auto"
-          disabled={!hasPendingChanges || hasValidationErrors || isSaving || isSavingCronToggle}
-        >
-          {isSaving ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-          {isSaving ? 'Saving…' : 'Save config'}
-        </button>
+        <div className="flex w-full flex-col gap-2 md:w-auto">
+          <button
+            type="button"
+            onClick={handleValidateSelectedTripFlights}
+            className="inline-flex w-full items-center justify-center gap-2 whitespace-nowrap rounded-full border border-sky-400/35 bg-sky-500/10 px-4 py-2 text-sm font-semibold text-sky-50 transition hover:bg-sky-500/20 disabled:cursor-not-allowed disabled:opacity-60 md:w-auto"
+            disabled={!isFlightAwareValidationEnabled || isValidatingFlights || isSaving || isSavingCronToggle || !selectedTrip}
+          >
+            <RefreshCw className={`h-4 w-4 ${isValidatingFlights ? 'animate-spin' : ''}`} />
+            {isValidatingFlights ? 'Validating flights…' : 'Validate flights'}
+          </button>
+
+          <button
+            type="button"
+            onClick={handleSave}
+            className="inline-flex w-full items-center justify-center gap-2 whitespace-nowrap rounded-full bg-cyan-500 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-cyan-400 disabled:cursor-not-allowed disabled:opacity-60 md:w-auto"
+            disabled={!hasPendingChanges || hasValidationErrors || isSaving || isSavingCronToggle}
+          >
+            {isSaving ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
+            {isSaving ? 'Saving…' : 'Save config'}
+          </button>
+        </div>
       </div>
     </section>
   );

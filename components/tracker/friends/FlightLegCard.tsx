@@ -1,6 +1,6 @@
 'use client';
 
-import { ArrowDown, ArrowUp, PlaneTakeoff, Trash2 } from 'lucide-react';
+import { ArrowDown, ArrowUp, PlaneTakeoff, RefreshCw, Trash2 } from 'lucide-react';
 import { useFriendsConfig } from './FriendsConfigContext';
 import { AirportAutocomplete } from './AirportAutocomplete';
 import { getAirportFieldKey, normalizeAirportCode } from '~/lib/utils/airportUtils';
@@ -16,15 +16,42 @@ interface FlightLegCardProps {
 }
 
 export function FlightLegCard({ friendId, leg, legIndex, totalLegs }: FlightLegCardProps) {
-  const { airportTimezones, hasHydrated, activeAirportField, airportSuggestions, updateFriend, moveFriendFlight } = useFriendsConfig();
+  const {
+    locale,
+    airportTimezones,
+    hasHydrated,
+    activeAirportField,
+    airportSuggestions,
+    flightValidationResults,
+    updateFriend,
+    moveFriendFlight,
+    validateFlightLeg,
+  } = useFriendsConfig();
 
   const departureTimezone = leg.departureTimezone ?? airportTimezones[normalizeAirportCode(leg.from)] ?? null;
   const fromFieldKey = getAirportFieldKey(friendId, leg.id, 'from');
   const toFieldKey = getAirportFieldKey(friendId, leg.id, 'to');
-
   const fromSuggestions = activeAirportField === fromFieldKey ? airportSuggestions : [];
   const toSuggestions = activeAirportField === toFieldKey ? airportSuggestions : [];
   const hasOpenSuggestions = fromSuggestions.length > 0 || toSuggestions.length > 0;
+  const validationResult = flightValidationResults[leg.id];
+  const isLegValidating = validationResult?.status === 'loading';
+
+  function formatValidationTimestamp(value: number | null): string | null {
+    if (value == null || !Number.isFinite(value)) {
+      return null;
+    }
+
+    return new Date(value).toLocaleString(locale, {
+      year: 'numeric',
+      month: 'short',
+      day: '2-digit',
+      hour: '2-digit',
+      minute: '2-digit',
+      hour12: false,
+      timeZone: 'UTC',
+    });
+  }
 
   function updateLeg(updater: (l: FriendFlightLeg) => FriendFlightLeg) {
     updateFriend(friendId, (friend) => ({
@@ -60,6 +87,18 @@ export function FlightLegCard({ friendId, leg, legIndex, totalLegs }: FlightLegC
           >
             <ArrowDown className="h-3.5 w-3.5" />
             <span className="hidden sm:inline">Down</span>
+          </button>
+          <button
+            type="button"
+            aria-label={`Validate flight for leg ${legIndex + 1}`}
+            onClick={() => {
+              void validateFlightLeg(friendId, leg.id);
+            }}
+            disabled={isLegValidating}
+            className="inline-flex items-center gap-1 rounded-full border border-sky-400/30 bg-sky-500/10 px-3 py-1.5 text-xs font-medium text-sky-100 transition hover:bg-sky-500/20 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            <RefreshCw className={`h-3.5 w-3.5 ${isLegValidating ? 'animate-spin' : ''}`} />
+            {isLegValidating ? 'Checking…' : 'Validate flight'}
           </button>
           <button
             type="button"
@@ -185,6 +224,61 @@ export function FlightLegCard({ friendId, leg, legIndex, totalLegs }: FlightLegC
           >
             Clear lock
           </button>
+        </div>
+      ) : null}
+
+      {validationResult && validationResult.status !== 'idle' ? (
+        <div className={`mt-3 rounded-2xl border px-3 py-2 text-xs ${validationResult.status === 'matched'
+          ? 'border-emerald-400/30 bg-emerald-500/10 text-emerald-100'
+          : validationResult.status === 'loading'
+            ? 'border-sky-400/30 bg-sky-500/10 text-sky-100'
+            : validationResult.status === 'warning'
+              ? 'border-amber-400/35 bg-amber-500/10 text-amber-100'
+              : validationResult.status === 'skipped'
+                ? 'border-slate-400/25 bg-slate-900/70 text-slate-200'
+                : 'border-rose-400/35 bg-rose-500/10 text-rose-100'}`}
+        >
+          <p className="font-semibold">
+            {validationResult.status === 'matched'
+              ? 'Schedule match confirmed'
+              : validationResult.status === 'warning'
+                ? 'Provider match needs review'
+                : validationResult.status === 'loading'
+                  ? 'Provider validation in progress'
+                  : validationResult.status === 'skipped'
+                    ? 'Validation skipped'
+                    : validationResult.status === 'not-found'
+                      ? 'No live match found'
+                      : 'Validation error'}
+          </p>
+          <p className="mt-1">{validationResult.message}</p>
+          <div className="mt-2 flex flex-wrap gap-2">
+            {validationResult.providerLabel ? (
+              <span className="rounded-full border border-white/15 bg-slate-950/40 px-2 py-1">
+                Source: {validationResult.providerLabel}
+              </span>
+            ) : null}
+            {validationResult.matchedIcao24 ? (
+              <span className="rounded-full border border-white/15 bg-slate-950/40 px-2 py-1">
+                ICAO24: {validationResult.matchedIcao24}
+              </span>
+            ) : null}
+            {validationResult.matchedRoute ? (
+              <span className="rounded-full border border-white/15 bg-slate-950/40 px-2 py-1">
+                Route: {validationResult.matchedRoute}
+              </span>
+            ) : null}
+            {validationResult.departureDeltaMinutes != null ? (
+              <span className="rounded-full border border-white/15 bg-slate-950/40 px-2 py-1">
+                Delta: {validationResult.departureDeltaMinutes > 0 ? '+' : ''}{validationResult.departureDeltaMinutes} min
+              </span>
+            ) : null}
+            {formatValidationTimestamp(validationResult.matchedArrivalTime) ? (
+              <span className="rounded-full border border-white/15 bg-slate-950/40 px-2 py-1">
+                Arrival: {formatValidationTimestamp(validationResult.matchedArrivalTime)} UTC
+              </span>
+            ) : null}
+          </div>
         </div>
       ) : null}
     </div>

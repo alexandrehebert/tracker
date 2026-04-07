@@ -57,11 +57,15 @@ export function FriendsConfigClient({
   initialCronDashboard,
   initialDemoReferenceTime,
   initialAirportTimezones = initialConfig.airportTimezones ?? {},
+  initialFlightAwareValidationEnabled = true,
+  initialFlightAwareValidationNotice = null,
 }: {
   initialConfig: FriendsTrackerConfig;
   initialCronDashboard: TrackerCronDashboard;
   initialDemoReferenceTime?: number;
   initialAirportTimezones?: Record<string, string>;
+  initialFlightAwareValidationEnabled?: boolean;
+  initialFlightAwareValidationNotice?: string | null;
 }) {
   return (
     <FriendsConfigProvider
@@ -69,6 +73,8 @@ export function FriendsConfigClient({
       initialCronDashboard={initialCronDashboard}
       initialDemoReferenceTime={initialDemoReferenceTime}
       initialAirportTimezones={initialAirportTimezones}
+      initialFlightAwareValidationEnabled={initialFlightAwareValidationEnabled}
+      initialFlightAwareValidationNotice={initialFlightAwareValidationNotice}
     >
       <FriendsConfigInner />
     </FriendsConfigProvider>

@@ -372,8 +372,8 @@ function getRouteLastSeen(record: FlightAwareFlightRecord): number | null {
     ?? toTimestampSeconds(record.scheduled_on);
 }
 
-function getRecordTemporalScore(record: FlightAwareFlightRecord): number {
-  const nowSeconds = Math.floor(Date.now() / 1000);
+function getRecordTemporalScore(record: FlightAwareFlightRecord, referenceTimeMs?: number | null): number {
+  const nowSeconds = Math.floor((referenceTimeMs ?? Date.now()) / 1000);
   const liveTimestamp = toTimestampSeconds(record.last_position?.timestamp);
   const routeFirstSeen = getRouteFirstSeen(record);
   const routeLastSeen = getRouteLastSeen(record);
@@ -505,7 +505,10 @@ async function writeToCache(identifier: string, payload: FlightAwareFlightEnrich
   });
 }
 
-export async function lookupFlightAwareFlightWithReport(identifier: string): Promise<FlightAwareLookupResult> {
+export async function lookupFlightAwareFlightWithReport(
+  identifier: string,
+  options?: { referenceTimeMs?: number | null },
+): Promise<FlightAwareLookupResult> {
   const normalizedIdentifier = normalizeIdentifier(identifier);
   if (!normalizedIdentifier) {
     return {
@@ -601,7 +604,7 @@ export async function lookupFlightAwareFlightWithReport(identifier: string): Pro
       });
 
       for (const record of records) {
-        const score = getRecordMatchScore(record, normalizedIdentifier) + getRecordTemporalScore(record);
+        const score = getRecordMatchScore(record, normalizedIdentifier) + getRecordTemporalScore(record, options?.referenceTimeMs);
         if (score <= bestScore) {
           continue;
         }
@@ -657,8 +660,11 @@ export async function lookupFlightAwareFlightWithReport(identifier: string): Pro
   };
 }
 
-export async function lookupFlightAwareFlight(identifier: string): Promise<FlightAwareFlightEnrichment | null> {
-  const result = await lookupFlightAwareFlightWithReport(identifier);
+export async function lookupFlightAwareFlight(
+  identifier: string,
+  options?: { referenceTimeMs?: number | null },
+): Promise<FlightAwareFlightEnrichment | null> {
+  const result = await lookupFlightAwareFlightWithReport(identifier, options);
   if (result.report.status === 'error') {
     throw new Error(result.report.reason);
   }
