@@ -6,13 +6,15 @@ import type { AirportDirectoryResponse } from '~/components/tracker/flight/types
 import {
   extractFriendTrackerIdentifiers,
   getCurrentTripConfig,
+  normalizeFriendFlightIdentifier,
   normalizeFriendsTrackerConfig,
+  normalizeFriendsTrackerTripConfig,
   type FriendTravelConfig,
   type FriendsTrackerConfig,
   type FriendsTrackerTripConfig,
 } from '~/lib/friendsTracker';
 import { getAirportSuggestionCode, normalizeAirportCode } from '~/lib/utils/airportUtils';
-import { buildSaveableConfigSnapshot, createDraftTrip, moveArrayItem } from '~/lib/utils/friendsConfigUtils';
+import { buildSaveableConfigSnapshot, createClientId, createDraftTrip, moveArrayItem } from '~/lib/utils/friendsConfigUtils';
 import type { TrackerCronDashboard } from '~/lib/server/trackerCron';
 
 function getCronDashboardChantalIdentifiers(dashboard: TrackerCronDashboard): string[] {
@@ -26,6 +28,107 @@ function getCronDashboardManualIdentifiers(dashboard: TrackerCronDashboard): str
 
   const chantalIdentifiers = new Set(getCronDashboardChantalIdentifiers(dashboard));
   return dashboard.config.identifiers.filter((identifier) => !chantalIdentifiers.has(identifier));
+}
+
+function normalizeFriendMergeKey(friend: FriendTravelConfig): string {
+  return friend.name.trim().toLowerCase();
+}
+
+function buildFlightLegMergeKey(leg: FriendTravelConfig['flights'][number]): string {
+  const flightNumber = normalizeFriendFlightIdentifier(leg.flightNumber);
+  const departureTime = typeof leg.departureTime === 'string' ? leg.departureTime.trim() : '';
+  const from = normalizeAirportCode(leg.from);
+  const to = normalizeAirportCode(leg.to);
+
+  return [flightNumber, departureTime, from, to].join('|');
+}
+
+function reconcileImportedTripWithCurrentTrip(
+  currentTrip: FriendsTrackerTripConfig,
+  importedTrip: FriendsTrackerTripConfig,
+): FriendsTrackerTripConfig {
+  const usedFriendIds = new Set<string>();
+
+  const nextFriends = importedTrip.friends.map((importedFriend) => {
+    const friendMatchedById = currentTrip.friends.find((friend) => friend.id === importedFriend.id);
+    const importedFriendKey = normalizeFriendMergeKey(importedFriend);
+    const friendMatchedByName = importedFriendKey
+      ? currentTrip.friends.find((friend) => !usedFriendIds.has(friend.id) && normalizeFriendMergeKey(friend) === importedFriendKey)
+      : undefined;
+    const matchingFriend = friendMatchedById ?? friendMatchedByName;
+
+    if (matchingFriend) {
+      usedFriendIds.add(matchingFriend.id);
+    }
+
+    const usedFlightIds = new Set<string>();
+    const matchingFlights = matchingFriend?.flights ?? [];
+    const nextFlights = importedFriend.flights.map((importedLeg) => {
+      const legMatchedById = matchingFlights.find((leg) => leg.id === importedLeg.id);
+      const importedLegKey = buildFlightLegMergeKey(importedLeg);
+      const legMatchedByFlightData = importedLegKey
+        ? matchingFlights.find((leg) => !usedFlightIds.has(leg.id) && buildFlightLegMergeKey(leg) === importedLegKey)
+        : undefined;
+      const matchingLeg = legMatchedById ?? legMatchedByFlightData;
+
+      if (matchingLeg) {
+        usedFlightIds.add(matchingLeg.id);
+        return {
+          ...importedLeg,
+          id: matchingLeg.id,
+        };
+      }
+
+      return importedLeg;
+    });
+
+    return {
+      ...importedFriend,
+      id: matchingFriend?.id ?? importedFriend.id,
+      flights: nextFlights,
+    };
+  });
+
+  return {
+    ...currentTrip,
+    ...importedTrip,
+    id: currentTrip.id,
+    friends: nextFriends,
+  };
+}
+
+function resolveImportedTripForMerge(
+  parsedValue: Partial<FriendsTrackerConfig> | FriendTravelConfig[],
+  importedConfig: FriendsTrackerConfig,
+): FriendsTrackerTripConfig | null {
+  if (!Array.isArray(parsedValue) && Array.isArray(parsedValue.friends)) {
+    const importedTrip = normalizeFriendsTrackerTripConfig({
+      id: createClientId('trip'),
+      name: 'Imported trip',
+      destinationAirport: parsedValue.destinationAirport ?? null,
+      friends: parsedValue.friends,
+      isDemo: false,
+    });
+
+    return {
+      ...importedTrip,
+      id: importedTrip.id || createClientId('trip'),
+    };
+  }
+
+  const importedTrips = importedConfig.trips ?? [];
+  if (importedTrips.length === 0) {
+    return null;
+  }
+
+  const requestedImportedTripId = !Array.isArray(parsedValue) && typeof parsedValue.currentTripId === 'string' && parsedValue.currentTripId.trim()
+    ? parsedValue.currentTripId.trim()
+    : null;
+
+  return importedTrips.find((trip) => trip.id === requestedImportedTripId)
+    ?? importedTrips.find((trip) => !trip.isDemo)
+    ?? importedTrips[0]
+    ?? null;
 }
 
 export interface FriendsConfigContextValue {
@@ -482,7 +585,15 @@ export function FriendsConfigProvider({
 
     try {
       const exportPayload = buildExportPayload();
-      const blob = new Blob([JSON.stringify(exportPayload, null, 2)], { type: 'application/json' });
+      const canonicalExportPayload = {
+        updatedAt: exportPayload.updatedAt,
+        updatedBy: exportPayload.updatedBy,
+        cronEnabled: exportPayload.cronEnabled ?? true,
+        currentTripId: exportPayload.currentTripId ?? null,
+        trips: exportPayload.trips ?? [],
+        airportTimezones: exportPayload.airportTimezones ?? {},
+      };
+      const blob = new Blob([JSON.stringify(canonicalExportPayload, null, 2)], { type: 'application/json' });
       const objectUrl = URL.createObjectURL(blob);
       const link = document.createElement('a');
       const dateLabel = new Date().toISOString().slice(0, 10);
@@ -527,16 +638,41 @@ export function FriendsConfigProvider({
         ? parsedValue.trips.length
         : 1;
 
-      const importedTrips = importedConfig.trips ?? [];
+      const importedTrip = resolveImportedTripForMerge(parsedValue, importedConfig);
+      const importedTripId = importedTrip?.id?.trim()
+        ? importedTrip.id.trim()
+        : createClientId('trip');
 
-      setTrips(importedTrips);
-      setCurrentTripId(importedConfig.currentTripId ?? importedTrips[0]?.id ?? null);
-      setSelectedTripId(importedConfig.currentTripId ?? importedTrips[0]?.id ?? null);
-      setCronEnabled(importedConfig.cronEnabled ?? true);
+      const matchingTrip = importedTrip
+        ? trips.find((trip) => trip.id === importedTripId)
+        : null;
+      const mergedIntoExistingTrip = Boolean(matchingTrip);
+
+      if (importedTrip && matchingTrip) {
+        const mergedTrip = reconcileImportedTripWithCurrentTrip(matchingTrip, {
+          ...importedTrip,
+          id: matchingTrip.id,
+        });
+
+        setTrips((currentTrips) => currentTrips.map((trip) => trip.id === matchingTrip.id ? mergedTrip : trip));
+      } else if (importedTrip) {
+        setTrips((currentTrips) => [...currentTrips, {
+          ...importedTrip,
+          id: importedTripId,
+        }]);
+      }
+
+      if (importedTrip) {
+        setSelectedTripId(importedTripId);
+      }
       setLastSavedAt(importedConfig.updatedAt);
       setJsonNotice({
         type: 'success',
-        text: `Imported ${importedTripCount} trip${importedTripCount === 1 ? '' : 's'} from JSON. Click "Save config" to persist it.`,
+        text: importedTrip
+          ? mergedIntoExistingTrip
+            ? `Imported and merged into trip "${importedTrip.name}". Friends and flights now match the JSON for this trip. Click "Save config" to persist it.`
+            : `Imported as a new trip "${importedTrip.name}" and selected it. Click "Save config" to persist it.`
+          : `Imported ${importedTripCount} trip${importedTripCount === 1 ? '' : 's'} from JSON. Click "Save config" to persist it.`,
       });
     } catch (error) {
       setJsonNotice({
@@ -546,9 +682,26 @@ export function FriendsConfigProvider({
     }
   }
 
-  async function handlePublishCurrentTrip(nextTripId: string) {
-    const previousTripId = currentTripId;
-    setCurrentTripId(nextTripId);
+  async function persistConfig(
+    nextState?: {
+      trips?: FriendsTrackerTripConfig[];
+      currentTripId?: string | null;
+    },
+    options?: {
+      updatedBy?: string;
+      successText?: string | ((payload: FriendsTrackerConfig) => string);
+      errorText?: string;
+      rollback?: () => void;
+      force?: boolean;
+    },
+  ) {
+    const nextConfig = buildExportPayload(nextState);
+    const nextSnapshot = buildSaveableConfigSnapshot(nextConfig, demoReferenceTime);
+
+    if (!options?.force && nextSnapshot === savedSnapshot) {
+      return null;
+    }
+
     setIsSaving(true);
     setNotice(null);
 
@@ -557,71 +710,68 @@ export function FriendsConfigProvider({
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          updatedBy: 'chantal current trip publish',
-          cronEnabled,
-          currentTripId: nextTripId,
-          trips,
+          updatedBy: options?.updatedBy ?? 'chantal config page',
+          cronEnabled: nextConfig.cronEnabled,
+          currentTripId: nextConfig.currentTripId ?? null,
+          trips: nextConfig.trips ?? [],
         }),
       });
 
       const payload = await response.json() as FriendsTrackerConfig & { error?: string };
       if (!response.ok) {
-        throw new Error(payload.error || 'Unable to publish the selected trip live on /chantal.');
+        throw new Error(payload.error || options?.errorText || 'Unable to save the friends tracker config.');
       }
 
-      applySavedConfig(payload);
-      setNotice({ type: 'success', text: 'Current /chantal trip updated.' });
+      const appliedConfig = applySavedConfig(payload);
+      const successText = typeof options?.successText === 'function'
+        ? options.successText(appliedConfig)
+        : options?.successText
+          ?? (payload.cronEnabled === false
+            ? 'Friends tracker config saved. This Chantal batch remains excluded from the shared cron list.'
+            : 'Friends tracker config saved and synced to the shared cron list.');
+
+      setNotice({
+        type: 'success',
+        text: successText,
+      });
+
+      return appliedConfig;
     } catch (error) {
-      setCurrentTripId(previousTripId);
+      options?.rollback?.();
       setNotice({
         type: 'error',
-        text: error instanceof Error ? error.message : 'Unable to publish the selected trip live on /chantal.',
+        text: error instanceof Error ? error.message : options?.errorText || 'Unable to save the friends tracker config.',
       });
+      return null;
     } finally {
       setIsSaving(false);
     }
   }
 
-  async function handleSave() {
-    if (!hasPendingChanges) {
+  async function handlePublishCurrentTrip(nextTripId: string) {
+    if (nextTripId === currentTripId || isSaving || isSavingCronToggle) {
       return;
     }
 
-    setIsSaving(true);
-    setNotice(null);
+    const previousTripId = currentTripId;
+    setCurrentTripId(nextTripId);
 
-    try {
-      const response = await fetch('/api/chantal/config', {
-        method: 'PUT',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          updatedBy: 'chantal config page',
-          cronEnabled,
-          currentTripId: currentTripId ?? selectedTrip?.id ?? null,
-          trips,
-        }),
-      });
+    await persistConfig({ currentTripId: nextTripId }, {
+      updatedBy: 'chantal live trip switch',
+      successText: 'Live `/chantal` trip updated and saved immediately.',
+      errorText: 'Unable to update the live Chantal trip.',
+      rollback: () => setCurrentTripId(previousTripId),
+      force: true,
+    });
+  }
 
-      const payload = await response.json() as FriendsTrackerConfig & { error?: string };
-      if (!response.ok) {
-        throw new Error(payload.error || 'Unable to save the friends tracker config.');
-      }
-
-      applySavedConfig(payload);
-      setNotice({
-        type: 'success',
-        text: payload.cronEnabled === false
-          ? 'Friends tracker config saved. This Chantal batch remains excluded from the shared cron list.'
-          : 'Friends tracker config saved and synced to the shared cron list.',
-      });
-    } catch (error) {
-      setNotice({
-        type: 'error',
-        text: error instanceof Error ? error.message : 'Unable to save the friends tracker config.',
-      });
-    } finally {
-      setIsSaving(false);
-    }
+  async function handleSave() {
+    await persistConfig(undefined, {
+      updatedBy: 'chantal config page',
+      successText: (payload) => payload.cronEnabled === false
+        ? 'Friends tracker config saved. This Chantal batch remains excluded from the shared cron list.'
+        : 'Friends tracker config saved and synced to the shared cron list.',
+    });
   }
 
   const value = useMemo<FriendsConfigContextValue>(() => ({

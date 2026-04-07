@@ -1,6 +1,6 @@
 'use client';
 
-import { Download, MapPin, Plus, Upload, Users } from 'lucide-react';
+import { Download, MapPin, Plus, RefreshCw, Upload, Users } from 'lucide-react';
 import { useFriendsConfig } from './FriendsConfigContext';
 
 export function TripsSection() {
@@ -178,7 +178,7 @@ export function TripsSection() {
                 <p className="mt-2 text-xs text-slate-400">
                   {selectedTrip.id === currentTripId
                     ? 'This trip is already the one shown live on `/chantal`.'
-                    : 'This trip stays as a draft until you set it as current.'}
+                    : 'This trip stays as a draft until you set it as current. That live switch saves right away.'}
                 </p>
               </div>
             </div>
@@ -204,11 +204,12 @@ export function TripsSection() {
                   }
                 }}
                 disabled={selectedTrip.id === currentTripId || isSaving || isSavingCronToggle}
-                className={`inline-flex w-full items-center justify-center rounded-full px-4 py-2 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-60 ${selectedTrip.id === currentTripId
+                className={`inline-flex w-full items-center justify-center gap-2 rounded-full px-4 py-2 text-sm font-medium transition disabled:cursor-not-allowed disabled:opacity-60 ${selectedTrip.id === currentTripId
                   ? 'border border-emerald-400/40 bg-emerald-500/10 text-emerald-100'
                   : 'border border-sky-400/40 bg-sky-500/10 text-sky-100 hover:bg-sky-500/20'}`}
               >
-                {selectedTrip.id === currentTripId ? 'Current on /chantal' : 'Set as current trip'}
+                {isSaving && selectedTrip.id === currentTripId ? <RefreshCw className="h-4 w-4 animate-spin" /> : null}
+                {isSaving && selectedTrip.id === currentTripId ? 'Saving live trip…' : selectedTrip.id === currentTripId ? 'Current on /chantal' : 'Set as current trip'}
               </button>
 
               {!selectedTrip.isDemo ? (

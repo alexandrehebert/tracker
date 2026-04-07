@@ -360,6 +360,68 @@ describe('FriendsConfigClient', () => {
     expect(screen.queryByRole('listbox', { name: /departure airport suggestions for leg 1/i })).not.toBeInTheDocument();
   });
 
+  it('creates and selects a new imported trip when payload does not match an existing trip id', async () => {
+    const user = userEvent.setup();
+    const { container } = render(<FriendsConfigClient initialConfig={initialConfig} initialCronDashboard={initialCronDashboard} />);
+
+    const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement | null;
+    expect(fileInput).not.toBeNull();
+
+    const importPayload = {
+      updatedAt: 1_775_520_843_900,
+      updatedBy: 'chantal config page',
+      destinationAirport: 'SIN',
+      friends: [
+        {
+          name: 'Dul',
+          avatarUrl: null,
+          flights: [
+            {
+              flightNumber: 'MU554',
+              departureTime: '2026-04-14T11:25:00.000Z',
+              departureTimezone: 'Europe/Paris',
+              from: 'CDG',
+              to: 'PVG',
+              note: 'Connection in Shanghai',
+              resolvedIcao24: null,
+              lastResolvedAt: null,
+            },
+            {
+              flightNumber: 'MU567',
+              departureTime: '2026-04-15T02:10:00.000Z',
+              departureTimezone: 'Asia/Shanghai',
+              from: 'PVG',
+              to: 'SIN',
+              note: null,
+              resolvedIcao24: null,
+              lastResolvedAt: null,
+            },
+          ],
+        },
+      ],
+    } as Partial<FriendsTrackerConfig>;
+
+    await user.upload(fileInput as HTMLInputElement, new File([
+      JSON.stringify(importPayload),
+    ], 'import.json', { type: 'application/json' }));
+
+    await waitFor(() => {
+      expect(screen.getByDisplayValue('Imported trip')).toBeInTheDocument();
+      expect(screen.getByDisplayValue('Dul')).toBeInTheDocument();
+    });
+
+    expect(screen.getByRole('button', { name: /lisbon/i })).toBeInTheDocument();
+
+    const dulCard = screen.getByDisplayValue('Dul').closest('section');
+    expect(dulCard).not.toBeNull();
+
+    const dulQueries = within(dulCard as HTMLElement);
+    const flightNumberInputs = dulQueries.getAllByLabelText(/flight number/i) as HTMLInputElement[];
+
+    expect(flightNumberInputs.map((input) => input.value)).toEqual(['MU554', 'MU567']);
+    expect(screen.getByRole('button', { name: /save config/i })).toBeEnabled();
+  });
+
   it('enables save only when there are pending changes', async () => {
     const user = userEvent.setup();
 
@@ -416,8 +478,10 @@ describe('FriendsConfigClient', () => {
         method: 'PUT',
         body: expect.stringContaining('"currentTripId":"trip-2"'),
       }));
+      expect(screen.getByRole('button', { name: /save config/i })).toBeDisabled();
     });
 
+    expect(await screen.findByText('Live `/chantal` trip updated and saved immediately.')).toBeInTheDocument();
     expect(await screen.findByRole('button', { name: /current on \/chantal/i })).toBeInTheDocument();
   });
 

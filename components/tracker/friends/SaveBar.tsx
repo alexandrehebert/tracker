@@ -31,7 +31,7 @@ export function SaveBar() {
             : 'text-slate-400'}`}
           >
             {notice?.text ?? (hasPendingChanges
-              ? 'Changes stay local until you click Save config. Saving also syncs the selected live trip, meeting airport, and shared cron identifiers used by the tracker.'
+              ? 'Trip edits stay local until you click Save config, but switching the live trip saves immediately. Saving also syncs the meeting airport and shared cron identifiers used by the tracker.'
               : 'All changes are already saved. Make any edit to enable Save config.')}
           </p>
 
@@ -51,7 +51,7 @@ export function SaveBar() {
         <button
           type="button"
           onClick={handleSave}
-          className="inline-flex w-full items-center justify-center gap-2 rounded-full bg-cyan-500 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-cyan-400 disabled:cursor-not-allowed disabled:opacity-60 md:w-auto"
+          className="inline-flex w-full items-center justify-center gap-2 whitespace-nowrap rounded-full bg-cyan-500 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-cyan-400 disabled:cursor-not-allowed disabled:opacity-60 md:w-auto"
           disabled={!hasPendingChanges || isSaving || isSavingCronToggle}
         >
           {isSaving ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
