@@ -262,6 +262,159 @@ describe('FriendsTrackerClient', () => {
     });
   });
 
+  it('keeps a friend pinned to the most recent known airport when no live track is available', async () => {
+    const pastOnlyConfig: FriendsTrackerConfig = {
+      ...initialConfig,
+      friends: [
+        {
+          id: 'friend-1',
+          name: 'Alice',
+          flights: [
+            {
+              id: 'leg-1',
+              flightNumber: 'AF123',
+              departureTime: new Date(Date.now() - 6 * 60 * 60 * 1000).toISOString(),
+              from: 'LIS',
+              to: 'MAD',
+            },
+          ],
+        },
+      ],
+    };
+
+    render(
+      <FriendsTrackerClient
+        map={map}
+        initialConfig={pastOnlyConfig}
+        airportMarkers={[
+          { id: 'lis', code: 'LIS', label: 'Lisbon', latitude: 38.7742, longitude: -9.1342, usage: 'both' },
+          { id: 'mad', code: 'MAD', label: 'Madrid', latitude: 40.4983, longitude: -3.5676, usage: 'both' },
+        ]}
+      />,
+    );
+
+    expect(await screen.findByText(/chantal crew tracker/i)).toBeInTheDocument();
+
+    await waitFor(() => {
+      const staticFriendMarkers = latestFlightMapProps?.staticFriendMarkers as Array<{
+        id: string;
+        latitude: number;
+        longitude: number;
+      }> | undefined;
+
+      expect(staticFriendMarkers).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            id: 'friend-1',
+            latitude: 40.4983,
+            longitude: -3.5676,
+          }),
+        ]),
+      );
+    });
+  });
+
+  it('keeps fallback friend markers aligned with the selected wayback moment', async () => {
+    const nowMs = Date.now();
+
+    vi.spyOn(window, 'fetch').mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          query: 'AF123,IB456',
+          requestedIdentifiers: ['AF123', 'IB456'],
+          matchedIdentifiers: [],
+          notFoundIdentifiers: ['AF123', 'IB456'],
+          fetchedAt: nowMs,
+          flights: [],
+        }),
+        {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        },
+      ),
+    );
+
+    render(
+      <FriendsTrackerClient
+        map={map}
+        initialConfig={{
+          ...initialConfig,
+          destinationAirport: 'JFK',
+          friends: [
+            {
+              id: 'friend-1',
+              name: 'Alice',
+              flights: [
+                {
+                  id: 'leg-1',
+                  flightNumber: 'AF123',
+                  departureTime: new Date(nowMs - 6 * 60 * 60 * 1000).toISOString(),
+                  from: 'LIS',
+                  to: 'MAD',
+                },
+                {
+                  id: 'leg-2',
+                  flightNumber: 'IB456',
+                  departureTime: new Date(nowMs - 2 * 60 * 60 * 1000).toISOString(),
+                  from: 'MAD',
+                  to: 'JFK',
+                },
+              ],
+            },
+          ],
+        }}
+        airportMarkers={[
+          { id: 'lis', code: 'LIS', label: 'Lisbon', latitude: 38.7742, longitude: -9.1342, usage: 'both' },
+          { id: 'mad', code: 'MAD', label: 'Madrid', latitude: 40.4983, longitude: -3.5676, usage: 'both' },
+          { id: 'jfk', code: 'JFK', label: 'New York JFK', latitude: 40.6413, longitude: -73.7781, usage: 'both' },
+        ]}
+      />,
+    );
+
+    const slider = await screen.findByLabelText(/wayback machine/i);
+    expect(slider).toHaveAttribute('type', 'range');
+
+    await waitFor(() => {
+      const staticFriendMarkers = latestFlightMapProps?.staticFriendMarkers as Array<{
+        id: string;
+        latitude: number;
+        longitude: number;
+      }> | undefined;
+
+      expect(staticFriendMarkers).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            id: 'friend-1',
+            latitude: 40.6413,
+            longitude: -73.7781,
+          }),
+        ]),
+      );
+    });
+
+    fireEvent.input(slider, {
+      target: { value: String(nowMs - 3 * 60 * 60 * 1000) },
+    });
+
+    await waitFor(() => {
+      const staticFriendMarkers = latestFlightMapProps?.staticFriendMarkers as Array<{
+        id: string;
+        latitude: number;
+        longitude: number;
+      }> | undefined;
+
+      expect(staticFriendMarkers).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            id: 'friend-1',
+            latitude: 40.4983,
+            longitude: -3.5676,
+          }),
+        ]),
+      );
+    });
+  });
+
   it('renders the configured friend avatar in the sidebar card with the same color coding as the map', async () => {
     render(<FriendsTrackerClient map={map} initialConfig={initialConfig} airportMarkers={[]} />);
 

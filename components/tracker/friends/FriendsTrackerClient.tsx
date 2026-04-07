@@ -629,6 +629,35 @@ function pickPreferredMapStatus(friendStatuses: FriendFlightStatus[], now = Date
   return mostRecentPastStatus?.status ?? friendStatuses[0] ?? null;
 }
 
+function normalizeAirportCode(value: string | null | undefined): string | null {
+  return typeof value === 'string' && value.trim()
+    ? value.trim().toUpperCase()
+    : null;
+}
+
+function resolveStaticFriendMarkerAirportCode(
+  status: FriendFlightStatus,
+  friendStatuses: FriendFlightStatus[],
+  now = Date.now(),
+): string | null {
+  const mostRecentPastStatus = friendStatuses
+    .map((entry) => ({
+      status: entry,
+      departureTimeMs: Date.parse(entry.leg.departureTime),
+    }))
+    .filter(({ departureTimeMs }) => Number.isFinite(departureTimeMs) && departureTimeMs <= now)
+    .sort((a, b) => a.departureTimeMs - b.departureTimeMs)
+    .at(-1)?.status;
+
+  if (mostRecentPastStatus) {
+    return normalizeAirportCode(mostRecentPastStatus.leg.to)
+      ?? normalizeAirportCode(mostRecentPastStatus.leg.from);
+  }
+
+  return normalizeAirportCode(status.leg.from)
+    ?? normalizeAirportCode(status.leg.to);
+}
+
 function FriendTimelineCard({
   friend,
   friendStatuses,
@@ -1192,16 +1221,35 @@ function FriendsTrackerDashboard({
   }, [mapStatuses, flightColorIndexMap]);
 
   const staticFriendMarkers = useMemo<FriendAvatarMarker[]>(() => {
+    const airportMarkerByCode = new Map(
+      airportMarkers.map((marker) => [marker.code.toUpperCase().trim(), marker] as const),
+    );
+    const statusesByFriendId = new Map<string, FriendFlightStatus[]>();
+
+    for (const status of statuses) {
+      const existingStatuses = statusesByFriendId.get(status.friend.id);
+      if (existingStatuses) {
+        existingStatuses.push(status);
+      } else {
+        statusesByFriendId.set(status.friend.id, [status]);
+      }
+    }
+
     return mapStatuses.flatMap((status, index) => {
-      if (status.flight || !status.leg.from) {
+      if (status.flight) {
         return [];
       }
 
-      const airportCode = status.leg.from.trim().toUpperCase();
-      const airportMarker = airportMarkers.find(
-        (m) => m.code.toUpperCase() === airportCode,
+      const airportCode = resolveStaticFriendMarkerAirportCode(
+        status,
+        statusesByFriendId.get(status.friend.id) ?? [status],
+        referenceTimeMs,
       );
+      if (!airportCode) {
+        return [];
+      }
 
+      const airportMarker = airportMarkerByCode.get(airportCode);
       if (!airportMarker) {
         return [];
       }
@@ -1215,7 +1263,7 @@ function FriendsTrackerDashboard({
         longitude: airportMarker.longitude,
       } satisfies FriendAvatarMarker];
     });
-  }, [mapStatuses, airportMarkers]);
+  }, [airportMarkers, mapStatuses, referenceTimeMs, statuses]);
 
   const friendAccentColors = useMemo(() => {
     const result = new Map<string, string>();
