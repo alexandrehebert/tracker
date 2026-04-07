@@ -57,6 +57,10 @@ function getProjectedTransform(point: { latitude: number; longitude: number } | 
   return coordinates ? `translate(${coordinates[0]} ${coordinates[1]}) scale(${scale})` : null;
 }
 
+function getMoveCommandCount(pathDefinition: string): number {
+  return (pathDefinition.match(/\bM\b/g) ?? []).length;
+}
+
 const trackedFlight: TrackedFlight = {
   icao24: 'abc123',
   callsign: 'AFR123',
@@ -723,6 +727,64 @@ describe('FlightMap2D', () => {
     });
 
     expect(routePath).not.toBeNull();
+  });
+
+  it('splits the 2D route at the antimeridian so westbound wraparound stays on map edges', () => {
+    const datelineFlight: TrackedFlight = {
+      ...trackedFlight,
+      icao24: 'date001',
+      callsign: 'DALSEL',
+      matchedBy: ['DALSEL'],
+      originPoint: {
+        ...trackedFlight.originPoint!,
+        latitude: 37,
+        longitude: -97,
+      },
+      track: [
+        {
+          ...trackedFlight.track[0]!,
+          latitude: 42,
+          longitude: 170,
+        },
+        {
+          ...trackedFlight.track[0]!,
+          time: (trackedFlight.track[0]?.time ?? 1_700_000_000) + 60,
+          latitude: 40,
+          longitude: 179,
+        },
+      ],
+      current: {
+        ...trackedFlight.current!,
+        latitude: 37,
+        longitude: -170,
+      },
+      route: {
+        departureAirport: 'KDFW',
+        arrivalAirport: 'RKSI',
+        firstSeen: 1_699_999_000,
+        lastSeen: 1_700_000_000,
+      },
+    };
+
+    const { container } = renderMap(false, {
+      flights: [datelineFlight],
+      selectedIcao24: datelineFlight.icao24,
+    });
+
+    const routePath = Array.from(container.querySelectorAll('path.cursor-pointer')).find((path) => {
+      if (path.getAttribute('stroke-dasharray') === '8 8') {
+        return false;
+      }
+
+      const value = path.getAttribute('d') ?? '';
+      return value.includes(getProjectedPathToken(datelineFlight.originPoint))
+        && value.includes(getProjectedPathToken(datelineFlight.current));
+    });
+
+    const routeDefinition = routePath?.getAttribute('d') ?? '';
+
+    expect(routePath).not.toBeNull();
+    expect(getMoveCommandCount(routeDefinition)).toBeGreaterThan(1);
   });
 
   it('renders the selected route as a smoothed curve instead of sharp line segments', () => {

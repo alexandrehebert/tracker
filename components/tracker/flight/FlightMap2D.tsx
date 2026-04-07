@@ -34,6 +34,7 @@ const COUNTRY_STROKE = 'rgba(147,197,253,0.24)';
 const FORECAST_SHADOW_COLOR = 'rgba(8,17,32,0.7)';
 const AIRPORT_MARKER_COLOR = '#a855f7';
 const ROUTE_POINT_DUPLICATE_DISTANCE_KM = 12;
+const ROUTE_WRAP_SEGMENT_BREAK_RATIO = 0.5;
 
 function getPointDistanceKm(first: FlightMapPoint, second: FlightMapPoint): number {
   const earthRadiusKm = 6371;
@@ -53,7 +54,57 @@ function getRoutePointVisitKey(point: FlightMapPoint): string {
   return `${point.latitude.toFixed(2)}:${point.longitude.toFixed(2)}:${point.onGround ? 'g' : 'a'}`;
 }
 
-function buildRoutePath(points: FlightMapPoint[]): string {
+function getWrappedRouteEdgePoints(
+  previousPoint: FlightMapPoint,
+  point: FlightMapPoint,
+  viewBoxWidth: number,
+): { edgeFrom: FlightMapPoint; edgeTo: FlightMapPoint } | null {
+  if (!(viewBoxWidth > 0)) {
+    return null;
+  }
+
+  const deltaX = point.x - previousPoint.x;
+  if (Math.abs(deltaX) <= viewBoxWidth * ROUTE_WRAP_SEGMENT_BREAK_RATIO) {
+    return null;
+  }
+
+  const wrapsRightEdge = point.x < previousPoint.x;
+  const adjustedPointX = wrapsRightEdge ? point.x + viewBoxWidth : point.x - viewBoxWidth;
+  const edgeFromX = wrapsRightEdge ? viewBoxWidth : 0;
+  const edgeToX = wrapsRightEdge ? 0 : viewBoxWidth;
+  const denominator = adjustedPointX - previousPoint.x;
+
+  if (Math.abs(denominator) < 0.01) {
+    return null;
+  }
+
+  const t = clamp((edgeFromX - previousPoint.x) / denominator, 0, 1);
+  const edgeY = previousPoint.y + (point.y - previousPoint.y) * t;
+
+  return {
+    edgeFrom: {
+      ...previousPoint,
+      x: edgeFromX,
+      y: edgeY,
+    },
+    edgeTo: {
+      ...point,
+      x: edgeToX,
+      y: edgeY,
+    },
+  };
+}
+
+function buildRoutePath(
+  points: FlightMapPoint[],
+  {
+    viewBoxWidth,
+    breakOnTelemetryGaps = true,
+  }: {
+    viewBoxWidth?: number;
+    breakOnTelemetryGaps?: boolean;
+  } = {},
+): string {
   if (points.length === 0) {
     return '';
   }
@@ -64,15 +115,34 @@ function buildRoutePath(points: FlightMapPoint[]): string {
   for (let index = 1; index < points.length; index += 1) {
     const previousPoint = points[index - 1]!;
     const point = points[index]!;
-    const distanceKm = getPointDistanceKm(previousPoint, point);
-    const timeDeltaSeconds = point.time != null && previousPoint.time != null
-      ? Math.max(0, point.time - previousPoint.time)
+    const wrappedRouteEdgePoints = viewBoxWidth != null
+      ? getWrappedRouteEdgePoints(previousPoint, point, viewBoxWidth)
       : null;
-    const impliedSpeedKmh = timeDeltaSeconds && timeDeltaSeconds > 0
-      ? distanceKm / (timeDeltaSeconds / 3600)
-      : null;
-    const shouldBreakSegment = distanceKm > 1_200
-      || (impliedSpeedKmh != null && impliedSpeedKmh > 1_200);
+
+    if (wrappedRouteEdgePoints) {
+      currentSegment.push(wrappedRouteEdgePoints.edgeFrom);
+
+      if (currentSegment.length > 1) {
+        segments.push(currentSegment);
+      }
+
+      currentSegment = [wrappedRouteEdgePoints.edgeTo, point];
+      continue;
+    }
+
+    const shouldBreakSegment = breakOnTelemetryGaps
+      ? (() => {
+          const distanceKm = getPointDistanceKm(previousPoint, point);
+          const timeDeltaSeconds = point.time != null && previousPoint.time != null
+            ? Math.max(0, point.time - previousPoint.time)
+            : null;
+          const impliedSpeedKmh = timeDeltaSeconds && timeDeltaSeconds > 0
+            ? distanceKm / (timeDeltaSeconds / 3600)
+            : null;
+
+          return distanceKm > 1_200 || (impliedSpeedKmh != null && impliedSpeedKmh > 1_200);
+        })()
+      : false;
 
     if (shouldBreakSegment) {
       if (currentSegment.length > 1) {
@@ -1167,7 +1237,10 @@ export default function FlightMap2D({
             const shouldShowForecast = selectionMode === 'all' || isSelected;
             const visibleRoutePoints = getVisibleRoutePoints(flight);
             const routePoints = shouldShowRoute ? (isSelected ? selectedRoutePoints : visibleRoutePoints) : [];
-            const routePath = buildRoutePath(routePoints);
+            const routePath = buildRoutePath(routePoints, {
+              viewBoxWidth: map.viewBox.width,
+              breakOnTelemetryGaps: true,
+            });
             const routeStartPoint = routePoints[0] ?? flight.originPoint;
             const groundFallbackPoint = flight.onGround ? (routePoints.at(-1) ?? null) : null;
             const routeCurrentPoint = flight.current
@@ -1188,7 +1261,12 @@ export default function FlightMap2D({
                   projectPoint,
                 })
               : [];
-            const forecastRoutePath = forecastRoutePoints.length > 1 ? buildSmoothRoutePath(forecastRoutePoints) : '';
+            const forecastRoutePath = forecastRoutePoints.length > 1
+              ? buildRoutePath(forecastRoutePoints, {
+                  viewBoxWidth: map.viewBox.width,
+                  breakOnTelemetryGaps: false,
+                })
+              : '';
             const forecastGradientId = `selected-flight-forecast-gradient-${flight.icao24}`;
             const forecastShadowGradientId = `selected-flight-forecast-shadow-gradient-${flight.icao24}`;
             const forecastStartPoint = forecastRoutePoints[0] ?? null;
