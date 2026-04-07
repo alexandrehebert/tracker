@@ -372,7 +372,7 @@ describe('FlightMap2D', () => {
     expect(screen.getByText('CDG')).toBeInTheDocument();
   });
 
-  it('renders small friend clusters as split backgrounds and larger ones as counts', () => {
+  it('renders tailored layouts for 2, 3, 4, and 5-plus friend clusters', () => {
     const { container } = renderMap(false, {
       staticFriendMarkers: [
         {
@@ -392,7 +392,7 @@ describe('FlightMap2D', () => {
           longitude: 151.2093,
         },
         {
-          id: 'quad-1',
+          id: 'trio-1',
           name: 'Cara',
           avatarUrl: null,
           color: '#3b82f6',
@@ -400,7 +400,7 @@ describe('FlightMap2D', () => {
           longitude: -3.7038,
         },
         {
-          id: 'quad-2',
+          id: 'trio-2',
           name: 'Dan',
           avatarUrl: null,
           color: '#f59e0b',
@@ -408,7 +408,7 @@ describe('FlightMap2D', () => {
           longitude: -3.7038,
         },
         {
-          id: 'quad-3',
+          id: 'trio-3',
           name: 'Eve',
           avatarUrl: null,
           color: '#a855f7',
@@ -416,39 +416,39 @@ describe('FlightMap2D', () => {
           longitude: -3.7038,
         },
         {
-          id: 'quad-4',
+          id: 'quad-1',
           name: 'Finn',
           avatarUrl: null,
           color: '#14b8a6',
-          latitude: 40.4168,
-          longitude: -3.7038,
+          latitude: 35.6762,
+          longitude: 139.6503,
         },
         {
-          id: 'count-1',
+          id: 'quad-2',
           name: 'Gia',
           avatarUrl: null,
           color: '#ec4899',
-          latitude: 34.0522,
-          longitude: -118.2437,
+          latitude: 35.6762,
+          longitude: 139.6503,
         },
         {
-          id: 'count-2',
+          id: 'quad-3',
           name: 'Hugo',
           avatarUrl: null,
           color: '#84cc16',
-          latitude: 34.0522,
-          longitude: -118.2437,
+          latitude: 35.6762,
+          longitude: 139.6503,
         },
         {
-          id: 'count-3',
+          id: 'quad-4',
           name: 'Iris',
           avatarUrl: null,
           color: '#06b6d4',
-          latitude: 34.0522,
-          longitude: -118.2437,
+          latitude: 35.6762,
+          longitude: 139.6503,
         },
         {
-          id: 'count-4',
+          id: 'overflow-1',
           name: 'Jules',
           avatarUrl: null,
           color: '#f97316',
@@ -456,10 +456,34 @@ describe('FlightMap2D', () => {
           longitude: -118.2437,
         },
         {
-          id: 'count-5',
+          id: 'overflow-2',
           name: 'Kira',
           avatarUrl: null,
           color: '#8b5cf6',
+          latitude: 34.0522,
+          longitude: -118.2437,
+        },
+        {
+          id: 'overflow-3',
+          name: 'Lina',
+          avatarUrl: null,
+          color: '#0ea5e9',
+          latitude: 34.0522,
+          longitude: -118.2437,
+        },
+        {
+          id: 'overflow-4',
+          name: 'Milo',
+          avatarUrl: null,
+          color: '#10b981',
+          latitude: 34.0522,
+          longitude: -118.2437,
+        },
+        {
+          id: 'overflow-5',
+          name: 'Nora',
+          avatarUrl: null,
+          color: '#f43f5e',
           latitude: 34.0522,
           longitude: -118.2437,
         },
@@ -467,15 +491,18 @@ describe('FlightMap2D', () => {
     });
 
     const splitTwoCluster = container.querySelector('[data-cluster-layout="split-2"]');
+    const splitThreeCluster = container.querySelector('[data-cluster-layout="split-3"]');
     const splitFourCluster = container.querySelector('[data-cluster-layout="split-4"]');
-    const countCluster = container.querySelector('[data-cluster-layout="count"]');
+    const overflowCluster = container.querySelector('[data-cluster-layout="overflow"]');
 
     expect(splitTwoCluster).not.toBeNull();
     expect(splitTwoCluster?.querySelector('text')).toBeNull();
+    expect(splitThreeCluster).not.toBeNull();
+    expect(splitThreeCluster?.querySelector('text')).toBeNull();
     expect(splitFourCluster).not.toBeNull();
     expect(splitFourCluster?.querySelector('text')).toBeNull();
-    expect(countCluster).not.toBeNull();
-    expect(countCluster?.querySelector('text')?.textContent).toBe('5');
+    expect(overflowCluster).not.toBeNull();
+    expect(overflowCluster?.textContent).toContain('+1');
   });
 
   it('shows avatar images inside clustered friend bubbles when available', () => {
@@ -541,10 +568,11 @@ describe('FlightMap2D', () => {
     });
 
     const splitTwoCluster = container.querySelector('[data-cluster-layout="split-2"]');
-    const countCluster = container.querySelector('[data-cluster-layout="count"]');
+    const overflowCluster = container.querySelector('[data-cluster-layout="overflow"]');
 
     expect(splitTwoCluster?.querySelectorAll('image').length).toBe(2);
-    expect(countCluster?.querySelectorAll('image').length).toBeGreaterThan(0);
+    expect(overflowCluster?.querySelectorAll('image').length).toBeGreaterThan(0);
+    expect(overflowCluster?.textContent).toContain('+1');
   });
 
   it('renders the hovered friend cluster last so its label stays above the other markers', () => {

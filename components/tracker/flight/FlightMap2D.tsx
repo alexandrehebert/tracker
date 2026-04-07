@@ -449,7 +449,16 @@ const FRIEND_CLUSTER_RADIUS_PX = 40;
 const FRIEND_CLUSTER_FALLBACK_FILL = 'rgba(15,23,42,0.94)';
 const FRIEND_CLUSTER_DIVIDER_STROKE = 'rgba(255,255,255,0.42)';
 
-function getFriendClusterLayout(memberCount: number): 'single' | 'split-2' | 'split-4' | 'count' {
+type FriendClusterLayout = 'single' | 'split-2' | 'split-3' | 'split-4' | 'overflow';
+
+type FriendClusterSegmentDefinition = {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
+
+function getFriendClusterLayout(memberCount: number): FriendClusterLayout {
   if (memberCount <= 1) {
     return 'single';
   }
@@ -458,11 +467,42 @@ function getFriendClusterLayout(memberCount: number): 'single' | 'split-2' | 'sp
     return 'split-2';
   }
 
-  if (memberCount <= 4) {
+  if (memberCount === 3) {
+    return 'split-3';
+  }
+
+  if (memberCount === 4) {
     return 'split-4';
   }
 
-  return 'count';
+  return 'overflow';
+}
+
+function getFriendClusterSegmentDefinitions(
+  layout: Exclude<FriendClusterLayout, 'single'>,
+  innerRadius: number,
+): FriendClusterSegmentDefinition[] {
+  if (layout === 'split-2') {
+    return [
+      { x: -innerRadius, y: -innerRadius, width: innerRadius, height: innerRadius * 2 },
+      { x: 0, y: -innerRadius, width: innerRadius, height: innerRadius * 2 },
+    ];
+  }
+
+  if (layout === 'split-3') {
+    return [
+      { x: -innerRadius, y: -innerRadius, width: innerRadius, height: innerRadius },
+      { x: -innerRadius, y: 0, width: innerRadius, height: innerRadius },
+      { x: 0, y: -innerRadius, width: innerRadius, height: innerRadius * 2 },
+    ];
+  }
+
+  return [
+    { x: -innerRadius, y: -innerRadius, width: innerRadius, height: innerRadius },
+    { x: 0, y: -innerRadius, width: innerRadius, height: innerRadius },
+    { x: -innerRadius, y: 0, width: innerRadius, height: innerRadius },
+    { x: 0, y: 0, width: innerRadius, height: innerRadius },
+  ];
 }
 
 function renderFriendClusterSegmentFill(
@@ -1345,14 +1385,16 @@ export default function FlightMap2D({
               ? firstMember.name
               : cluster.members.length <= 4
                 ? cluster.members.map((m) => m.name).join(', ')
-                : `${cluster.members.slice(0, 2).map((m) => m.name).join(', ')} +${cluster.members.length - 2}`;
+                : `${cluster.members.slice(0, 4).map((m) => m.name).join(', ')} +${cluster.members.length - 4}`;
             const estimatedLabelWidth = Math.max(60, labelText.length * 7 + 20);
             const clusterFillClipId = `friend-cluster-fill-${safeClusterKey}`;
-            const segmentMembers = clusterLayout === 'split-2'
-              ? Array.from({ length: 2 }, (_, index) => cluster.members[index])
-              : clusterLayout === 'split-4' || clusterLayout === 'count'
-                ? Array.from({ length: 4 }, (_, index) => cluster.members[index])
-                : [];
+            const segmentDefinitions = clusterLayout === 'single'
+              ? []
+              : getFriendClusterSegmentDefinitions(clusterLayout, innerRadius);
+            const overflowCount = Math.max(0, cluster.members.length - 4);
+            const overflowSegment = clusterLayout === 'overflow'
+              ? segmentDefinitions[3] ?? null
+              : null;
 
             return (
               <g
@@ -1419,40 +1461,39 @@ export default function FlightMap2D({
                       fill={isHovered ? 'rgba(56,189,248,0.24)' : 'rgba(15,23,42,0.24)'}
                     />
                     <g clipPath={`url(#${clusterFillClipId})`}>
-                      {clusterLayout === 'split-2' ? (
+                      {segmentDefinitions.length > 0 ? (
                         <>
-                          {renderFriendClusterSegmentFill(
-                            segmentMembers[0],
-                            -innerRadius,
-                            -innerRadius,
-                            innerRadius,
-                            innerRadius * 2,
-                            `${safeClusterKey}-segment-0`,
-                          )}
-                          {renderFriendClusterSegmentFill(
-                            segmentMembers[1],
-                            0,
-                            -innerRadius,
-                            innerRadius,
-                            innerRadius * 2,
-                            `${safeClusterKey}-segment-1`,
-                          )}
-                        </>
-                      ) : clusterLayout === 'split-4' || clusterLayout === 'count' ? (
-                        <>
-                          {segmentMembers.map((member, segmentIndex) => {
-                            const x = segmentIndex % 2 === 0 ? -innerRadius : 0;
-                            const y = segmentIndex < 2 ? -innerRadius : 0;
-
-                            return renderFriendClusterSegmentFill(
-                              member,
-                              x,
-                              y,
-                              innerRadius,
-                              innerRadius,
-                              `${safeClusterKey}-segment-${segmentIndex}`,
-                            );
-                          })}
+                          {segmentDefinitions.map((segment, segmentIndex) => renderFriendClusterSegmentFill(
+                            cluster.members[segmentIndex],
+                            segment.x,
+                            segment.y,
+                            segment.width,
+                            segment.height,
+                            `${safeClusterKey}-segment-${segmentIndex}`,
+                          ))}
+                          {overflowSegment && overflowCount > 0 ? (
+                            <g>
+                              <rect
+                                x={overflowSegment.x}
+                                y={overflowSegment.y}
+                                width={overflowSegment.width}
+                                height={overflowSegment.height}
+                                fill="rgba(2,6,23,0.58)"
+                              />
+                              <text
+                                x={overflowSegment.x + (overflowSegment.width / 2)}
+                                y={overflowSegment.y + (overflowSegment.height / 2)}
+                                textAnchor="middle"
+                                dominantBaseline="middle"
+                                fill="white"
+                                fontSize="10"
+                                fontWeight="800"
+                                fontFamily="ui-sans-serif, system-ui, sans-serif"
+                              >
+                                +{overflowCount}
+                              </text>
+                            </g>
+                          ) : null}
                         </>
                       ) : (
                         <circle cx="0" cy="0" r={innerRadius} fill="rgba(2,6,23,0.9)" />
@@ -1469,7 +1510,28 @@ export default function FlightMap2D({
                         strokeWidth="1.2"
                         vectorEffect="non-scaling-stroke"
                       />
-                    ) : clusterLayout === 'split-4' || clusterLayout === 'count' ? (
+                    ) : clusterLayout === 'split-3' ? (
+                      <>
+                        <line
+                          x1="0"
+                          y1={-innerRadius}
+                          x2="0"
+                          y2={innerRadius}
+                          stroke={FRIEND_CLUSTER_DIVIDER_STROKE}
+                          strokeWidth="1.2"
+                          vectorEffect="non-scaling-stroke"
+                        />
+                        <line
+                          x1={-innerRadius}
+                          y1="0"
+                          x2="0"
+                          y2="0"
+                          stroke={FRIEND_CLUSTER_DIVIDER_STROKE}
+                          strokeWidth="1.2"
+                          vectorEffect="non-scaling-stroke"
+                        />
+                      </>
+                    ) : clusterLayout === 'split-4' || clusterLayout === 'overflow' ? (
                       <>
                         <line
                           x1="0"
@@ -1489,31 +1551,6 @@ export default function FlightMap2D({
                           strokeWidth="1.2"
                           vectorEffect="non-scaling-stroke"
                         />
-                        {clusterLayout === 'count' ? (
-                          <>
-                            <circle
-                              cx="0"
-                              cy="0"
-                              r="10"
-                              fill="rgba(2,6,23,0.78)"
-                              stroke="rgba(255,255,255,0.72)"
-                              strokeWidth="1"
-                              vectorEffect="non-scaling-stroke"
-                            />
-                            <text
-                              x="0"
-                              y="0"
-                              textAnchor="middle"
-                              dominantBaseline="middle"
-                              fill="white"
-                              fontSize="11"
-                              fontWeight="800"
-                              fontFamily="ui-sans-serif, system-ui, sans-serif"
-                            >
-                              {cluster.members.length}
-                            </text>
-                          </>
-                        ) : null}
                       </>
                     ) : (
                       <text

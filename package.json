@@ -8,6 +8,7 @@
     "typecheck": "tsc --noEmit",
     "start": "next start -p 4109",
     "start:opensky-proxy": "node docker/opensky-proxy-server.mjs",
+    "docker:rebuild": "docker compose up --build --renew-anon-volumes -d",
     "lint": "eslint",
     "test": "vitest run"
   },
