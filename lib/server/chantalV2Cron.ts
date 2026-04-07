@@ -144,8 +144,8 @@ function buildFriendPosition(
 }
 
 export async function runChantalV2CronJob(): Promise<ChantalV2CronResult> {
-  const sequence = cronRunSequence++;
-  const capturedAt = Date.now() + sequence;
+  cronRunSequence++;
+  const capturedAt = Date.now();
   const snapshotId = `chantal-v2-snapshot:${capturedAt}:${Math.random().toString(36).slice(2, 8)}`;
 
   try {
