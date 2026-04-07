@@ -4,6 +4,10 @@
     {
       "path": "/api/tracker/cron",
       "schedule": "*/15 * * * *"
+    },
+    {
+      "path": "/api/chantal/v2/cron",
+      "schedule": "*/5 * * * *"
     }
   ]
 }
