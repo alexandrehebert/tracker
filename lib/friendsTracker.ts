@@ -419,6 +419,20 @@ function buildDefaultDemoTrip(now = getDemoReferenceTime()): FriendsTrackerTripC
           },
         ],
       },
+      {
+        id: 'demo-friend-7',
+        name: 'Hana Demo',
+        flights: [
+          {
+            id: 'demo-leg-7',
+            flightNumber: 'TEST6',
+            departureTime: new Date(now - (95 * 60 * 1000)).toISOString(),
+            from: 'DFW',
+            to: 'ICN',
+            note: 'Preset demo leg: westbound Pacific crossing near the dateline for 2D map edge validation.',
+          },
+        ],
+      },
     ],
   };
 }

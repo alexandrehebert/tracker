@@ -200,17 +200,17 @@ describe('searchFlights', () => {
     vi.unstubAllGlobals();
   });
 
-  it('returns realistic preset demo flights for TEST1 through TEST5 searches', async () => {
+  it('returns realistic preset demo flights for TEST1 through TEST6 searches', async () => {
     const fetchMock = vi.fn();
     vi.stubGlobal('fetch', fetchMock);
 
     const searchFlights = await loadSearchFlights();
-    const result = await searchFlights('TEST1,TEST2,TEST3,TEST4,TEST5');
+    const result = await searchFlights('TEST1,TEST2,TEST3,TEST4,TEST5,TEST6');
 
-    expect(result.requestedIdentifiers).toEqual(['TEST1', 'TEST2', 'TEST3', 'TEST4', 'TEST5']);
-    expect(result.matchedIdentifiers).toEqual(['TEST1', 'TEST2', 'TEST3', 'TEST4', 'TEST5']);
+    expect(result.requestedIdentifiers).toEqual(['TEST1', 'TEST2', 'TEST3', 'TEST4', 'TEST5', 'TEST6']);
+    expect(result.matchedIdentifiers).toEqual(['TEST1', 'TEST2', 'TEST3', 'TEST4', 'TEST5', 'TEST6']);
     expect(result.notFoundIdentifiers).toEqual([]);
-    expect(result.flights).toHaveLength(5);
+    expect(result.flights).toHaveLength(6);
     expect(fetchMock).not.toHaveBeenCalled();
 
     expect(result.flights).toEqual(expect.arrayContaining([
@@ -266,6 +266,15 @@ describe('searchFlights', () => {
           arrivalAirport: 'AMS',
         }),
       }),
+      expect.objectContaining({
+        callsign: 'KAL031',
+        matchedBy: expect.arrayContaining(['TEST6']),
+        onGround: false,
+        route: expect.objectContaining({
+          departureAirport: 'DFW',
+          arrivalAirport: 'ICN',
+        }),
+      }),
     ]));
 
     const groundedFlight = result.flights.find((flight) => flight.callsign === 'DAL220');
@@ -273,6 +282,10 @@ describe('searchFlights', () => {
     expect(groundedFlight?.originPoint?.longitude).toBeLessThan(-84);
     expect(groundedFlight?.originPoint?.latitude).toBeGreaterThan(33);
     expect(groundedFlight?.originPoint?.latitude).toBeLessThan(34);
+
+    const datelineFlight = result.flights.find((flight) => flight.callsign === 'KAL031');
+    expect(datelineFlight?.track.some((point) => point.longitude < -170)).toBe(true);
+    expect(datelineFlight?.track.some((point) => point.longitude > 170)).toBe(true);
   });
 
   it('keeps demo telemetry available when preset and non-preset identifiers are mixed', async () => {

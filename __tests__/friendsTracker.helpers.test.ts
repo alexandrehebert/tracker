@@ -237,10 +237,10 @@ describe('friends tracker helpers', () => {
 
     const demoTrip = config.trips.find((trip) => trip.id === 'demo-test-trip');
     expect(demoTrip).toBeTruthy();
-    expect(demoTrip?.friends.length ?? 0).toBeGreaterThanOrEqual(6);
+    expect(demoTrip?.friends.length ?? 0).toBeGreaterThanOrEqual(7);
     expect(demoTrip?.friends.filter((friend) => friend.flights.length > 1).length ?? 0).toBeGreaterThanOrEqual(3);
     expect(demoTrip?.friends.flatMap((friend) => friend.flights.map((leg) => leg.flightNumber))).toEqual(
-      expect.arrayContaining(['TEST1', 'TEST2', 'TEST3', 'TEST4', 'TEST5']),
+      expect.arrayContaining(['TEST1', 'TEST2', 'TEST3', 'TEST4', 'TEST5', 'TEST6']),
     );
   });
 
@@ -275,10 +275,10 @@ describe('friends tracker helpers', () => {
     const demoTrip = config.trips.find((trip) => trip.id === 'demo-test-trip');
     expect(demoTrip?.destinationAirport).toBe('LAX');
     expect(demoTrip?.friends.map((friend) => friend.name)).toEqual(
-      expect.arrayContaining(['Alice Demo', 'Bruno Demo', 'Chloe Demo', 'Diego Demo', 'Emma Demo', 'Farah Demo']),
+      expect.arrayContaining(['Alice Demo', 'Bruno Demo', 'Chloe Demo', 'Diego Demo', 'Emma Demo', 'Farah Demo', 'Hana Demo']),
     );
     expect(demoTrip?.friends.flatMap((friend) => friend.flights.map((leg) => leg.flightNumber))).toEqual(
-      expect.arrayContaining(['TEST1', 'TEST2', 'TEST3', 'TEST4', 'TEST5']),
+      expect.arrayContaining(['TEST1', 'TEST2', 'TEST3', 'TEST4', 'TEST5', 'TEST6']),
     );
   });
 

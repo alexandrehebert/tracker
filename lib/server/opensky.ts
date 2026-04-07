@@ -98,14 +98,15 @@ type SearchFlightsOptions = {
   forceRefresh?: boolean;
 };
 
-type DemoFlightIdentifier = 'TEST1' | 'TEST2' | 'TEST3' | 'TEST4' | 'TEST5';
+type DemoFlightIdentifier = 'TEST1' | 'TEST2' | 'TEST3' | 'TEST4' | 'TEST5' | 'TEST6';
 
 function isDemoFlightIdentifier(value: string): value is DemoFlightIdentifier {
   return value === 'TEST1'
     || value === 'TEST2'
     || value === 'TEST3'
     || value === 'TEST4'
-    || value === 'TEST5';
+    || value === 'TEST5'
+    || value === 'TEST6';
 }
 
 function createDemoFlightPoint(params: {
@@ -629,6 +630,115 @@ function createDemoTrackedFlight(identifier: DemoFlightIdentifier, nowSeconds = 
               route: {
                 departureAirport: 'BCN',
                 arrivalAirport: 'AMS',
+              },
+            },
+          ),
+        ],
+      };
+    }
+    case 'TEST6': {
+      const track = [
+        createDemoFlightPoint({
+          time: nowSeconds - 7_200,
+          latitude: 32.8998,
+          longitude: -97.0403,
+          altitude: 0,
+          heading: 312,
+          onGround: true,
+        }),
+        createDemoFlightPoint({
+          time: nowSeconds - 6_600,
+          latitude: 40.84,
+          longitude: -121.8,
+          altitude: 7_400,
+          heading: 314,
+          onGround: false,
+        }),
+        createDemoFlightPoint({
+          time: nowSeconds - 5_100,
+          latitude: 49.7,
+          longitude: -150.4,
+          altitude: 10_500,
+          heading: 304,
+          onGround: false,
+        }),
+        createDemoFlightPoint({
+          time: nowSeconds - 3_000,
+          latitude: 53.1,
+          longitude: -179.3,
+          altitude: 10_950,
+          heading: 286,
+          onGround: false,
+        }),
+        createDemoFlightPoint({
+          time: nowSeconds - 1_200,
+          latitude: 53.3,
+          longitude: 179.2,
+          altitude: 11_020,
+          heading: 276,
+          onGround: false,
+        }),
+        createDemoFlightPoint({
+          time: nowSeconds - 90,
+          latitude: 49.1,
+          longitude: 166.4,
+          altitude: 10_980,
+          heading: 265,
+          onGround: false,
+        }),
+      ];
+      const current = track.at(-1) ?? null;
+
+      return {
+        icao24: 'demo-test6',
+        callsign: 'KAL031',
+        originCountry: 'Republic of Korea',
+        matchedBy: [identifier],
+        lastContact: current?.time ?? nowSeconds - 90,
+        current,
+        originPoint: track[0] ?? current,
+        track,
+        rawTrack: track,
+        onGround: false,
+        velocity: 252,
+        heading: current?.heading ?? 265,
+        verticalRate: 0,
+        geoAltitude: current?.altitude ?? 10_980,
+        baroAltitude: (current?.altitude ?? 10_980) + 35,
+        squawk: '4306',
+        category: 1,
+        route: {
+          departureAirport: 'DFW',
+          arrivalAirport: 'ICN',
+          firstSeen: nowSeconds - 7_200,
+          lastSeen: null,
+        },
+        flightNumber: 'KE 31',
+        airline: {
+          name: 'Korean Air',
+          iata: 'KE',
+          icao: 'KAL',
+        },
+        aircraft: {
+          registration: 'HL8342',
+          iata: 'B789',
+          icao: 'B789',
+          icao24: 'demo-test6',
+          model: 'Boeing 787-9',
+        },
+        dataSource: 'opensky',
+        sourceDetails: [
+          createSourceDetail(
+            'opensky',
+            'used',
+            true,
+            'Built-in demo result for TEST6: Korean Air KAL031 is currently crossing the Pacific dateline westbound from Dallas/Fort Worth to Seoul Incheon, making it ideal for map-edge validation.',
+            {
+              demoIdentifier: identifier,
+              scenario: 'dateline-airborne',
+              route: {
+                departureAirport: 'DFW',
+                arrivalAirport: 'ICN',
               },
             },
           ),

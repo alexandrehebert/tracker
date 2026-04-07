@@ -114,7 +114,7 @@ export function TripsSection() {
 
                 <p className={`mt-3 text-xs ${isSelected ? 'text-cyan-100' : 'text-slate-400'}`}>
                   {trip.isDemo
-                    ? 'Built-in demo using TEST1, TEST2, and TEST3.'
+                    ? 'Built-in demo using TEST1 through TEST6, including a dateline crossing.'
                     : isSelected
                       ? 'Currently open below.'
                       : 'Tap to edit this trip.'}
@@ -222,7 +222,7 @@ export function TripsSection() {
                 </button>
               ) : (
                 <div className="rounded-2xl border border-sky-400/30 bg-sky-500/10 px-4 py-3 text-sm text-sky-100">
-                  Built-in demo trip — handy for TEST1, TEST2, and TEST3 validation.
+                  Built-in demo trip — handy for TEST1 through TEST6 validation, including the Pacific edge-wrap case.
                 </div>
               )}
             </div>
