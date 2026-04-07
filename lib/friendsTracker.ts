@@ -1,4 +1,5 @@
 import type { TrackedFlight } from '~/components/tracker/flight/types';
+import { getFlightPointTimeMs } from '~/lib/flightHistory';
 
 const AUTO_LOCK_WINDOW_HOURS = 36;
 const AUTO_LOCK_LOOKBACK_DAYS = 7;
@@ -58,12 +59,6 @@ export interface FriendFlightStatus {
   label: string;
   canAutoLock: boolean;
   status: 'matched' | 'scheduled' | 'awaiting';
-}
-
-function getFlightPointTimeMs(point: TrackedFlight['current'] | TrackedFlight['originPoint'] | null | undefined): number | null {
-  return typeof point?.time === 'number' && Number.isFinite(point.time)
-    ? point.time * 1000
-    : null;
 }
 
 function getTrackedFlightEarliestRelevantTimeMs(flight: TrackedFlight): number | null {

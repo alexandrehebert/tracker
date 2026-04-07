@@ -879,6 +879,154 @@ describe('FriendsTrackerClient', () => {
     });
   });
 
+  it('interpolates sparse demo telemetry while rewinding so back-in-time steps visibly move the plane', async () => {
+    const nowMs = Date.now();
+    const nowSeconds = Math.floor(nowMs / 1000);
+    const rewindTargetSeconds = nowSeconds - (30 * 60);
+
+    vi.spyOn(window, 'fetch').mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          query: 'TEST2',
+          requestedIdentifiers: ['TEST2'],
+          matchedIdentifiers: ['TEST2'],
+          notFoundIdentifiers: [],
+          fetchedAt: nowMs,
+          flights: [
+            {
+              icao24: 'demo-test2',
+              callsign: 'BAW117',
+              originCountry: 'United Kingdom',
+              matchedBy: ['TEST2'],
+              lastContact: nowSeconds - 75,
+              current: {
+                time: nowSeconds - 75,
+                latitude: 53.94,
+                longitude: -31.25,
+                x: 0,
+                y: 0,
+                altitude: 10650,
+                heading: 291,
+                onGround: false,
+              },
+              originPoint: {
+                time: nowSeconds - 4200,
+                latitude: 52.62,
+                longitude: -8.41,
+                x: 0,
+                y: 0,
+                altitude: 7200,
+                heading: 287,
+                onGround: false,
+              },
+              track: [
+                {
+                  time: nowSeconds - 4200,
+                  latitude: 52.62,
+                  longitude: -8.41,
+                  x: 0,
+                  y: 0,
+                  altitude: 7200,
+                  heading: 287,
+                  onGround: false,
+                },
+                {
+                  time: nowSeconds - 2700,
+                  latitude: 53.46,
+                  longitude: -16.8,
+                  x: 0,
+                  y: 0,
+                  altitude: 10100,
+                  heading: 289,
+                  onGround: false,
+                },
+                {
+                  time: nowSeconds - 1200,
+                  latitude: 53.88,
+                  longitude: -24.7,
+                  x: 0,
+                  y: 0,
+                  altitude: 10700,
+                  heading: 290,
+                  onGround: false,
+                },
+              ],
+              rawTrack: [],
+              onGround: false,
+              velocity: 247,
+              heading: 291,
+              verticalRate: 0,
+              geoAltitude: 10650,
+              baroAltitude: 10690,
+              squawk: '2201',
+              category: 1,
+              route: {
+                departureAirport: 'LHR',
+                arrivalAirport: 'JFK',
+                firstSeen: nowSeconds - 5400,
+                lastSeen: null,
+              },
+              dataSource: 'opensky',
+              sourceDetails: [],
+            },
+          ],
+        }),
+        {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        },
+      ),
+    );
+
+    render(
+      <FriendsTrackerClient
+        map={map}
+        initialConfig={{
+          ...initialConfig,
+          destinationAirport: 'JFK',
+          friends: [
+            {
+              id: 'friend-1',
+              name: 'Bruno Demo',
+              flights: [
+                {
+                  id: 'leg-1',
+                  flightNumber: 'TEST2',
+                  departureTime: new Date(nowMs - 2 * 60 * 60 * 1000).toISOString(),
+                  from: 'LHR',
+                  to: 'JFK',
+                },
+              ],
+            },
+          ],
+        }}
+        airportMarkers={[
+          { id: 'lhr', code: 'LHR', label: 'London Heathrow', latitude: 51.47, longitude: -0.4543, usage: 'both' },
+          { id: 'jfk', code: 'JFK', label: 'New York JFK', latitude: 40.6413, longitude: -73.7781, usage: 'both' },
+        ]}
+      />,
+    );
+
+    const slider = await screen.findByLabelText(/wayback machine/i);
+    fireEvent.input(slider, {
+      target: { value: String((rewindTargetSeconds * 1000) + 1_000) },
+    });
+
+    await waitFor(() => {
+      const rewoundFlight = (latestFlightMapProps?.flights as Array<{
+        current?: { time?: number | null; latitude?: number | null; longitude?: number | null; altitude?: number | null };
+      }> | undefined)?.[0];
+
+      expect(rewoundFlight?.current?.time).toBe(rewindTargetSeconds);
+      expect(rewoundFlight?.current?.latitude).toBeGreaterThan(53.46);
+      expect(rewoundFlight?.current?.latitude).toBeLessThan(53.88);
+      expect(rewoundFlight?.current?.longitude).toBeLessThan(-16.8);
+      expect(rewoundFlight?.current?.longitude).toBeGreaterThan(-24.7);
+      expect(rewoundFlight?.current?.altitude).toBeGreaterThan(10100);
+      expect(rewoundFlight?.current?.altitude).toBeLessThan(10700);
+    });
+  });
+
   it('opens the wayback machine from a mobile top-bar button', async () => {
     vi.stubGlobal(
       'matchMedia',

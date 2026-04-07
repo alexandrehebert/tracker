@@ -29,6 +29,7 @@ import {
   type FriendsTrackerConfig,
   type FriendTravelConfig,
 } from '~/lib/friendsTracker';
+import { buildHistoricalFlightView, computeWaybackBounds, getFlightPointTimeMs } from '~/lib/flightHistory';
 import type { WorldMapPayload } from '~/lib/server/worldMap';
 import TrackerShell from '../TrackerShell';
 import TrackerZoomControls from '../TrackerZoomControls';
@@ -38,9 +39,7 @@ import { getFlightMapColor } from '../flight/colors';
 import { FlightMapProvider } from '../flight/contexts/FlightMapProvider';
 import FlightMapViewToggle, { type TrackerMapView } from '../flight/FlightMapViewToggle';
 import type {
-  FlightFetchSnapshot,
   FlightMapAirportMarker,
-  FlightMapPoint,
   FriendAvatarInfo,
   FriendAvatarMarker,
   TrackerApiResponse,
@@ -110,270 +109,6 @@ function formatDateTimeMillis(timestampMs: number | null, locale: string): strin
   }).format(timestampMs);
 }
 
-function getFlightPointTimeMs(point: FlightMapPoint | null | undefined): number | null {
-  return typeof point?.time === 'number' && Number.isFinite(point.time)
-    ? point.time * 1000
-    : null;
-}
-
-function sortFlightPoints(points: Array<FlightMapPoint | null | undefined>): FlightMapPoint[] {
-  const deduped = new Map<string, FlightMapPoint>();
-
-  for (const point of points) {
-    if (!point) {
-      continue;
-    }
-
-    const key = point.time != null
-      ? `t:${point.time}`
-      : `c:${point.latitude.toFixed(4)}:${point.longitude.toFixed(4)}:${point.altitude ?? 'na'}:${point.onGround ? 'g' : 'a'}`;
-
-    deduped.set(key, point);
-  }
-
-  return Array.from(deduped.values()).sort((first, second) => {
-    const firstTimeMs = getFlightPointTimeMs(first);
-    const secondTimeMs = getFlightPointTimeMs(second);
-
-    if (firstTimeMs == null && secondTimeMs == null) {
-      return 0;
-    }
-
-    if (firstTimeMs == null) {
-      return -1;
-    }
-
-    if (secondTimeMs == null) {
-      return 1;
-    }
-
-    return firstTimeMs - secondTimeMs;
-  });
-}
-
-function pickMostRecentFlightPoint(points: Array<FlightMapPoint | null | undefined>): FlightMapPoint | null {
-  let bestPoint: FlightMapPoint | null = null;
-  let bestTimeMs = Number.NEGATIVE_INFINITY;
-
-  for (const point of points) {
-    if (!point) {
-      continue;
-    }
-
-    const timeMs = getFlightPointTimeMs(point);
-    if (timeMs != null && timeMs >= bestTimeMs) {
-      bestPoint = point;
-      bestTimeMs = timeMs;
-      continue;
-    }
-
-    if (!bestPoint) {
-      bestPoint = point;
-    }
-  }
-
-  return bestPoint;
-}
-
-function getLatestHistoricalSnapshot(
-  history: FlightFetchSnapshot[] | undefined,
-  referenceTimeMs: number,
-): FlightFetchSnapshot | null {
-  return [...(history ?? [])]
-    .filter((snapshot) => Number.isFinite(snapshot.capturedAt) && snapshot.capturedAt <= referenceTimeMs)
-    .sort((first, second) => first.capturedAt - second.capturedAt)
-    .at(-1) ?? null;
-}
-
-function interpolateFlightPoint(
-  from: GeoPoint,
-  to: GeoPoint,
-  progress: number,
-  timeMs: number,
-  onGround: boolean,
-): FlightMapPoint {
-  const clampedProgress = clampNumber(progress, 0, 1);
-
-  return {
-    time: Math.round(timeMs / 1000),
-    latitude: from.latitude + ((to.latitude - from.latitude) * clampedProgress),
-    longitude: from.longitude + ((to.longitude - from.longitude) * clampedProgress),
-    x: 0,
-    y: 0,
-    altitude: onGround ? 0 : null,
-    heading: computeAirportBearingDegrees(from, to),
-    onGround,
-  };
-}
-
-function buildHistoricalFlightView(
-  flight: TrackedFlight,
-  referenceTimeMs: number,
-  liveTimeMs: number,
-): TrackedFlight | null {
-  const clampedReferenceTimeMs = Math.min(referenceTimeMs, liveTimeMs);
-  if (clampedReferenceTimeMs >= liveTimeMs - WAYBACK_RETURN_TO_LIVE_THRESHOLD_MS) {
-    return flight;
-  }
-
-  const routeFirstSeenMs = flight.route.firstSeen != null ? flight.route.firstSeen * 1000 : null;
-  const routeLastSeenMs = flight.route.lastSeen != null ? flight.route.lastSeen * 1000 : null;
-  const latestSnapshot = getLatestHistoricalSnapshot(flight.fetchHistory, clampedReferenceTimeMs);
-  const liveReferencePoint = flight.current ?? flight.track.at(-1) ?? flight.rawTrack?.at(-1) ?? flight.originPoint ?? null;
-  const liveReferenceTimeMs = getFlightPointTimeMs(liveReferencePoint)
-    ?? (flight.lastContact != null ? flight.lastContact * 1000 : liveTimeMs);
-
-  const track = flight.track.filter((point) => {
-    const timeMs = getFlightPointTimeMs(point);
-    return timeMs == null || timeMs <= clampedReferenceTimeMs;
-  });
-  const rawTrack = (flight.rawTrack ?? []).filter((point) => {
-    const timeMs = getFlightPointTimeMs(point);
-    return timeMs == null || timeMs <= clampedReferenceTimeMs;
-  });
-
-  const liveCurrentPoint = (() => {
-    const timeMs = getFlightPointTimeMs(flight.current);
-    return timeMs == null || timeMs <= clampedReferenceTimeMs ? flight.current : null;
-  })();
-
-  let currentPoint = pickMostRecentFlightPoint([
-    sortFlightPoints([...rawTrack, ...track, liveCurrentPoint]).at(-1) ?? null,
-    latestSnapshot?.current ?? null,
-  ]);
-
-  const canForecastFromLivePoint = currentPoint == null
-    && liveReferencePoint != null
-    && routeFirstSeenMs != null
-    && liveReferenceTimeMs > routeFirstSeenMs
-    && clampedReferenceTimeMs >= routeFirstSeenMs
-    && clampedReferenceTimeMs <= liveReferenceTimeMs;
-
-  if (canForecastFromLivePoint) {
-    const interpolationProgress = clampNumber(
-      (clampedReferenceTimeMs - routeFirstSeenMs) / (liveReferenceTimeMs - routeFirstSeenMs),
-      0.02,
-      1,
-    );
-
-    currentPoint = flight.originPoint
-      ? interpolateFlightPoint(
-          flight.originPoint,
-          liveReferencePoint,
-          interpolationProgress,
-          clampedReferenceTimeMs,
-          interpolationProgress >= 0.999 && liveReferencePoint.onGround,
-        )
-      : {
-          ...liveReferencePoint,
-          time: Math.round(clampedReferenceTimeMs / 1000),
-          onGround: false,
-        };
-  }
-
-  const hasHistoricalEvidence = track.length > 0 || rawTrack.length > 0 || latestSnapshot != null || currentPoint != null;
-
-  if (!hasHistoricalEvidence && routeFirstSeenMs != null && clampedReferenceTimeMs < routeFirstSeenMs) {
-    return null;
-  }
-
-  if (!hasHistoricalEvidence) {
-    return null;
-  }
-
-  const isHistoricalOnGround = latestSnapshot?.onGround === true
-    || currentPoint?.onGround === true
-    || (flight.onGround && routeLastSeenMs != null && clampedReferenceTimeMs >= routeLastSeenMs);
-
-  return {
-    ...flight,
-    current: currentPoint,
-    track,
-    rawTrack,
-    onGround: isHistoricalOnGround,
-    lastContact: latestSnapshot?.lastContact
-      ?? currentPoint?.time
-      ?? (isHistoricalOnGround ? flight.route.lastSeen : null)
-      ?? null,
-    heading: currentPoint?.heading ?? latestSnapshot?.heading ?? flight.heading,
-    velocity: latestSnapshot?.velocity ?? flight.velocity,
-    geoAltitude: currentPoint?.altitude ?? latestSnapshot?.geoAltitude ?? flight.geoAltitude,
-    baroAltitude: latestSnapshot?.baroAltitude ?? flight.baroAltitude,
-    route: {
-      ...flight.route,
-      lastSeen: isHistoricalOnGround ? flight.route.lastSeen : null,
-    },
-    fetchHistory: (flight.fetchHistory ?? []).filter((snapshot) => snapshot.capturedAt <= clampedReferenceTimeMs),
-  };
-}
-
-function computeWaybackBounds(
-  config: FriendsTrackerConfig,
-  flights: TrackedFlight[],
-  fallbackEndMs: number,
-): { startMs: number; endMs: number } {
-  const departureTimes: number[] = [];
-  const observedTimes: number[] = [fallbackEndMs];
-
-  for (const friend of config.friends) {
-    for (const leg of friend.flights) {
-      const departureMs = Date.parse(leg.departureTime);
-      if (Number.isFinite(departureMs)) {
-        departureTimes.push(departureMs);
-      }
-    }
-  }
-
-  for (const flight of flights) {
-    if (flight.route.firstSeen != null) {
-      observedTimes.push(flight.route.firstSeen * 1000);
-    }
-
-    if (flight.route.lastSeen != null) {
-      observedTimes.push(flight.route.lastSeen * 1000);
-    }
-
-    for (const point of [flight.originPoint, ...flight.track, ...(flight.rawTrack ?? []), flight.current]) {
-      const pointTimeMs = getFlightPointTimeMs(point);
-      if (pointTimeMs != null) {
-        observedTimes.push(pointTimeMs);
-      }
-    }
-
-    for (const snapshot of flight.fetchHistory ?? []) {
-      if (Number.isFinite(snapshot.capturedAt)) {
-        observedTimes.push(snapshot.capturedAt);
-      }
-
-      if (snapshot.route.firstSeen != null) {
-        observedTimes.push(snapshot.route.firstSeen * 1000);
-      }
-
-      if (snapshot.route.lastSeen != null) {
-        observedTimes.push(snapshot.route.lastSeen * 1000);
-      }
-
-      const pointTimeMs = getFlightPointTimeMs(snapshot.current);
-      if (pointTimeMs != null) {
-        observedTimes.push(pointTimeMs);
-      }
-    }
-  }
-
-  const finiteDepartureTimes = departureTimes.filter((value) => Number.isFinite(value));
-  const finiteObservedTimes = observedTimes.filter((value) => Number.isFinite(value));
-  const rawStartMs = Math.min(...(finiteDepartureTimes.length > 0 ? finiteDepartureTimes : finiteObservedTimes));
-  const endMs = Math.max(...finiteObservedTimes);
-  const safeEndMs = Number.isFinite(endMs) ? endMs : fallbackEndMs;
-  const startMs = Number.isFinite(rawStartMs)
-    ? Math.min(rawStartMs, safeEndMs)
-    : safeEndMs;
-
-  return {
-    startMs,
-    endMs: safeEndMs,
-  };
-}
 
 function getFriendInitials(name: string): string {
   const parts = name.trim().split(/\s+/);
@@ -1182,8 +917,8 @@ function FriendsTrackerDashboard({
   const liveTimeMs = data?.fetchedAt ?? Date.now();
 
   const waybackBounds = useMemo(
-    () => computeWaybackBounds(config, data?.flights ?? [], liveTimeMs),
-    [config, data?.flights, liveTimeMs],
+    () => computeWaybackBounds(config.friends, data?.flights ?? [], liveTimeMs),
+    [config.friends, data?.flights, liveTimeMs],
   );
 
   const referenceTimeMs = selectedTimeMs == null
@@ -1197,7 +932,9 @@ function FriendsTrackerDashboard({
     }
 
     return (data?.flights ?? []).flatMap((flight) => {
-      const historicalFlight = buildHistoricalFlightView(flight, referenceTimeMs, liveTimeMs);
+      const historicalFlight = buildHistoricalFlightView(flight, referenceTimeMs, liveTimeMs, {
+        returnToLiveThresholdMs: WAYBACK_RETURN_TO_LIVE_THRESHOLD_MS,
+      });
       return historicalFlight ? [historicalFlight] : [];
     });
   }, [data?.flights, isWaybackActive, liveTimeMs, referenceTimeMs]);

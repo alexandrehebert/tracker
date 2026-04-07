@@ -47,12 +47,17 @@ function getProjectedCoordinates(
   return createMapProjection()([point.longitude, point.latitude]);
 }
 
-function getProjectedPathToken(point: { latitude: number; longitude: number } | null | undefined): string {
+function getProjectedPathToken(
+  point: { latitude: number | null; longitude: number | null } | null | undefined,
+): string {
   const coordinates = getProjectedCoordinates(point);
   return coordinates ? `${coordinates[0].toFixed(2)} ${coordinates[1].toFixed(2)}` : '';
 }
 
-function getProjectedTransform(point: { latitude: number; longitude: number } | null | undefined, scale = 1): string | null {
+function getProjectedTransform(
+  point: { latitude: number | null; longitude: number | null } | null | undefined,
+  scale = 1,
+): string | null {
   const coordinates = getProjectedCoordinates(point);
   return coordinates ? `translate(${coordinates[0]} ${coordinates[1]}) scale(${scale})` : null;
 }
