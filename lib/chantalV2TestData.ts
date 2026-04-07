@@ -156,7 +156,7 @@ interface PhaseAirborne {
   };
   aircraft: {
     icao24: string;
-    registration: string;
+    registration: string | null;
     model: string;
     iata: string | null;
     icao: string | null;
@@ -275,7 +275,7 @@ function buildDemoFriends(tripNow: number): DemoFriendDef[] {
             [tripNow - h(4) + h(2.5), tripNow - h(4) + h(3.5)], // ~Coral Sea
           ],
           airline:  { name: 'Japan Airlines', iata: 'JL', icao: 'JAL' },
-          aircraft: { icao24: 'demo-v2-c1', registration: null!, model: 'Boeing 787-8', iata: null!, icao: null! },
+          aircraft: { icao24: 'demo-v2-c1', registration: null, model: 'Boeing 787-8', iata: null, icao: null },
         },
         { type: 'awaiting', atAirport: 'NRT', fromMs: tripNow + h(5.5), toMs: far },
       ],
@@ -460,9 +460,18 @@ function findPhaseAtTime(phases: DemoPhase[], timeMs: number): DemoPhase | null 
 // Position computation
 // ---------------------------------------------------------------------------
 
-const STALE_CONTACT_CHANCE = 0.08; // probability of 8-12 min stale lastContact
+const STALE_CONTACT_CHANCE = 0.08; // probability of stale lastContact
 const RANDOM_DROPOUT_CHANCE = 0.05; // probability of random full signal loss
 const PACIFIC_EXTRA_DROPOUT = 0.18; // extra dropout when over Pacific
+
+/** Minimum stale offset (seconds) applied during "stale periods". */
+const STALE_MIN_S = 480;   // 8 min
+/** Additional random range added to the stale offset (seconds). */
+const STALE_RANGE_S = 1200; // up to 28 min total
+/** Minimum normal last-contact offset (seconds). */
+const NORMAL_STALE_MIN_S = 20;
+/** Additional random range for normal last-contact (seconds). */
+const NORMAL_STALE_RANGE_S = 100;
 
 function isInBlackout(phase: PhaseAirborne, timeMs: number): boolean {
   for (const [start, end] of phase.blackouts ?? []) {
@@ -535,8 +544,8 @@ function computeDemoFriendPosition(
   // Stale last-contact
   const rng3 = deterministicRng(friendIndex * 211 + snapshotIndex * 53);
   const staleOffsetSeconds = airborne.stalePeriods && rng3 < STALE_CONTACT_CHANCE
-    ? 480 + Math.floor(rng3 * 1200)   // 8-28 min stale
-    : 20 + Math.floor(rng3 * 100);    // 20-120 s stale (normal)
+    ? STALE_MIN_S + Math.floor(rng3 * STALE_RANGE_S)
+    : NORMAL_STALE_MIN_S + Math.floor(rng3 * NORMAL_STALE_RANGE_S);
 
   // Tiny GPS jitter (±0.015°)
   const jLat = (deterministicRng(friendIndex * 17 + snapshotIndex * 41) - 0.5) * 0.03;
@@ -569,6 +578,10 @@ function computeDemoFriendPosition(
  * Bucket of 15 min so the demo trip does not rebuild on every API call.
  */
 const DEMO_REFERENCE_BUCKET_MS = 15 * 60_000;
+/** Rolling history window kept for the demo wayback machine (48 h). */
+const DEMO_LOOKBACK_WINDOW_MS = 48 * 3_600_000;
+/** Number of 5-min snapshots in the default history window (576). */
+export const DEMO_V2_SNAPSHOT_COUNT = DEMO_LOOKBACK_WINDOW_MS / (5 * 60_000);
 
 function getDemoV2TripNow(now: number): number {
   return Math.floor(now / DEMO_REFERENCE_BUCKET_MS) * DEMO_REFERENCE_BUCKET_MS;
@@ -589,7 +602,7 @@ export function generateDemoV2Snapshot(now: number, capturedAt: number): Chantal
   const tripNow = getDemoV2TripNow(now);
   const friends = buildDemoFriends(tripNow);
   const stepMs  = 5 * 60_000;
-  const snapshotIndex = Math.round((capturedAt - (tripNow - 48 * 3_600_000)) / stepMs);
+  const snapshotIndex = Math.round((capturedAt - (tripNow - DEMO_LOOKBACK_WINDOW_MS)) / stepMs);
 
   const positions = friends.map((friend, friendIndex) =>
     computeDemoFriendPosition(friend, friendIndex, capturedAt, snapshotIndex),
@@ -613,7 +626,7 @@ export function generateDemoV2Snapshot(now: number, capturedAt: number): Chantal
  */
 export function generateDemoV2SnapshotSeries(
   now: number,
-  count = 576,
+  count = DEMO_V2_SNAPSHOT_COUNT,
   stepMs = 5 * 60_000,
 ): ChantalPositionSnapshot[] {
   const latestBucket = toSnapshotBucket(now, stepMs);
@@ -632,7 +645,7 @@ export function generateDemoV2SnapshotSeries(
  */
 export function getDemoV2SnapshotTimestamps(
   now: number,
-  count = 576,
+  count = DEMO_V2_SNAPSHOT_COUNT,
   stepMs = 5 * 60_000,
 ): number[] {
   const latestBucket = toSnapshotBucket(now, stepMs);

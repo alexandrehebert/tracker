@@ -5,6 +5,7 @@ import {
   generateDemoV2Snapshot,
   getDemoV2SnapshotAt,
   getDemoV2SnapshotTimestamps,
+  DEMO_V2_SNAPSHOT_COUNT,
 } from '~/lib/chantalV2TestData';
 
 /** Returns true when the CHANTAL_V2_TEST_MODE env var is set to "1" or "true". */
@@ -23,10 +24,10 @@ export function getTestLatestSnapshot(now = Date.now()): ChantalPositionSnapshot
 }
 
 /**
- * Returns all demo snapshot timestamps (newest first, covering 48 h).
+ * Returns all demo snapshot timestamps (newest first, covering the full lookback window).
  */
 export function getTestSnapshotTimestamps(now = Date.now()): number[] {
-  return getDemoV2SnapshotTimestamps(now, 576, 5 * 60_000);
+  return getDemoV2SnapshotTimestamps(now, DEMO_V2_SNAPSHOT_COUNT, 5 * 60_000);
 }
 
 /**
