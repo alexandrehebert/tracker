@@ -18,6 +18,11 @@ function getMongoDbName(): string {
   return process.env.MONGODB_DB_NAME?.trim() || DEFAULT_DB_NAME;
 }
 
+function buildTripFilter(tripId?: string): Partial<Pick<SnapshotDocument, 'tripId'>> {
+  const normalizedTripId = tripId?.trim();
+  return normalizedTripId ? { tripId: normalizedTripId } : {};
+}
+
 function logMongoWarning(error: unknown): void {
   if (mongoWarningLogged) {
     return;
@@ -113,8 +118,8 @@ export async function savePositionSnapshot(snapshot: ChantalPositionSnapshot): P
   }
 }
 
-/** Returns the most recently captured position snapshot, or null if none. */
-export async function getLatestPositionSnapshot(): Promise<ChantalPositionSnapshot | null> {
+/** Returns the most recently captured position snapshot for the given trip, or null if none. */
+export async function getLatestPositionSnapshot(tripId?: string): Promise<ChantalPositionSnapshot | null> {
   const collection = await getSnapshotCollection();
   if (!collection) {
     return null;
@@ -122,7 +127,7 @@ export async function getLatestPositionSnapshot(): Promise<ChantalPositionSnapsh
 
   try {
     const doc = await collection
-      .find({} as Parameters<typeof collection.find>[0])
+      .find(buildTripFilter(tripId) as Parameters<typeof collection.find>[0])
       .sort({ capturedAt: -1 })
       .limit(1)
       .toArray();
@@ -138,7 +143,7 @@ export async function getLatestPositionSnapshot(): Promise<ChantalPositionSnapsh
  * Returns an ordered list of snapshot capturedAt timestamps (newest first),
  * up to the given limit.
  */
-export async function listPositionSnapshotTimestamps(limit = MAX_SNAPSHOTS): Promise<number[]> {
+export async function listPositionSnapshotTimestamps(limit = MAX_SNAPSHOTS, tripId?: string): Promise<number[]> {
   const collection = await getSnapshotCollection();
   if (!collection) {
     return [];
@@ -148,7 +153,7 @@ export async function listPositionSnapshotTimestamps(limit = MAX_SNAPSHOTS): Pro
 
   try {
     const docs = await collection
-      .find({} as Parameters<typeof collection.find>[0])
+      .find(buildTripFilter(tripId) as Parameters<typeof collection.find>[0])
       .sort({ capturedAt: -1 })
       .limit(safeLimit)
       .project({ capturedAt: 1 })
@@ -166,15 +171,16 @@ export async function listPositionSnapshotTimestamps(limit = MAX_SNAPSHOTS): Pro
  * targetMs. Falls back to the oldest available snapshot when nothing precedes the
  * target time.
  */
-export async function getPositionSnapshotAt(targetMs: number): Promise<ChantalPositionSnapshot | null> {
+export async function getPositionSnapshotAt(targetMs: number, tripId?: string): Promise<ChantalPositionSnapshot | null> {
   const collection = await getSnapshotCollection();
   if (!collection) {
     return null;
   }
 
   try {
+    const tripFilter = buildTripFilter(tripId);
     const doc = await collection
-      .find({ capturedAt: { $lte: targetMs } } as Parameters<typeof collection.find>[0])
+      .find({ ...tripFilter, capturedAt: { $lte: targetMs } } as Parameters<typeof collection.find>[0])
       .sort({ capturedAt: -1 })
       .limit(1)
       .toArray();
@@ -185,7 +191,7 @@ export async function getPositionSnapshotAt(targetMs: number): Promise<ChantalPo
 
     // Fallback: return the oldest available snapshot even if it's after targetMs.
     const oldest = await collection
-      .find({} as Parameters<typeof collection.find>[0])
+      .find(tripFilter as Parameters<typeof collection.find>[0])
       .sort({ capturedAt: 1 })
       .limit(1)
       .toArray();

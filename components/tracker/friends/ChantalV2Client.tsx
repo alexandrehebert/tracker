@@ -721,6 +721,7 @@ interface ChantalV2DashboardProps {
   airportMarkers: FlightMapAirportMarker[];
   initialSnapshot: ChantalPositionSnapshot | null;
   initialSnapshotTimestamps: number[];
+  useDemoSnapshots?: boolean;
   mapView: TrackerMapView;
   onMapViewChange: (nextView: TrackerMapView) => void;
   mapReady: boolean;
@@ -734,6 +735,7 @@ function ChantalV2Dashboard({
   airportMarkers,
   initialSnapshot,
   initialSnapshotTimestamps,
+  useDemoSnapshots = false,
   mapView,
   onMapViewChange,
   mapReady,
@@ -752,6 +754,7 @@ function ChantalV2Dashboard({
   const [isCronRunning, setIsCronRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [isWaybackModalOpen, setIsWaybackModalOpen] = useState(false);
+  const hasAutoOpenedWaybackRef = useRef(false);
 
   const { isMobile } = useTrackerLayout();
   const currentTrip = getCurrentTripConfig(config);
@@ -776,13 +779,31 @@ function ChantalV2Dashboard({
   const hasWaybackRange = waybackBounds.endMs - waybackBounds.startMs >= WAYBACK_STEP_MS;
   const sliderValue = isWaybackActive ? referenceTimeMs : waybackBounds.endMs;
 
+  const snapshotQuerySuffix = useMemo(() => {
+    const params = new URLSearchParams();
+
+    if (useDemoSnapshots) {
+      params.set('demo', '1');
+    } else if (currentTrip?.id) {
+      params.set('tripId', currentTrip.id);
+    }
+
+    const query = params.toString();
+    return query ? `?${query}` : '';
+  }, [currentTrip?.id, useDemoSnapshots]);
+
+  const snapshotListUrl = useMemo(
+    () => `/api/chantal/v2/snapshots${snapshotQuerySuffix}`,
+    [snapshotQuerySuffix],
+  );
+
   // Fetch latest snapshots.
   const fetchLatest = useCallback(async () => {
     setIsRefreshing(true);
     setError(null);
 
     try {
-      const response = await fetch('/api/chantal/v2/snapshots', { cache: 'no-store' });
+      const response = await fetch(snapshotListUrl, { cache: 'no-store' });
       const payload = await response.json() as ChantalV2SnapshotsResponse & { error?: string };
 
       if (!response.ok) {
@@ -806,12 +827,17 @@ function ChantalV2Dashboard({
     } finally {
       setIsRefreshing(false);
     }
-  }, [selectedTimeMs]);
+  }, [selectedTimeMs, snapshotListUrl]);
 
   // Fetch historical snapshot at a specific time.
   const fetchSnapshotAt = useCallback(async (timestampMs: number) => {
     try {
       const params = new URLSearchParams({ at: String(timestampMs) });
+      if (useDemoSnapshots) {
+        params.set('demo', '1');
+      } else if (currentTrip?.id) {
+        params.set('tripId', currentTrip.id);
+      }
       const response = await fetch(`/api/chantal/v2/snapshots?${params.toString()}`, { cache: 'no-store' });
       const payload = await response.json() as { snapshot: ChantalPositionSnapshot | null; error?: string };
 
@@ -825,7 +851,7 @@ function ChantalV2Dashboard({
     } catch {
       // Silently fall back to showing the latest.
     }
-  }, []);
+  }, [currentTrip?.id, useDemoSnapshots]);
 
   // When wayback time changes, fetch the right snapshot.
   useEffect(() => {
@@ -1080,6 +1106,13 @@ function ChantalV2Dashboard({
   useEffect(() => {
     if (!isMobile || !hasWaybackRange) {
       setIsWaybackModalOpen(false);
+      hasAutoOpenedWaybackRef.current = false;
+      return;
+    }
+
+    if (!hasAutoOpenedWaybackRef.current) {
+      setIsWaybackModalOpen(true);
+      hasAutoOpenedWaybackRef.current = true;
     }
   }, [hasWaybackRange, isMobile]);
 
@@ -1201,6 +1234,7 @@ interface ChantalV2ClientProps {
   airportMarkers: FlightMapAirportMarker[];
   initialSnapshot: ChantalPositionSnapshot | null;
   initialSnapshotTimestamps: number[];
+  useDemoSnapshots?: boolean;
 }
 
 export default function ChantalV2Client({
@@ -1209,6 +1243,7 @@ export default function ChantalV2Client({
   airportMarkers,
   initialSnapshot,
   initialSnapshotTimestamps,
+  useDemoSnapshots = false,
 }: ChantalV2ClientProps) {
   const [mapView, setMapView] = useState<TrackerMapView>('flat');
   const [mapReady, setMapReady] = useState(false);
@@ -1297,6 +1332,7 @@ export default function ChantalV2Client({
           airportMarkers={airportMarkers}
           initialSnapshot={initialSnapshot}
           initialSnapshotTimestamps={initialSnapshotTimestamps}
+          useDemoSnapshots={useDemoSnapshots}
           mapView={mapView}
           onMapViewChange={handleMapViewChange}
           mapReady={mapReady}

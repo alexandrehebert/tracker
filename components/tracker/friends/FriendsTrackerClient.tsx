@@ -1474,6 +1474,8 @@ function FriendsTrackerDashboard({
   const sliderValue = isWaybackActive ? referenceTimeMs : waybackBounds.endMs;
   const hasWaybackRange = waybackBounds.endMs - waybackBounds.startMs >= WAYBACK_STEP_MS;
 
+  const hasAutoOpenedWaybackRef = useRef(false);
+
   const waybackCard = hasWaybackRange ? (
     <div className="rounded-2xl border border-white/12 bg-slate-950/72 p-4 shadow-[0_30px_90px_rgba(2,6,23,0.55)] backdrop-blur-md">
       <div className="flex items-start justify-between gap-3">
@@ -1554,6 +1556,13 @@ function FriendsTrackerDashboard({
   useEffect(() => {
     if (!isMobile || !hasWaybackRange) {
       setIsWaybackModalOpen(false);
+      hasAutoOpenedWaybackRef.current = false;
+      return;
+    }
+
+    if (!hasAutoOpenedWaybackRef.current) {
+      setIsWaybackModalOpen(true);
+      hasAutoOpenedWaybackRef.current = true;
     }
   }, [hasWaybackRange, isMobile]);
 

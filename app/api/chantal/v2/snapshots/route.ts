@@ -39,6 +39,8 @@ export async function GET(request: NextRequest) {
   try {
     const now = Date.now();
     const testMode = isChantalV2TestMode();
+    const demoMode = testMode || request.nextUrl.searchParams.get('demo') === '1';
+    const tripId = request.nextUrl.searchParams.get('tripId')?.trim() || undefined;
     const atParam = request.nextUrl.searchParams.get('at');
 
     if (atParam != null) {
@@ -47,13 +49,13 @@ export async function GET(request: NextRequest) {
         return buildJsonResponse({ error: 'Invalid ?at parameter; expected unix milliseconds.' }, 400);
       }
 
-      const snapshot = testMode
+      const snapshot = demoMode
         ? getTestSnapshotAt(targetMs, now)
-        : await getPositionSnapshotAt(targetMs);
+        : await getPositionSnapshotAt(targetMs, tripId);
       return buildJsonResponse({ snapshot });
     }
 
-    if (testMode) {
+    if (demoMode) {
       const latest = getTestLatestSnapshot(now);
       const snapshotTimestamps = getTestSnapshotTimestamps(now);
       const body: ChantalV2SnapshotsResponse = { latest, snapshotTimestamps };
@@ -61,8 +63,8 @@ export async function GET(request: NextRequest) {
     }
 
     const [latest, snapshotTimestamps] = await Promise.all([
-      getLatestPositionSnapshot(),
-      listPositionSnapshotTimestamps(),
+      getLatestPositionSnapshot(tripId),
+      listPositionSnapshotTimestamps(undefined, tripId),
     ]);
 
     const body: ChantalV2SnapshotsResponse = {

@@ -976,7 +976,6 @@ describe('FriendsTrackerClient', () => {
     const user = userEvent.setup();
     const openWaybackButton = screen.getByRole('button', { name: /open wayback machine/i });
 
-    await user.click(openWaybackButton);
     expect(await screen.findByRole('slider', { name: /wayback machine/i })).toBeInTheDocument();
 
     await user.click(openWaybackButton);
