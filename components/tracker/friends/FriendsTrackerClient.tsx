@@ -57,6 +57,13 @@ const WAYBACK_STEP_MS = 5 * 60 * 1000;
 const WAYBACK_LIVE_THRESHOLD_MS = 60 * 1000;
 const WAYBACK_RETURN_TO_LIVE_THRESHOLD_MS = Math.max(WAYBACK_LIVE_THRESHOLD_MS, WAYBACK_STEP_MS);
 
+function snapWaybackSliderValue(valueMs: number, startMs: number, endMs: number): number {
+  const clampedValueMs = Math.min(Math.max(valueMs, startMs), endMs);
+  const clampedOffsetMs = Math.max(0, clampedValueMs - startMs);
+  const snappedValueMs = startMs + Math.round(clampedOffsetMs / WAYBACK_STEP_MS) * WAYBACK_STEP_MS;
+  return Math.min(snappedValueMs, endMs);
+}
+
 interface FriendsTrackerClientProps {
   map: WorldMapPayload;
   initialConfig: FriendsTrackerConfig;
@@ -592,7 +599,7 @@ function pickPreferredMapStatus(friendStatuses: FriendFlightStatus[], now = Date
     return null;
   }
 
-  const matchedStatuses = friendStatuses.filter((status) => status.flight);
+  const matchedStatuses = friendStatuses.filter((status) => status.status === 'matched' && status.flight);
   if (matchedStatuses.length > 0) {
     const inFlightStatuses = matchedStatuses.filter((status) => !status.flight?.onGround);
     const candidateStatuses = inFlightStatuses.length > 0 ? inFlightStatuses : matchedStatuses;
@@ -1072,10 +1079,10 @@ function FriendsTrackerTopBar({
             <button
               type="button"
               onClick={onToggleWayback}
-              className={`relative inline-flex h-9 w-9 items-center justify-center gap-2 rounded-full border p-2 text-sm font-medium text-slate-100 shadow backdrop-blur-sm transition hover:border-white/20 hover:bg-slate-900 ${
+              className={`relative inline-flex h-9 w-9 items-center justify-center gap-2 rounded-full border p-2 text-sm font-medium text-slate-100 shadow backdrop-blur-sm transition ${
                 isWaybackActive
-                  ? 'border-cyan-400/35 bg-cyan-500/10'
-                  : 'border-white/12 bg-slate-950/80'
+                  ? 'border-slate-400/30 bg-slate-900/80 hover:border-slate-300/40 hover:bg-slate-800/80'
+                  : 'border-white/12 bg-slate-950/80 hover:border-white/20 hover:bg-slate-900'
               }`}
               aria-label="Open wayback machine"
               aria-expanded={isWaybackMenuOpen ? 'true' : 'false'}
@@ -1085,7 +1092,9 @@ function FriendsTrackerTopBar({
               <span
                 aria-hidden="true"
                 className={`absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full ${
-                  isWaybackActive ? 'bg-cyan-300' : 'bg-rose-500'
+                  isWaybackActive
+                    ? 'bg-slate-300 shadow-[0_0_6px_rgba(226,232,240,0.45)]'
+                    : 'bg-rose-500 shadow-[0_0_6px_rgba(244,63,94,0.7)]'
                 }`}
               />
             </button>
@@ -1445,14 +1454,19 @@ function FriendsTrackerDashboard({
           disabled={!isWaybackActive}
           className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold transition ${
             isWaybackActive
-              ? 'border-cyan-400/40 bg-cyan-500/10 text-cyan-100 hover:bg-cyan-500/15'
+              ? 'border-slate-400/30 bg-slate-900/70 text-slate-100 hover:border-slate-300/40 hover:bg-slate-800/80'
               : 'border-rose-400/35 bg-rose-500/10 text-rose-100'
           }`}
         >
           <span className="inline-flex items-center gap-1.5">
-            {!isWaybackActive ? (
-              <span aria-hidden="true" className="h-2 w-2 rounded-full bg-rose-500 shadow-[0_0_8px_rgba(244,63,94,0.8)]" />
-            ) : null}
+            <span
+              aria-hidden="true"
+              className={`h-2 w-2 rounded-full ${
+                isWaybackActive
+                  ? 'bg-slate-300 shadow-[0_0_6px_rgba(226,232,240,0.45)]'
+                  : 'bg-rose-500 shadow-[0_0_8px_rgba(244,63,94,0.8)]'
+              }`}
+            />
             <span>Live</span>
           </span>
         </button>
@@ -1465,10 +1479,10 @@ function FriendsTrackerDashboard({
         type="range"
         min={waybackBounds.startMs}
         max={waybackBounds.endMs}
-        step={WAYBACK_STEP_MS}
+        step="any"
         value={sliderValue}
         onChange={(event) => {
-          const nextValue = Number.parseInt(event.currentTarget.value, 10);
+          const nextValue = Number(event.currentTarget.value);
           if (!Number.isFinite(nextValue)) {
             return;
           }
@@ -1478,7 +1492,8 @@ function FriendsTrackerDashboard({
             return;
           }
 
-          setSelectedTimeMs(nextValue);
+          const snappedValue = snapWaybackSliderValue(nextValue, waybackBounds.startMs, waybackBounds.endMs);
+          setSelectedTimeMs(snappedValue);
         }}
         className="mt-3 w-full accent-cyan-400"
       />

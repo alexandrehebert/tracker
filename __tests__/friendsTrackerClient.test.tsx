@@ -373,6 +373,7 @@ describe('FriendsTrackerClient', () => {
 
     const slider = await screen.findByLabelText(/wayback machine/i);
     expect(slider).toHaveAttribute('type', 'range');
+    expect(slider).toHaveAttribute('step', 'any');
 
     await waitFor(() => {
       const staticFriendMarkers = latestFlightMapProps?.staticFriendMarkers as Array<{
@@ -642,6 +643,10 @@ describe('FriendsTrackerClient', () => {
     const laterCursorLeft = laterPlane.parentElement?.style.left ?? '';
     expect(laterCursorLeft).not.toBe(earlierCursorLeft);
     expect(screen.getByText(/historical snapshot/i)).toBeInTheDocument();
+
+    const liveButton = screen.getByRole('button', { name: /live/i });
+    expect(liveButton).toHaveClass('border-slate-400/30', 'bg-slate-900/70', 'text-slate-100');
+    expect(liveButton.querySelector('[aria-hidden="true"]')).toHaveClass('bg-slate-300');
 
     fireEvent.input(slider, {
       target: { value: String(nowMs - (2 * 60 * 1000)) },
@@ -1042,6 +1047,116 @@ describe('FriendsTrackerClient', () => {
       left: 'calc(7px + 1 * (100% - 14px))',
     });
     expect(chloePlane).not.toHaveAttribute('style');
+  });
+
+  it('falls back to pre-departure states when rewinding demo data before takeoff', async () => {
+    const nowMs = Date.now();
+    const nowSeconds = Math.floor(nowMs / 1000);
+
+    vi.spyOn(window, 'fetch').mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          query: 'TEST1,TEST2,TEST3',
+          requestedIdentifiers: ['TEST1', 'TEST2', 'TEST3'],
+          matchedIdentifiers: ['TEST1', 'TEST2', 'TEST3'],
+          notFoundIdentifiers: [],
+          fetchedAt: nowMs,
+          flights: [
+            {
+              icao24: 'demo-test1',
+              callsign: 'AFR006',
+              originCountry: 'France',
+              matchedBy: ['TEST1'],
+              lastContact: nowSeconds - 45,
+              current: { time: nowSeconds - 45, latitude: 49.01, longitude: 2.55, x: 0, y: 0, altitude: 0, heading: 95, onGround: true },
+              originPoint: { time: nowSeconds - 240, latitude: 49.0088, longitude: 2.5486, x: 0, y: 0, altitude: 0, heading: 90, onGround: true },
+              track: [], rawTrack: [], onGround: true, velocity: 12, heading: 95, verticalRate: 0, geoAltitude: 0, baroAltitude: 0,
+              squawk: '1001', category: 0,
+              route: { departureAirport: 'CDG', arrivalAirport: 'JFK', firstSeen: null, lastSeen: null },
+              dataSource: 'opensky', sourceDetails: [],
+            },
+            {
+              icao24: 'demo-test2',
+              callsign: 'BAW117',
+              originCountry: 'United Kingdom',
+              matchedBy: ['TEST2'],
+              lastContact: nowSeconds - 75,
+              current: { time: nowSeconds - 75, latitude: 53.94, longitude: -31.25, x: 0, y: 0, altitude: 10650, heading: 291, onGround: false },
+              originPoint: { time: nowSeconds - 4200, latitude: 52.62, longitude: -8.41, x: 0, y: 0, altitude: 7200, heading: 287, onGround: false },
+              track: [], rawTrack: [], onGround: false, velocity: 247, heading: 291, verticalRate: 0, geoAltitude: 10650, baroAltitude: 10690,
+              squawk: '2201', category: 1,
+              route: { departureAirport: 'LHR', arrivalAirport: 'JFK', firstSeen: nowSeconds - 5400, lastSeen: null },
+              dataSource: 'opensky', sourceDetails: [],
+            },
+            {
+              icao24: 'demo-test3',
+              callsign: 'DAL220',
+              originCountry: 'United States',
+              matchedBy: ['TEST3'],
+              lastContact: nowSeconds - 90,
+              current: { time: nowSeconds - 90, latitude: 40.6413, longitude: -73.7781, x: 0, y: 0, altitude: 0, heading: 89, onGround: true },
+              originPoint: { time: nowSeconds - 3600, latitude: 33.6407, longitude: -84.4277, x: 0, y: 0, altitude: 0, heading: 45, onGround: true },
+              track: [], rawTrack: [], onGround: true, velocity: 6, heading: 89, verticalRate: 0, geoAltitude: 0, baroAltitude: 0,
+              squawk: '1453', category: 1,
+              route: { departureAirport: 'ATL', arrivalAirport: 'JFK', firstSeen: nowSeconds - 4800, lastSeen: nowSeconds - 120 },
+              dataSource: 'opensky', sourceDetails: [],
+            },
+          ],
+        }),
+        {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        },
+      ),
+    );
+
+    const demoConfig: FriendsTrackerConfig = {
+      ...initialConfig,
+      destinationAirport: 'JFK',
+      friends: [
+        {
+          id: 'friend-1',
+          name: 'Alice Demo',
+          flights: [{ id: 'leg-1', flightNumber: 'TEST1', departureTime: new Date(nowMs + 45 * 60 * 1000).toISOString(), from: 'CDG', to: 'JFK' }],
+        },
+        {
+          id: 'friend-2',
+          name: 'Bruno Demo',
+          flights: [{ id: 'leg-2', flightNumber: 'TEST2', departureTime: new Date(nowMs - 2 * 60 * 60 * 1000).toISOString(), from: 'LHR', to: 'JFK' }],
+        },
+        {
+          id: 'friend-3',
+          name: 'Chloe Demo',
+          flights: [{ id: 'leg-3', flightNumber: 'TEST3', departureTime: new Date(nowMs - 3 * 60 * 60 * 1000).toISOString(), from: 'ATL', to: 'JFK' }],
+        },
+      ],
+    };
+
+    render(
+      <FriendsTrackerClient
+        map={map}
+        initialConfig={demoConfig}
+        airportMarkers={[
+          { id: 'cdg', code: 'CDG', label: 'Paris Charles de Gaulle', latitude: 49.0097, longitude: 2.5479, usage: 'both' },
+          { id: 'lhr', code: 'LHR', label: 'London Heathrow', latitude: 51.47, longitude: -0.4543, usage: 'both' },
+          { id: 'atl', code: 'ATL', label: 'Atlanta', latitude: 33.6407, longitude: -84.4277, usage: 'both' },
+          { id: 'jfk', code: 'JFK', label: 'New York JFK', latitude: 40.6413, longitude: -73.7781, usage: 'both' },
+        ]}
+      />,
+    );
+
+    const slider = await screen.findByLabelText(/wayback machine/i);
+    fireEvent.input(slider, {
+      target: { value: String(nowMs - (2 * 60 * 60 * 1000) - (30 * 60 * 1000)) },
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText(/historical snapshot/i)).toBeInTheDocument();
+
+      const brunoCard = screen.getByText(/bruno demo/i).closest('article');
+      expect(brunoCard).toHaveTextContent(/not started/i);
+      expect(within(brunoCard!).queryByLabelText(/flight test2/i)).not.toBeInTheDocument();
+    });
   });
 
   it('anchors a connection-stop cursor directly on the middle airport dot', async () => {

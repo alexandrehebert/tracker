@@ -60,17 +60,51 @@ export interface FriendFlightStatus {
   status: 'matched' | 'scheduled' | 'awaiting';
 }
 
+function getFlightPointTimeMs(point: TrackedFlight['current'] | TrackedFlight['originPoint'] | null | undefined): number | null {
+  return typeof point?.time === 'number' && Number.isFinite(point.time)
+    ? point.time * 1000
+    : null;
+}
+
+function getTrackedFlightEarliestRelevantTimeMs(flight: TrackedFlight): number | null {
+  let earliestMs: number | null = null;
+
+  const considerTimestamp = (value: number | null | undefined) => {
+    if (typeof value !== 'number' || !Number.isFinite(value)) {
+      return;
+    }
+
+    earliestMs = earliestMs == null ? value : Math.min(earliestMs, value);
+  };
+
+  considerTimestamp(typeof flight.route.firstSeen === 'number' ? flight.route.firstSeen * 1000 : null);
+  considerTimestamp(typeof flight.lastContact === 'number' ? flight.lastContact * 1000 : null);
+
+  for (const point of [flight.originPoint, ...flight.track, ...(flight.rawTrack ?? []), flight.current]) {
+    considerTimestamp(getFlightPointTimeMs(point));
+  }
+
+  for (const snapshot of flight.fetchHistory ?? []) {
+    considerTimestamp(snapshot.capturedAt);
+    considerTimestamp(typeof snapshot.route.firstSeen === 'number' ? snapshot.route.firstSeen * 1000 : null);
+    considerTimestamp(getFlightPointTimeMs(snapshot.current));
+  }
+
+  return earliestMs;
+}
+
+function isTrackedFlightRelevantAtTime(flight: TrackedFlight, referenceTimeMs: number): boolean {
+  const earliestRelevantTimeMs = getTrackedFlightEarliestRelevantTimeMs(flight);
+  return earliestRelevantTimeMs == null || referenceTimeMs >= earliestRelevantTimeMs;
+}
+
 function isMatchedStatusActiveAtTime(status: FriendFlightStatus | undefined, referenceTimeMs: number): boolean {
-  if (status?.status !== 'matched') {
+  if (status?.status !== 'matched' || !status.flight) {
     return false;
   }
 
-  if (!status.flight) {
-    return true;
-  }
-
-  if (!status.flight.onGround) {
-    return true;
+  if (!isTrackedFlightRelevantAtTime(status.flight, referenceTimeMs)) {
+    return false;
   }
 
   const firstSeenMs = typeof status.flight.route.firstSeen === 'number'
@@ -79,6 +113,18 @@ function isMatchedStatusActiveAtTime(status: FriendFlightStatus | undefined, ref
   const lastSeenMs = typeof status.flight.route.lastSeen === 'number'
     ? status.flight.route.lastSeen * 1000
     : null;
+
+  if (firstSeenMs != null && referenceTimeMs < firstSeenMs) {
+    return false;
+  }
+
+  if (lastSeenMs != null && referenceTimeMs > lastSeenMs) {
+    return false;
+  }
+
+  if (!status.flight.onGround) {
+    return true;
+  }
 
   if (firstSeenMs == null || lastSeenMs == null) {
     return false;
@@ -643,7 +689,10 @@ export function buildFriendFlightStatuses(
 ): FriendFlightStatus[] {
   return config.friends.flatMap((friend) => {
     return friend.flights.map((leg, legIndex) => {
-      const flight = findMatchingTrackedFlightForLeg(flights, leg, now);
+      const matchedFlight = findMatchingTrackedFlightForLeg(flights, leg, now);
+      const flight = matchedFlight && isTrackedFlightRelevantAtTime(matchedFlight, now)
+        ? matchedFlight
+        : null;
       const scheduledTime = Date.parse(leg.departureTime);
 
       return {
@@ -651,7 +700,7 @@ export function buildFriendFlightStatuses(
         leg,
         flight,
         label: buildFriendFlightLabel(friend, leg, legIndex),
-        canAutoLock: shouldAutoLockFriendFlight(leg, flight, now),
+        canAutoLock: shouldAutoLockFriendFlight(leg, matchedFlight, now),
         status: flight
           ? 'matched'
           : (Number.isFinite(scheduledTime) && scheduledTime > now ? 'scheduled' : 'awaiting'),
