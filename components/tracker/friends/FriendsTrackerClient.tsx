@@ -594,15 +594,36 @@ function getFriendStatusReferenceTimeMs(status: FriendFlightStatus): number {
   return Number.isFinite(scheduledTime) ? scheduledTime : Number.NEGATIVE_INFINITY;
 }
 
+function hasRenderableMapPosition(status: FriendFlightStatus): boolean {
+  const flight = status.flight;
+  if (!flight) {
+    return false;
+  }
+
+  const latestSnapshotPoint = [...(flight.fetchHistory ?? [])]
+    .map((snapshot) => snapshot.current)
+    .find((point) => point != null) ?? null;
+
+  return Boolean(
+    flight.current
+      ?? flight.track.at(-1)
+      ?? flight.rawTrack?.at(-1)
+      ?? latestSnapshotPoint
+      ?? flight.originPoint,
+  );
+}
+
 function pickPreferredMapStatus(friendStatuses: FriendFlightStatus[], now = Date.now()): FriendFlightStatus | null {
   if (!friendStatuses.length) {
     return null;
   }
 
   const matchedStatuses = friendStatuses.filter((status) => status.status === 'matched' && status.flight);
-  if (matchedStatuses.length > 0) {
-    const inFlightStatuses = matchedStatuses.filter((status) => !status.flight?.onGround);
-    const candidateStatuses = inFlightStatuses.length > 0 ? inFlightStatuses : matchedStatuses;
+  const positionedMatchedStatuses = matchedStatuses.filter((status) => hasRenderableMapPosition(status));
+
+  if (positionedMatchedStatuses.length > 0) {
+    const inFlightStatuses = positionedMatchedStatuses.filter((status) => !status.flight?.onGround);
+    const candidateStatuses = inFlightStatuses.length > 0 ? inFlightStatuses : positionedMatchedStatuses;
 
     return candidateStatuses.reduce<FriendFlightStatus | null>((best, status) => {
       if (!best) {

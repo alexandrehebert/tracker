@@ -416,6 +416,99 @@ describe('FriendsTrackerClient', () => {
     });
   });
 
+  it('keeps a connection-stop friend on the last known airport when the next matched leg has no live position', async () => {
+    const nowSeconds = Math.floor(Date.now() / 1000);
+
+    vi.spyOn(window, 'fetch').mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          query: 'TEST5,KL641',
+          requestedIdentifiers: ['TEST5', 'KL641'],
+          matchedIdentifiers: ['TEST5', 'KL641'],
+          notFoundIdentifiers: [],
+          fetchedAt: Date.now(),
+          flights: [
+            {
+              icao24: 'demo-test5',
+              callsign: 'KLM1698',
+              originCountry: 'Netherlands',
+              matchedBy: ['TEST5'],
+              lastContact: nowSeconds - 120,
+              current: { time: nowSeconds - 120, latitude: 52.3086, longitude: 4.7639, x: 0, y: 0, altitude: 0, heading: 88, onGround: true },
+              originPoint: { time: nowSeconds - 5400, latitude: 41.2974, longitude: 2.0833, x: 0, y: 0, altitude: 0, heading: 45, onGround: true },
+              track: [], rawTrack: [], onGround: true, velocity: 8, heading: 88, verticalRate: 0, geoAltitude: 0, baroAltitude: 0,
+              squawk: '4521', category: 0,
+              route: { departureAirport: 'BCN', arrivalAirport: 'AMS', firstSeen: nowSeconds - 5400, lastSeen: nowSeconds - 900 },
+              dataSource: 'opensky', sourceDetails: [],
+            },
+            {
+              icao24: 'fa-klm641-connection',
+              callsign: 'KLM641',
+              originCountry: 'Unknown',
+              matchedBy: ['KL641'],
+              lastContact: nowSeconds - 60,
+              current: null,
+              originPoint: null,
+              track: [], rawTrack: [], onGround: false, velocity: null, heading: null, verticalRate: null, geoAltitude: null, baroAltitude: null,
+              squawk: null, category: null,
+              route: { departureAirport: 'AMS', arrivalAirport: 'JFK', firstSeen: nowSeconds - 60, lastSeen: null },
+              dataSource: 'flightaware', sourceDetails: [],
+            },
+          ],
+        }),
+        {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        },
+      ),
+    );
+
+    render(
+      <FriendsTrackerClient
+        map={map}
+        initialConfig={{
+          ...initialConfig,
+          destinationAirport: 'JFK',
+          friends: [
+            {
+              id: 'friend-1',
+              name: 'Diego Demo',
+              flights: [
+                {
+                  id: 'leg-1',
+                  flightNumber: 'TEST5',
+                  departureTime: new Date(Date.now() - 4 * 60 * 60 * 1000).toISOString(),
+                  from: 'BCN',
+                  to: 'AMS',
+                },
+                {
+                  id: 'leg-2',
+                  flightNumber: 'KL641',
+                  departureTime: new Date(Date.now() + 70 * 60 * 1000).toISOString(),
+                  from: 'AMS',
+                  to: 'JFK',
+                },
+              ],
+            },
+          ],
+        }}
+        airportMarkers={[
+          { id: 'bcn', code: 'BCN', label: 'Barcelona', latitude: 41.2974, longitude: 2.0833, usage: 'both' },
+          { id: 'ams', code: 'AMS', label: 'Amsterdam Schiphol', latitude: 52.3086, longitude: 4.7639, usage: 'both' },
+          { id: 'jfk', code: 'JFK', label: 'New York JFK', latitude: 40.6413, longitude: -73.7781, usage: 'both' },
+        ]}
+      />,
+    );
+
+    expect(await screen.findByText(/diego demo/i)).toBeInTheDocument();
+
+    await waitFor(() => {
+      const visibleFlights = latestFlightMapProps?.flights as Array<{ icao24: string }> | undefined;
+      expect(visibleFlights?.map((flight) => flight.icao24)).toContain('demo-test5');
+      expect(visibleFlights?.map((flight) => flight.icao24)).not.toContain('fa-klm641-connection');
+    });
+  });
+
   it('renders the configured friend avatar in the sidebar card with the same color coding as the map', async () => {
     render(<FriendsTrackerClient map={map} initialConfig={initialConfig} airportMarkers={[]} />);
 
