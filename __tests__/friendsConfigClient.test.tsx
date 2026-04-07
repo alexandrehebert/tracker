@@ -422,6 +422,97 @@ describe('FriendsConfigClient', () => {
     expect(screen.getByRole('button', { name: /save config/i })).toBeEnabled();
   });
 
+  it('exports JSON without the built-in demo trip', async () => {
+    const user = userEvent.setup();
+    const exportConfig: FriendsTrackerConfig = {
+      ...initialConfig,
+      currentTripId: 'demo-test-trip',
+      trips: [
+        ...(initialConfig.trips ?? []),
+        {
+          id: 'demo-test-trip',
+          name: 'Demo / Test Trip',
+          destinationAirport: 'JFK',
+          isDemo: true,
+          friends: [
+            {
+              id: 'demo-friend',
+              name: 'Demo Friend',
+              flights: [
+                {
+                  id: 'demo-leg',
+                  flightNumber: 'TEST1',
+                  departureTime: '2026-04-14T09:30:00.000Z',
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+
+    let capturedBlob: Blob | null = null;
+    vi.spyOn(URL, 'createObjectURL').mockImplementation((blob) => {
+      capturedBlob = blob as Blob;
+      return 'blob:chantal-export';
+    });
+    vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => undefined);
+
+    render(<FriendsConfigClient initialConfig={exportConfig} initialCronDashboard={initialCronDashboard} />);
+
+    await user.click(screen.getByRole('button', { name: /export/i }));
+
+    expect(capturedBlob).not.toBeNull();
+    const exported = JSON.parse(await capturedBlob!.text()) as FriendsTrackerConfig;
+
+    expect((exported.trips ?? []).some((trip) => trip.isDemo)).toBe(false);
+    expect(exported.currentTripId).toBe('trip-1');
+  });
+
+  it('ignores demo-only trips when importing JSON', async () => {
+    const user = userEvent.setup();
+    const { container } = render(<FriendsConfigClient initialConfig={initialConfig} initialCronDashboard={initialCronDashboard} />);
+
+    const fileInput = container.querySelector('input[type="file"]') as HTMLInputElement | null;
+    expect(fileInput).not.toBeNull();
+
+    const importPayload = {
+      updatedAt: 1_775_520_843_900,
+      updatedBy: 'chantal config page',
+      currentTripId: 'demo-test-trip',
+      trips: [
+        {
+          id: 'demo-test-trip',
+          name: 'Injected Demo Trip',
+          destinationAirport: 'JFK',
+          isDemo: true,
+          friends: [
+            {
+              name: 'Demo only',
+              flights: [
+                {
+                  flightNumber: 'TEST1',
+                  departureTime: '2026-04-14T11:25:00.000Z',
+                  from: 'CDG',
+                  to: 'JFK',
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    } as Partial<FriendsTrackerConfig>;
+
+    await user.upload(fileInput as HTMLInputElement, new File([
+      JSON.stringify(importPayload),
+    ], 'import.json', { type: 'application/json' }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole('button', { name: /injected demo trip/i })).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /lisbon/i })).toBeInTheDocument();
+    });
+  });
+
   it('validates a configured leg on demand and surfaces live provider details', async () => {
     const user = userEvent.setup();
     const fetchMock = vi.mocked(window.fetch);

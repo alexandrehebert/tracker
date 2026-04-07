@@ -141,7 +141,7 @@ function resolveImportedTripForMerge(
     };
   }
 
-  const importedTrips = importedConfig.trips ?? [];
+  const importedTrips = (importedConfig.trips ?? []).filter((trip) => !trip.isDemo);
   if (importedTrips.length === 0) {
     return null;
   }
@@ -151,9 +151,12 @@ function resolveImportedTripForMerge(
     : null;
 
   return importedTrips.find((trip) => trip.id === requestedImportedTripId)
-    ?? importedTrips.find((trip) => !trip.isDemo)
     ?? importedTrips[0]
     ?? null;
+}
+
+function removeDemoTrips(trips: FriendsTrackerTripConfig[]): FriendsTrackerTripConfig[] {
+  return trips.filter((trip) => !trip.isDemo);
 }
 
 const LIVE_VALIDATION_WARNING_MINUTES = 180;
@@ -853,12 +856,16 @@ export function FriendsConfigProvider({
 
     try {
       const exportPayload = buildExportPayload();
+      const exportTrips = removeDemoTrips(exportPayload.trips ?? []);
+      const exportCurrentTripId = exportTrips.some((trip) => trip.id === exportPayload.currentTripId)
+        ? exportPayload.currentTripId
+        : exportTrips[0]?.id ?? null;
       const canonicalExportPayload = {
         updatedAt: exportPayload.updatedAt,
         updatedBy: exportPayload.updatedBy,
         cronEnabled: exportPayload.cronEnabled ?? true,
-        currentTripId: exportPayload.currentTripId ?? null,
-        trips: exportPayload.trips ?? [],
+        currentTripId: exportCurrentTripId,
+        trips: exportTrips,
         airportTimezones: exportPayload.airportTimezones ?? {},
       };
       const blob = new Blob([JSON.stringify(canonicalExportPayload, null, 2)], { type: 'application/json' });
@@ -893,20 +900,31 @@ export function FriendsConfigProvider({
     try {
       const rawText = await file.text();
       const parsedValue = JSON.parse(rawText) as Partial<FriendsTrackerConfig> | FriendTravelConfig[];
+      const parsedValueWithoutDemoTrips = Array.isArray(parsedValue)
+        ? parsedValue
+        : {
+          ...parsedValue,
+          currentTripId: typeof parsedValue.currentTripId === 'string' && parsedValue.currentTripId.trim()
+            ? parsedValue.currentTripId.trim()
+            : null,
+          trips: Array.isArray(parsedValue.trips)
+            ? removeDemoTrips(parsedValue.trips.map((trip, index) => normalizeFriendsTrackerTripConfig(trip, index)))
+            : undefined,
+        };
       const importedConfig = normalizeFriendsTrackerConfig(
-        Array.isArray(parsedValue)
-          ? { friends: parsedValue }
-          : parsedValue,
+        Array.isArray(parsedValueWithoutDemoTrips)
+          ? { friends: parsedValueWithoutDemoTrips }
+          : parsedValueWithoutDemoTrips,
         { demoReferenceTime },
       );
 
-      const importedTripCount = Array.isArray(parsedValue)
+      const importedTripCount = Array.isArray(parsedValueWithoutDemoTrips)
         ? 1
-        : Array.isArray(parsedValue.trips) && parsedValue.trips.length > 0
-        ? parsedValue.trips.length
+        : Array.isArray(parsedValueWithoutDemoTrips.trips)
+        ? parsedValueWithoutDemoTrips.trips.length
         : 1;
 
-      const importedTrip = resolveImportedTripForMerge(parsedValue, importedConfig);
+      const importedTrip = resolveImportedTripForMerge(parsedValueWithoutDemoTrips, importedConfig);
       const importedTripId = importedTrip?.id?.trim()
         ? importedTrip.id.trim()
         : createClientId('trip');

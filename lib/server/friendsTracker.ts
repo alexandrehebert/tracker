@@ -190,9 +190,10 @@ export async function writeFriendsTrackerConfig(input: Partial<FriendsTrackerCon
       trips: currentConfig.trips,
     });
     const existingCurrentTrip = getCurrentTripConfig(baseConfig);
-    const editableTrip = existingCurrentTrip && !existingCurrentTrip.isDemo
-      ? existingCurrentTrip
-      : (baseConfig.trips.find((trip) => !trip.isDemo) ?? null);
+    const firstNonDemoTrip = baseConfig.trips.find((trip) => !trip.isDemo) ?? null;
+    const editableTrip = existingCurrentTrip
+      ? (existingCurrentTrip.isDemo && !firstNonDemoTrip ? null : existingCurrentTrip)
+      : firstNonDemoTrip;
 
     if (editableTrip) {
       nextTrips = baseConfig.trips.map((trip) => trip.id === editableTrip.id
@@ -202,7 +203,7 @@ export async function writeFriendsTrackerConfig(input: Partial<FriendsTrackerCon
           friends: Array.isArray(input?.friends) ? input.friends : trip.friends,
         }
         : trip);
-      requestedCurrentTripId = editableTrip.id;
+      requestedCurrentTripId = requestedCurrentTripId ?? editableTrip.id;
     } else {
       const seededTrip = normalizeFriendsTrackerTripConfig({
         id: 'primary-trip',

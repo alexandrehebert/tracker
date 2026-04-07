@@ -262,6 +262,61 @@ describe('FriendsTrackerClient', () => {
     });
   });
 
+  it('shows a map test banner when the current trip is the built-in demo trip', async () => {
+    render(
+      <FriendsTrackerClient
+        map={map}
+        initialConfig={{
+          ...initialConfig,
+          currentTripId: 'demo-test-trip',
+          trips: [
+            {
+              id: 'trip-1',
+              name: 'Lisbon',
+              destinationAirport: 'LIS',
+              friends: initialConfig.friends,
+            },
+            {
+              id: 'demo-test-trip',
+              name: 'Demo / Test Trip',
+              destinationAirport: 'JFK',
+              isDemo: true,
+              friends: [
+                {
+                  id: 'friend-demo',
+                  name: 'Alice Demo',
+                  flights: [
+                    {
+                      id: 'leg-demo',
+                      flightNumber: 'TEST1',
+                      departureTime: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+                    },
+                  ],
+                },
+              ],
+            },
+          ],
+          friends: [
+            {
+              id: 'friend-demo',
+              name: 'Alice Demo',
+              flights: [
+                {
+                  id: 'leg-demo',
+                  flightNumber: 'TEST1',
+                  departureTime: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+                },
+              ],
+            },
+          ],
+        }}
+        airportMarkers={[]}
+      />,
+    );
+
+    expect(await screen.findByText(/test trip.*demo \/ test trip/i)).toBeInTheDocument();
+  });
+
   it('keeps a friend pinned to the most recent known airport when no live track is available', async () => {
     const pastOnlyConfig: FriendsTrackerConfig = {
       ...initialConfig,

@@ -1648,6 +1648,16 @@ function FriendsTrackerDashboard({
       showBackgroundGrid
       mapContent={
         <div className="relative h-[100dvh] w-full">
+          {currentTrip?.isDemo ? (
+            <div className="pointer-events-none absolute inset-x-0 top-0 z-30">
+              <div className="h-[2px] w-full bg-amber-400 shadow-[0_0_10px_rgba(251,191,36,0.4)]" />
+              <div className="absolute inset-x-0 top-0 flex justify-center px-3">
+                <div className="inline-flex min-h-[14px] items-center justify-center rounded-b-full rounded-t-none border border-amber-400 bg-amber-400 px-2.5 py-0.5 text-[8px] font-semibold uppercase tracking-[0.2em] text-slate-950 shadow-[0_8px_18px_rgba(251,191,36,0.24)] leading-none">
+                  Test trip · {currentTrip.name}
+                </div>
+              </div>
+            </div>
+          ) : null}
           <FlightMap
             map={map}
             flights={visibleFlights}

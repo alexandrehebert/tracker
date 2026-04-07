@@ -235,21 +235,48 @@ describe('tracker cron config and history', () => {
     expect(dashboard.config.updatedBy).toBe('toggle-only');
   });
 
-  it('preserves the saved Chantal batch toggle when the map updates only the friend list', async () => {
+  it('preserves the saved Chantal batch toggle and current demo trip when the map updates only the friend list', async () => {
     const { readFriendsTrackerConfig, writeFriendsTrackerConfig } = await loadFriendsTrackerModule();
 
     await writeFriendsTrackerConfig({
       updatedBy: 'chantal config page',
       cronEnabled: false,
-      friends: [
+      currentTripId: 'demo-test-trip',
+      trips: [
         {
-          id: 'friend-1',
-          name: 'Alice',
-          flights: [
+          id: 'trip-1',
+          name: 'Lisbon',
+          destinationAirport: 'LIS',
+          friends: [
             {
-              id: 'leg-1',
-              flightNumber: 'AF123',
-              departureTime: '2026-04-14T09:30:00.000Z',
+              id: 'friend-live',
+              name: 'Live Trip Friend',
+              flights: [
+                {
+                  id: 'leg-live',
+                  flightNumber: 'KL641',
+                  departureTime: '2026-04-14T09:30:00.000Z',
+                },
+              ],
+            },
+          ],
+        },
+        {
+          id: 'demo-test-trip',
+          name: 'Demo / Test Trip',
+          destinationAirport: 'JFK',
+          isDemo: true,
+          friends: [
+            {
+              id: 'friend-1',
+              name: 'Alice',
+              flights: [
+                {
+                  id: 'leg-1',
+                  flightNumber: 'AF123',
+                  departureTime: '2026-04-14T09:30:00.000Z',
+                },
+              ],
             },
           ],
         },
@@ -275,9 +302,11 @@ describe('tracker cron config and history', () => {
     });
 
     expect(autoLockedConfig.cronEnabled).toBe(false);
+    expect(autoLockedConfig.currentTripId).toBe('demo-test-trip');
 
     const persisted = await readFriendsTrackerConfig();
     expect(persisted.cronEnabled).toBe(false);
+    expect(persisted.currentTripId).toBe('demo-test-trip');
   });
 
   it('adds and removes Chantal-managed identifiers without changing the cron admin toggle', async () => {
