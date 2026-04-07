@@ -12,6 +12,11 @@ import {
   getLatestPositionSnapshot,
   listPositionSnapshotTimestamps,
 } from '~/lib/server/chantalV2Snapshots';
+import {
+  isChantalV2TestMode,
+  getTestLatestSnapshot,
+  getTestSnapshotTimestamps,
+} from '~/lib/server/chantalV2TestMode';
 import { getWorldMapPayload } from '~/lib/server/worldMap';
 
 export const dynamic = 'force-dynamic';
@@ -89,31 +94,63 @@ export default async function ChantalV2Page({ params }: ChantalV2PageProps) {
     notFound();
   }
 
-  // Ensure the V2 demo trip is present in the config.
+  const testMode = isChantalV2TestMode();
+  const now = Date.now();
+
   const rawConfig = await readFriendsTrackerConfig();
   const normalizedConfig = normalizeFriendsTrackerConfig(rawConfig);
 
-  // If the current trip is not the V2 demo, switch to it for the V2 page.
-  const tripsWithV2Demo = ensureDemoV2Trip(normalizedConfig.trips);
-  const v2DemoTripId = getDemoV2TripId();
-  const configWithDemo: FriendsTrackerConfig = {
-    ...normalizedConfig,
-    trips: tripsWithV2Demo,
-    currentTripId: normalizedConfig.currentTripId ?? v2DemoTripId,
-  };
+  let pageConfig: FriendsTrackerConfig;
 
-  const [map, airportMarkers, latestSnapshot, snapshotTimestamps] = await Promise.all([
+  if (testMode) {
+    // In test mode: force the V2 demo trip to be the active trip.
+    const tripsWithV2Demo = ensureDemoV2Trip(normalizedConfig.trips);
+    const v2DemoTripId = getDemoV2TripId();
+    pageConfig = {
+      ...normalizedConfig,
+      trips: tripsWithV2Demo,
+      currentTripId: v2DemoTripId,
+    };
+  } else {
+    // In live mode: use the real configured trip (no demo trip injected).
+    pageConfig = normalizedConfig;
+  }
+
+  // If there is no active trip (live mode with no real trip configured), use demo anyway
+  const activeTrip = getCurrentTripConfig(pageConfig);
+  if (!activeTrip) {
+    const tripsWithV2Demo = ensureDemoV2Trip(normalizedConfig.trips);
+    const v2DemoTripId = getDemoV2TripId();
+    pageConfig = {
+      ...normalizedConfig,
+      trips: tripsWithV2Demo,
+      currentTripId: v2DemoTripId,
+    };
+  }
+
+  const [map, airportMarkers] = await Promise.all([
     getWorldMapPayload(locale),
-    resolveV2AirportMarkers(configWithDemo),
-    getLatestPositionSnapshot(),
-    listPositionSnapshotTimestamps(),
+    resolveV2AirportMarkers(pageConfig),
   ]);
+
+  let latestSnapshot;
+  let snapshotTimestamps: number[];
+
+  if (testMode) {
+    latestSnapshot = getTestLatestSnapshot(now);
+    snapshotTimestamps = getTestSnapshotTimestamps(now);
+  } else {
+    [latestSnapshot, snapshotTimestamps] = await Promise.all([
+      getLatestPositionSnapshot(),
+      listPositionSnapshotTimestamps(),
+    ]);
+  }
 
   return (
     <div className="h-[100dvh] w-full overflow-hidden bg-slate-950 text-slate-100">
       <ChantalV2Client
         map={map}
-        initialConfig={configWithDemo}
+        initialConfig={pageConfig}
         airportMarkers={airportMarkers}
         initialSnapshot={latestSnapshot}
         initialSnapshotTimestamps={snapshotTimestamps}

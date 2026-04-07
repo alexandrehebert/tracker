@@ -136,7 +136,7 @@ function buildFriendPosition(
     altitude: currentPoint?.altitude ?? null,
     heading: currentPoint?.heading ?? flight?.heading ?? null,
     onGround: flight?.onGround ?? false,
-    flightNumber: leg.flightNumber || null,
+    flightNumber: flight?.flightNumber || leg.flightNumber || null,
     fromAirport: typeof fromAirport === 'string' && fromAirport.trim() ? fromAirport.trim().toUpperCase() : null,
     toAirport: typeof toAirport === 'string' && toAirport.trim() ? toAirport.trim().toUpperCase() : null,
     lastContactAt: flight?.lastContact ?? null,

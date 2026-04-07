@@ -45,6 +45,18 @@ import {
   readFlightSearchCache,
   writeFlightSearchCache,
 } from './flightCache';
+import {
+  AIRPORTS as V2_AIRPORTS,
+  buildDemoFriends as buildV2DemoFriends,
+  findPhaseAtTime as findV2PhaseAtTime,
+  interpolateGreatCircle as interpGreatCircle,
+  computeInitialBearing as computeBearing,
+  altitudeAtFraction as computeAltFraction,
+  isInBlackoutAt,
+  type PhaseAirborne,
+  type DemoFriendDef,
+} from '~/lib/chantalV2TestData';
+import { isChantalV2TestMode } from './chantalV2TestMode';
 
 const TRACKER_MAP_VIEWBOX = { width: 1000, height: 560 };
 const RECENT_FLIGHTS_LOOKBACK_SECONDS = 6 * 60 * 60;
@@ -637,6 +649,156 @@ function createDemoTrackedFlight(identifier: DemoFlightIdentifier, nowSeconds = 
     }
   }
 }
+
+// ---------------------------------------------------------------------------
+// V2 demo mock flight provider
+// ---------------------------------------------------------------------------
+
+/** All flight identifiers used in the V2 demo trip config. */
+const V2_DEMO_FLIGHT_IDS = new Set([
+  'BA006', 'BA007',
+  'UA837', 'NH106', 'NH105', 'UA838',
+  'JL771', 'JL772',
+  'JL004', 'JL003',
+  'EK722', 'EK318', 'EK319', 'EK723',
+  'EK764', 'EK316', 'EK317',
+  'AC163', 'AC003', 'AC004',
+]);
+
+function isV2DemoFlightIdentifier(identifier: string): boolean {
+  return V2_DEMO_FLIGHT_IDS.has(normalizeIdentifier(identifier));
+}
+
+function buildV2DemoTrackedFlight(
+  identifier: string,
+  friend: DemoFriendDef,
+  phase: PhaseAirborne,
+  nowSeconds: number,
+): TrackedFlight | null {
+  const nowMs = nowSeconds * 1000;
+
+  // Hard blackout → no data
+  if (isInBlackoutAt(phase, nowMs)) return null;
+
+  const fraction = Math.max(0, Math.min(1, (nowMs - phase.fromMs) / phase.durationMs));
+  const fromCoords = V2_AIRPORTS[phase.fromAirport];
+  const toCoords   = V2_AIRPORTS[phase.toAirport];
+  if (!fromCoords || !toCoords) return null;
+
+  const [lat, lon] = interpGreatCircle(fromCoords, toCoords, fraction);
+  const altitude = computeAltFraction(fraction, phase.durationMs);
+  const bearing  = computeBearing(fromCoords, toCoords);
+
+  const current = createDemoFlightPoint({ time: nowSeconds - 25, latitude: lat, longitude: lon, altitude, heading: bearing, onGround: false });
+
+  // Track: last N points at 5-min intervals (2 when sparseApiData, 6 otherwise)
+  const trackCount    = phase.sparseApiData ? 2 : 6;
+  const trackStepMs   = phase.sparseApiData ? 15 * 60_000 : 5 * 60_000;
+  const rawTrack: FlightMapPoint[] = [];
+  for (let i = trackCount; i >= 0; i--) {
+    const ptMs = nowMs - i * trackStepMs;
+    const ptFrac = Math.max(0, Math.min(1, (ptMs - phase.fromMs) / phase.durationMs));
+    const [ptLat, ptLon] = interpGreatCircle(fromCoords, toCoords, ptFrac);
+    const ptAlt = computeAltFraction(ptFrac, phase.durationMs);
+    const pt = createDemoFlightPoint({ time: Math.floor(ptMs / 1000), latitude: ptLat, longitude: ptLon, altitude: ptAlt, heading: bearing, onGround: false });
+    if (pt) rawTrack.push(pt);
+  }
+  const originPoint = rawTrack[0] ?? current;
+
+  return {
+    icao24: phase.aircraft.icao24,
+    callsign: normalizeIdentifier(identifier),
+    originCountry: 'Demo',
+    matchedBy: [identifier],
+    lastContact: nowSeconds - 30,
+    current,
+    originPoint,
+    track: rawTrack,
+    rawTrack,
+    onGround: false,
+    velocity: 250 + (bearing % 20),
+    heading: bearing,
+    verticalRate: 0,
+    geoAltitude: altitude,
+    baroAltitude: altitude + 30,
+    squawk: null,
+    category: 1,
+    route: {
+      departureAirport: phase.fromAirport,
+      arrivalAirport:   phase.toAirport,
+      firstSeen: Math.floor(phase.fromMs / 1000),
+      lastSeen: null,
+    },
+    flightNumber: phase.friendlyFlightNumber,
+    airline:  phase.sparseApiData ? null : phase.airline,
+    aircraft: phase.sparseApiData ? null : { ...phase.aircraft, icao24: phase.aircraft.icao24 },
+    dataSource: 'opensky',
+    sourceDetails: [
+      createSourceDetail(
+        'opensky',
+        'used',
+        true,
+        `Built-in V2 demo result for ${identifier}: ${friend.name} is currently airborne on ${phase.fromAirport}→${phase.toAirport}.`,
+        { demoIdentifier: identifier, scenario: 'v2-demo-airborne', route: { departureAirport: phase.fromAirport, arrivalAirport: phase.toAirport } },
+      ),
+    ],
+  };
+}
+
+/**
+ * Returns a mock TrackerApiResponse for V2 demo flight identifiers.
+ * Only called when `isChantalV2TestMode()` is true.
+ */
+function createV2DemoSearchPayload(
+  query: string,
+  requestedIdentifiers: string[],
+  nowSeconds = Math.floor(Date.now() / 1000),
+): TrackerApiResponse | null {
+  const v2Identifiers = requestedIdentifiers.filter((id) => isV2DemoFlightIdentifier(id));
+  if (v2Identifiers.length === 0) return null;
+
+  const nowMs   = nowSeconds * 1000;
+  const tripNow = Math.floor(nowMs / (15 * 60_000)) * (15 * 60_000);
+  const friends = buildV2DemoFriends(tripNow);
+
+  const matchedIdentifiers: string[] = [];
+  const notFoundIdentifiers: string[] = [];
+  const flights: TrackedFlight[] = [];
+
+  for (const identifier of v2Identifiers) {
+    const normalized = normalizeIdentifier(identifier);
+    let matched = false;
+
+    for (const friend of friends) {
+      const phase = findV2PhaseAtTime(friend.phases, nowMs);
+      if (!phase || phase.type !== 'airborne') continue;
+      if (normalizeIdentifier(phase.flightNumber) !== normalized) continue;
+
+      const tracked = buildV2DemoTrackedFlight(identifier, friend, phase, nowSeconds);
+      if (tracked) {
+        flights.push(tracked);
+        matchedIdentifiers.push(identifier);
+        matched = true;
+      }
+      break;
+    }
+
+    if (!matched) notFoundIdentifiers.push(identifier);
+  }
+
+  return {
+    query,
+    requestedIdentifiers: v2Identifiers,
+    matchedIdentifiers,
+    notFoundIdentifiers,
+    fetchedAt: nowMs,
+    flights,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// END V2 demo mock
+// ---------------------------------------------------------------------------
 
 function createPresetDemoSearchPayload(query: string, requestedIdentifiers: string[]): TrackerApiResponse | null {
   const matchedEntries = requestedIdentifiers.flatMap((identifier) => {
@@ -1554,20 +1716,44 @@ export async function searchFlights(query: string, options: SearchFlightsOptions
     };
   }
 
+  // V2 test-mode mock takes full priority over everything (including cache).
+  if (isChantalV2TestMode()) {
+    const v2Payload = createV2DemoSearchPayload(trimmedQuery, requestedIdentifiers);
+    if (v2Payload) {
+      const remaining = requestedIdentifiers.filter((id) => !isV2DemoFlightIdentifier(id));
+      if (remaining.length === 0) return v2Payload;
+      // Mix of V2 demo + real identifiers – return V2 results for demo ids,
+      // fall through for the rest and merge at the end.
+      const realQuery = remaining.join(',');
+      const realPayload = await searchFlightsReal(realQuery, remaining, trimmedQuery, requestedIdentifiers, options);
+      return mergeTrackerApiResponses(realPayload, v2Payload, trimmedQuery, requestedIdentifiers);
+    }
+  }
+
+  return searchFlightsReal(trimmedQuery, requestedIdentifiers, trimmedQuery, requestedIdentifiers, options);
+}
+
+async function searchFlightsReal(
+  remainingQuery: string,
+  remainingIdentifiers: string[],
+  trimmedQuery: string,
+  requestedIdentifiers: string[],
+  options: SearchFlightsOptions,
+): Promise<TrackerApiResponse> {
   const demoPayload = createPresetDemoSearchPayload(trimmedQuery, requestedIdentifiers);
   if (demoPayload && demoPayload.notFoundIdentifiers.length === 0) {
     return demoPayload;
   }
 
-  const remainingIdentifiers = demoPayload
-    ? requestedIdentifiers.filter((identifier) => !demoPayload.matchedIdentifiers.includes(identifier))
-    : requestedIdentifiers;
+  const realIdentifiers = demoPayload
+    ? remainingIdentifiers.filter((identifier) => !demoPayload.matchedIdentifiers.includes(identifier))
+    : remainingIdentifiers;
 
   const mergeWithDemoPayload = (payload: TrackerApiResponse): TrackerApiResponse => demoPayload
     ? mergeTrackerApiResponses(payload, demoPayload, trimmedQuery, requestedIdentifiers)
     : payload;
 
-  if (remainingIdentifiers.length === 0) {
+  if (realIdentifiers.length === 0) {
     return mergeWithDemoPayload({
       query: trimmedQuery,
       requestedIdentifiers,
@@ -1578,7 +1764,7 @@ export async function searchFlights(query: string, options: SearchFlightsOptions
     });
   }
 
-  const remainingQuery = remainingIdentifiers.join(',');
+  const realQuery = realIdentifiers.join(',');
   const cacheKey = buildSearchCacheKey(requestedIdentifiers);
 
   const inFlightKey = options.forceRefresh ? `${cacheKey}:force` : cacheKey;
@@ -1594,14 +1780,14 @@ export async function searchFlights(query: string, options: SearchFlightsOptions
 
   const pendingSearch = (async () => {
     try {
-      const freshResult = await fetchFreshFlights(remainingQuery, remainingIdentifiers);
+      const freshResult = await fetchFreshFlights(realQuery, realIdentifiers);
       const enrichedResult = await enrichSearchResultWithExternalSources(freshResult);
-      const cachedResult = await writeFlightSearchCache(
+      const savedResult = await writeFlightSearchCache(
         cacheKey,
         mergeWithDemoPayload(enrichedResult),
         options.forceRefresh ? 'manual-refresh' : 'search',
       );
-      return mergeWithDemoPayload(cachedResult);
+      return mergeWithDemoPayload(savedResult);
     } catch (error) {
       if (!isAviationstackConfigured() && !isFlightAwareConfigured()) {
         const historicalOnlyResult = await writeFlightSearchCache(
@@ -1624,7 +1810,7 @@ export async function searchFlights(query: string, options: SearchFlightsOptions
         throw error;
       }
 
-      const fallbackResult = await searchFlightsFromExternalSourcesOnly(remainingQuery, remainingIdentifiers);
+      const fallbackResult = await searchFlightsFromExternalSourcesOnly(realQuery, realIdentifiers);
       const openSkyErrorReason = error instanceof Error ? error.message : 'OpenSky search failed unexpectedly.';
       const openSkyDiagnostics = getOpenSkyErrorDiagnostics(error);
 

@@ -4,6 +4,12 @@ import {
   getPositionSnapshotAt,
   listPositionSnapshotTimestamps,
 } from '~/lib/server/chantalV2Snapshots';
+import {
+  isChantalV2TestMode,
+  getTestLatestSnapshot,
+  getTestSnapshotAt,
+  getTestSnapshotTimestamps,
+} from '~/lib/server/chantalV2TestMode';
 import type { ChantalV2SnapshotsResponse } from '~/lib/chantalV2';
 
 export const runtime = 'nodejs';
@@ -25,9 +31,14 @@ function buildJsonResponse(body: unknown, status = 200) {
  *
  * GET /api/chantal/v2/snapshots?at=<unix-ms>
  *   - Returns the snapshot closest to the given timestamp (for wayback).
+ *
+ * In test mode (`CHANTAL_V2_TEST_MODE=1`), returns deterministically-generated
+ * demo snapshots instead of reading from MongoDB.
  */
 export async function GET(request: NextRequest) {
   try {
+    const now = Date.now();
+    const testMode = isChantalV2TestMode();
     const atParam = request.nextUrl.searchParams.get('at');
 
     if (atParam != null) {
@@ -36,8 +47,17 @@ export async function GET(request: NextRequest) {
         return buildJsonResponse({ error: 'Invalid ?at parameter; expected unix milliseconds.' }, 400);
       }
 
-      const snapshot = await getPositionSnapshotAt(targetMs);
+      const snapshot = testMode
+        ? getTestSnapshotAt(targetMs, now)
+        : await getPositionSnapshotAt(targetMs);
       return buildJsonResponse({ snapshot });
+    }
+
+    if (testMode) {
+      const latest = getTestLatestSnapshot(now);
+      const snapshotTimestamps = getTestSnapshotTimestamps(now);
+      const body: ChantalV2SnapshotsResponse = { latest, snapshotTimestamps };
+      return buildJsonResponse(body);
     }
 
     const [latest, snapshotTimestamps] = await Promise.all([
