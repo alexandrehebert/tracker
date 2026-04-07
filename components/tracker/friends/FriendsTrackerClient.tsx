@@ -37,7 +37,15 @@ import FlightMap from '../flight/FlightMap';
 import { getFlightMapColor } from '../flight/colors';
 import { FlightMapProvider } from '../flight/contexts/FlightMapProvider';
 import FlightMapViewToggle, { type TrackerMapView } from '../flight/FlightMapViewToggle';
-import type { FlightMapAirportMarker, FriendAvatarInfo, FriendAvatarMarker, TrackerApiResponse, TrackedFlight } from '../flight/types';
+import type {
+  FlightFetchSnapshot,
+  FlightMapAirportMarker,
+  FlightMapPoint,
+  FriendAvatarInfo,
+  FriendAvatarMarker,
+  TrackerApiResponse,
+  TrackedFlight,
+} from '../flight/types';
 
 const AUTO_REFRESH_MS = 60_000;
 const MIN_MAP_LOADING_MS = 2_000;
@@ -45,6 +53,9 @@ const TIMELINE_MIN_SEGMENT_DISTANCE_KM = 600;
 const TIMELINE_FALLBACK_SEGMENT_DISTANCE_KM = 1_200;
 const TIMELINE_RECENT_DEPARTURE_WINDOW_MS = 12 * 60 * 60 * 1000;
 const TIMELINE_NODE_SIZE_PX = 14;
+const WAYBACK_STEP_MS = 5 * 60 * 1000;
+const WAYBACK_LIVE_THRESHOLD_MS = 60 * 1000;
+const WAYBACK_RETURN_TO_LIVE_THRESHOLD_MS = Math.max(WAYBACK_LIVE_THRESHOLD_MS, WAYBACK_STEP_MS);
 
 interface FriendsTrackerClientProps {
   map: WorldMapPayload;
@@ -60,12 +71,12 @@ interface FriendsTrackerDashboardProps extends FriendsTrackerClientProps {
   onMapReady: () => void;
 }
 
-function formatRelativeSeconds(timestampSeconds: number | null): string {
+function formatRelativeSeconds(timestampSeconds: number | null, referenceTimeMs = Date.now()): string {
   if (!timestampSeconds) {
     return '—';
   }
 
-  const diffSeconds = Math.max(0, Math.round(Date.now() / 1000) - timestampSeconds);
+  const diffSeconds = Math.max(0, Math.round(referenceTimeMs / 1000) - timestampSeconds);
   if (diffSeconds < 60) {
     return `${diffSeconds}s ago`;
   }
@@ -91,6 +102,271 @@ function formatDateTimeMillis(timestampMs: number | null, locale: string): strin
   }).format(timestampMs);
 }
 
+function getFlightPointTimeMs(point: FlightMapPoint | null | undefined): number | null {
+  return typeof point?.time === 'number' && Number.isFinite(point.time)
+    ? point.time * 1000
+    : null;
+}
+
+function sortFlightPoints(points: Array<FlightMapPoint | null | undefined>): FlightMapPoint[] {
+  const deduped = new Map<string, FlightMapPoint>();
+
+  for (const point of points) {
+    if (!point) {
+      continue;
+    }
+
+    const key = point.time != null
+      ? `t:${point.time}`
+      : `c:${point.latitude.toFixed(4)}:${point.longitude.toFixed(4)}:${point.altitude ?? 'na'}:${point.onGround ? 'g' : 'a'}`;
+
+    deduped.set(key, point);
+  }
+
+  return Array.from(deduped.values()).sort((first, second) => {
+    const firstTimeMs = getFlightPointTimeMs(first);
+    const secondTimeMs = getFlightPointTimeMs(second);
+
+    if (firstTimeMs == null && secondTimeMs == null) {
+      return 0;
+    }
+
+    if (firstTimeMs == null) {
+      return -1;
+    }
+
+    if (secondTimeMs == null) {
+      return 1;
+    }
+
+    return firstTimeMs - secondTimeMs;
+  });
+}
+
+function pickMostRecentFlightPoint(points: Array<FlightMapPoint | null | undefined>): FlightMapPoint | null {
+  let bestPoint: FlightMapPoint | null = null;
+  let bestTimeMs = Number.NEGATIVE_INFINITY;
+
+  for (const point of points) {
+    if (!point) {
+      continue;
+    }
+
+    const timeMs = getFlightPointTimeMs(point);
+    if (timeMs != null && timeMs >= bestTimeMs) {
+      bestPoint = point;
+      bestTimeMs = timeMs;
+      continue;
+    }
+
+    if (!bestPoint) {
+      bestPoint = point;
+    }
+  }
+
+  return bestPoint;
+}
+
+function getLatestHistoricalSnapshot(
+  history: FlightFetchSnapshot[] | undefined,
+  referenceTimeMs: number,
+): FlightFetchSnapshot | null {
+  return [...(history ?? [])]
+    .filter((snapshot) => Number.isFinite(snapshot.capturedAt) && snapshot.capturedAt <= referenceTimeMs)
+    .sort((first, second) => first.capturedAt - second.capturedAt)
+    .at(-1) ?? null;
+}
+
+function interpolateFlightPoint(
+  from: GeoPoint,
+  to: GeoPoint,
+  progress: number,
+  timeMs: number,
+  onGround: boolean,
+): FlightMapPoint {
+  const clampedProgress = clampNumber(progress, 0, 1);
+
+  return {
+    time: Math.round(timeMs / 1000),
+    latitude: from.latitude + ((to.latitude - from.latitude) * clampedProgress),
+    longitude: from.longitude + ((to.longitude - from.longitude) * clampedProgress),
+    x: 0,
+    y: 0,
+    altitude: onGround ? 0 : null,
+    heading: computeAirportBearingDegrees(from, to),
+    onGround,
+  };
+}
+
+function buildHistoricalFlightView(
+  flight: TrackedFlight,
+  referenceTimeMs: number,
+  liveTimeMs: number,
+): TrackedFlight | null {
+  const clampedReferenceTimeMs = Math.min(referenceTimeMs, liveTimeMs);
+  if (clampedReferenceTimeMs >= liveTimeMs - WAYBACK_RETURN_TO_LIVE_THRESHOLD_MS) {
+    return flight;
+  }
+
+  const routeFirstSeenMs = flight.route.firstSeen != null ? flight.route.firstSeen * 1000 : null;
+  const routeLastSeenMs = flight.route.lastSeen != null ? flight.route.lastSeen * 1000 : null;
+  const latestSnapshot = getLatestHistoricalSnapshot(flight.fetchHistory, clampedReferenceTimeMs);
+  const liveReferencePoint = flight.current ?? flight.track.at(-1) ?? flight.rawTrack?.at(-1) ?? flight.originPoint ?? null;
+  const liveReferenceTimeMs = getFlightPointTimeMs(liveReferencePoint)
+    ?? (flight.lastContact != null ? flight.lastContact * 1000 : liveTimeMs);
+
+  const track = flight.track.filter((point) => {
+    const timeMs = getFlightPointTimeMs(point);
+    return timeMs == null || timeMs <= clampedReferenceTimeMs;
+  });
+  const rawTrack = (flight.rawTrack ?? []).filter((point) => {
+    const timeMs = getFlightPointTimeMs(point);
+    return timeMs == null || timeMs <= clampedReferenceTimeMs;
+  });
+
+  const liveCurrentPoint = (() => {
+    const timeMs = getFlightPointTimeMs(flight.current);
+    return timeMs == null || timeMs <= clampedReferenceTimeMs ? flight.current : null;
+  })();
+
+  let currentPoint = pickMostRecentFlightPoint([
+    sortFlightPoints([...rawTrack, ...track, liveCurrentPoint]).at(-1) ?? null,
+    latestSnapshot?.current ?? null,
+  ]);
+
+  const canForecastFromLivePoint = currentPoint == null
+    && liveReferencePoint != null
+    && routeFirstSeenMs != null
+    && liveReferenceTimeMs > routeFirstSeenMs
+    && clampedReferenceTimeMs >= routeFirstSeenMs
+    && clampedReferenceTimeMs <= liveReferenceTimeMs;
+
+  if (canForecastFromLivePoint) {
+    const interpolationProgress = clampNumber(
+      (clampedReferenceTimeMs - routeFirstSeenMs) / (liveReferenceTimeMs - routeFirstSeenMs),
+      0.02,
+      1,
+    );
+
+    currentPoint = flight.originPoint
+      ? interpolateFlightPoint(
+          flight.originPoint,
+          liveReferencePoint,
+          interpolationProgress,
+          clampedReferenceTimeMs,
+          interpolationProgress >= 0.999 && liveReferencePoint.onGround,
+        )
+      : {
+          ...liveReferencePoint,
+          time: Math.round(clampedReferenceTimeMs / 1000),
+          onGround: false,
+        };
+  }
+
+  const hasHistoricalEvidence = track.length > 0 || rawTrack.length > 0 || latestSnapshot != null || currentPoint != null;
+
+  if (!hasHistoricalEvidence && routeFirstSeenMs != null && clampedReferenceTimeMs < routeFirstSeenMs) {
+    return null;
+  }
+
+  if (!hasHistoricalEvidence) {
+    return null;
+  }
+
+  const isHistoricalOnGround = latestSnapshot?.onGround === true
+    || currentPoint?.onGround === true
+    || (flight.onGround && routeLastSeenMs != null && clampedReferenceTimeMs >= routeLastSeenMs);
+
+  return {
+    ...flight,
+    current: currentPoint,
+    track,
+    rawTrack,
+    onGround: isHistoricalOnGround,
+    lastContact: latestSnapshot?.lastContact
+      ?? currentPoint?.time
+      ?? (isHistoricalOnGround ? flight.route.lastSeen : null)
+      ?? null,
+    heading: currentPoint?.heading ?? latestSnapshot?.heading ?? flight.heading,
+    velocity: latestSnapshot?.velocity ?? flight.velocity,
+    geoAltitude: currentPoint?.altitude ?? latestSnapshot?.geoAltitude ?? flight.geoAltitude,
+    baroAltitude: latestSnapshot?.baroAltitude ?? flight.baroAltitude,
+    route: {
+      ...flight.route,
+      lastSeen: isHistoricalOnGround ? flight.route.lastSeen : null,
+    },
+    fetchHistory: (flight.fetchHistory ?? []).filter((snapshot) => snapshot.capturedAt <= clampedReferenceTimeMs),
+  };
+}
+
+function computeWaybackBounds(
+  config: FriendsTrackerConfig,
+  flights: TrackedFlight[],
+  fallbackEndMs: number,
+): { startMs: number; endMs: number } {
+  const departureTimes: number[] = [];
+  const observedTimes: number[] = [fallbackEndMs];
+
+  for (const friend of config.friends) {
+    for (const leg of friend.flights) {
+      const departureMs = Date.parse(leg.departureTime);
+      if (Number.isFinite(departureMs)) {
+        departureTimes.push(departureMs);
+      }
+    }
+  }
+
+  for (const flight of flights) {
+    if (flight.route.firstSeen != null) {
+      observedTimes.push(flight.route.firstSeen * 1000);
+    }
+
+    if (flight.route.lastSeen != null) {
+      observedTimes.push(flight.route.lastSeen * 1000);
+    }
+
+    for (const point of [flight.originPoint, ...flight.track, ...(flight.rawTrack ?? []), flight.current]) {
+      const pointTimeMs = getFlightPointTimeMs(point);
+      if (pointTimeMs != null) {
+        observedTimes.push(pointTimeMs);
+      }
+    }
+
+    for (const snapshot of flight.fetchHistory ?? []) {
+      if (Number.isFinite(snapshot.capturedAt)) {
+        observedTimes.push(snapshot.capturedAt);
+      }
+
+      if (snapshot.route.firstSeen != null) {
+        observedTimes.push(snapshot.route.firstSeen * 1000);
+      }
+
+      if (snapshot.route.lastSeen != null) {
+        observedTimes.push(snapshot.route.lastSeen * 1000);
+      }
+
+      const pointTimeMs = getFlightPointTimeMs(snapshot.current);
+      if (pointTimeMs != null) {
+        observedTimes.push(pointTimeMs);
+      }
+    }
+  }
+
+  const finiteDepartureTimes = departureTimes.filter((value) => Number.isFinite(value));
+  const finiteObservedTimes = observedTimes.filter((value) => Number.isFinite(value));
+  const rawStartMs = Math.min(...(finiteDepartureTimes.length > 0 ? finiteDepartureTimes : finiteObservedTimes));
+  const endMs = Math.max(...finiteObservedTimes);
+  const safeEndMs = Number.isFinite(endMs) ? endMs : fallbackEndMs;
+  const startMs = Number.isFinite(rawStartMs)
+    ? Math.min(rawStartMs, safeEndMs)
+    : safeEndMs;
+
+  return {
+    startMs,
+    endMs: safeEndMs,
+  };
+}
+
 function getFriendInitials(name: string): string {
   const parts = name.trim().split(/\s+/);
   if (parts.length >= 2) {
@@ -113,11 +389,20 @@ function withAlphaColor(color: string, alpha: number): string {
   return color;
 }
 
+interface GeoPoint {
+  latitude: number;
+  longitude: number;
+}
+
+function clampNumber(value: number, min: number, max: number): number {
+  return Math.min(Math.max(value, min), max);
+}
+
 function toRadians(value: number): number {
   return value * (Math.PI / 180);
 }
 
-function computeAirportDistanceKm(from: FlightMapAirportMarker, to: FlightMapAirportMarker): number {
+function computeAirportDistanceKm(from: GeoPoint, to: GeoPoint): number {
   const earthRadiusKm = 6_371;
   const latitudeDelta = toRadians(to.latitude - from.latitude);
   const longitudeDelta = toRadians(to.longitude - from.longitude);
@@ -135,7 +420,7 @@ function normalizeHeadingDegrees(value: number): number {
   return normalized < 0 ? normalized + 360 : normalized;
 }
 
-function computeAirportBearingDegrees(from: FlightMapAirportMarker, to: FlightMapAirportMarker): number {
+function computeAirportBearingDegrees(from: GeoPoint, to: GeoPoint): number {
   const fromLatitude = toRadians(from.latitude);
   const toLatitude = toRadians(to.latitude);
   const longitudeDelta = toRadians(to.longitude - from.longitude);
@@ -190,6 +475,7 @@ function computeTimelineCursorPosition(
   currentTripLegs: FriendFlightLeg[],
   friendStatuses: FriendFlightStatus[],
   now: number,
+  airportMarkerByCode: Map<string, FlightMapAirportMarker>,
 ): number | null {
   if (!currentTripLegs.length) {
     return null;
@@ -207,6 +493,29 @@ function computeTimelineCursorPosition(
     const flight = status.flight;
     const firstSeenMs = flight.route.firstSeen != null ? flight.route.firstSeen * 1000 : null;
     const lastSeenMs = flight.route.lastSeen != null ? flight.route.lastSeen * 1000 : null;
+    const currentPoint = flight.current ?? flight.track.at(-1) ?? flight.originPoint ?? null;
+
+    const fromCode = (leg.from ?? flight.route.departureAirport ?? '').trim().toUpperCase();
+    const toCode = (leg.to ?? flight.route.arrivalAirport ?? '').trim().toUpperCase();
+    const fromMarker = fromCode ? airportMarkerByCode.get(fromCode) : undefined;
+    const toMarker = toCode ? airportMarkerByCode.get(toCode) : undefined;
+
+    if (currentPoint && fromMarker && toMarker) {
+      const totalDistanceKm = computeAirportDistanceKm(fromMarker, toMarker);
+      const distanceToDestinationKm = computeAirportDistanceKm(currentPoint, toMarker);
+
+      if (currentPoint.onGround || flight.onGround) {
+        const isNearArrival = distanceToDestinationKm <= Math.max(40, totalDistanceKm * 0.08);
+        return isNearArrival ? i + 1 : i;
+      }
+
+      if (totalDistanceKm > 0) {
+        const spatialProgress = clampNumber(1 - (distanceToDestinationKm / totalDistanceKm), 0.05, 0.95);
+        if (Number.isFinite(spatialProgress)) {
+          return i + spatialProgress;
+        }
+      }
+    }
 
     if (flight.onGround) {
       if (lastSeenMs != null) {
@@ -217,10 +526,15 @@ function computeTimelineCursorPosition(
     }
 
     let progress = 0.5;
-    if (firstSeenMs != null) {
-      const effectiveEndMs = lastSeenMs ?? now;
-      if (effectiveEndMs > firstSeenMs) {
-        progress = Math.min(Math.max((now - firstSeenMs) / (effectiveEndMs - firstSeenMs), 0.1), 0.9);
+    const pointTimeMs = getFlightPointTimeMs(currentPoint)
+      ?? (flight.lastContact != null ? flight.lastContact * 1000 : null);
+
+    if (firstSeenMs != null && pointTimeMs != null) {
+      if (lastSeenMs != null && lastSeenMs > firstSeenMs) {
+        progress = clampNumber((pointTimeMs - firstSeenMs) / (lastSeenMs - firstSeenMs), 0.05, 0.95);
+      } else {
+        const fallbackEndMs = Math.max(pointTimeMs + (30 * 60 * 1000), now, firstSeenMs + (60 * 60 * 1000));
+        progress = clampNumber((pointTimeMs - firstSeenMs) / (fallbackEndMs - firstSeenMs), 0.05, 0.95);
       }
     }
 
@@ -319,26 +633,27 @@ function FriendTimelineCard({
   friend,
   friendStatuses,
   destinationAirport,
-  now,
+  referenceTimeMs,
   airportMarkers,
   accentColor,
 }: {
   friend: FriendTravelConfig;
   friendStatuses: FriendFlightStatus[];
   destinationAirport: string | null;
-  now: number;
+  referenceTimeMs: number;
   airportMarkers: FlightMapAirportMarker[];
   accentColor: string;
 }) {
-  const currentTripLegs = getCurrentTripLegs(friend, friendStatuses, destinationAirport, now);
+  const currentTripLegs = getCurrentTripLegs(friend, friendStatuses, destinationAirport, referenceTimeMs);
   const airports = buildAirportChain(currentTripLegs);
-  const cursorRaw = computeTimelineCursorPosition(currentTripLegs, friendStatuses, now);
 
   const airportMarkerByCode = useMemo(() => {
     return new Map(
       airportMarkers.map((marker) => [marker.code.toUpperCase().trim(), marker] as const),
     );
   }, [airportMarkers]);
+
+  const cursorRaw = computeTimelineCursorPosition(currentTripLegs, friendStatuses, referenceTimeMs, airportMarkerByCode);
 
   const timelineSegments = useMemo(() => {
     return airports.slice(0, -1).map((fromAirport, index) => {
@@ -419,11 +734,11 @@ function FriendTimelineCard({
     && cursorRaw >= airports.length - 1;
   const hasStartedTrip = currentTripLegs.some((leg) => {
     const departureMs = Date.parse(leg.departureTime);
-    return !Number.isNaN(departureMs) && departureMs <= now;
+    return !Number.isNaN(departureMs) && departureMs <= referenceTimeMs;
   });
   const hasFutureLeg = currentTripLegs.some((leg) => {
     const departureMs = Date.parse(leg.departureTime);
-    return !Number.isNaN(departureMs) && departureMs > now;
+    return !Number.isNaN(departureMs) && departureMs > referenceTimeMs;
   });
   const hasNotStartedTrip = !hasArrivedAtDestination && activeLegIndex < 0 && !hasStartedTrip;
   const isOnConnectionStop = !hasArrivedAtDestination && activeLegIndex < 0 && hasStartedTrip && hasFutureLeg;
@@ -483,7 +798,7 @@ function FriendTimelineCard({
         {lastContactSeconds != null ? (
           <div className="flex shrink-0 items-center gap-1 text-[11px] text-slate-400">
             <Clock3 className="h-3 w-3" />
-            <span>{formatRelativeSeconds(lastContactSeconds)}</span>
+            <span>{formatRelativeSeconds(lastContactSeconds, referenceTimeMs)}</span>
           </div>
         ) : (
           <div className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold ${hasAnyMatch ? 'bg-emerald-500/20 text-emerald-200' : 'bg-slate-700/60 text-slate-400'}`}>
@@ -653,6 +968,12 @@ function FriendsTrackerTopBar({
   onRefresh,
   mapView,
   onMapViewChange,
+  showWaybackButton,
+  onToggleWayback,
+  onCloseWayback,
+  isWaybackActive,
+  isWaybackMenuOpen,
+  mobileWaybackDropdown,
 }: {
   tripName: string | null;
   friendCount: number;
@@ -662,9 +983,35 @@ function FriendsTrackerTopBar({
   onRefresh: () => void;
   mapView: TrackerMapView;
   onMapViewChange: (nextView: TrackerMapView) => void;
+  showWaybackButton?: boolean;
+  onToggleWayback?: () => void;
+  onCloseWayback?: () => void;
+  isWaybackActive?: boolean;
+  isWaybackMenuOpen?: boolean;
+  mobileWaybackDropdown?: React.ReactNode;
 }) {
   const locale = useLocale();
   const { topBarRef } = useTrackerLayout();
+  const waybackMenuRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!showWaybackButton || !isWaybackMenuOpen) {
+      return;
+    }
+
+    const handlePointerDown = (event: PointerEvent) => {
+      if (waybackMenuRef.current?.contains(event.target as Node)) {
+        return;
+      }
+
+      onCloseWayback?.();
+    };
+
+    document.addEventListener('pointerdown', handlePointerDown);
+    return () => {
+      document.removeEventListener('pointerdown', handlePointerDown);
+    };
+  }, [isWaybackMenuOpen, onCloseWayback, showWaybackButton]);
 
   return (
     <div ref={topBarRef} className="pointer-events-none absolute inset-x-0 top-0 z-40 grid grid-cols-[minmax(0,1fr)_auto] items-start gap-3 p-3 md:p-4">
@@ -683,7 +1030,7 @@ function FriendsTrackerTopBar({
         <div className="mt-1 text-xs text-slate-400">Updated {formatDateTimeMillis(lastUpdated, locale)} UTC</div>
       </div>
 
-      <div className="pointer-events-none flex flex-col items-end gap-2 md:flex-row md:flex-wrap md:items-center md:justify-end">
+      <div className="pointer-events-none relative flex flex-col items-end gap-2 md:flex-row md:flex-wrap md:items-center md:justify-end">
         <Link
           href="/chantal/config"
           className="pointer-events-auto inline-flex h-9 w-9 items-center justify-center gap-2 rounded-full border border-white/12 bg-slate-950/80 p-2 text-sm font-medium text-slate-100 shadow backdrop-blur-sm transition hover:border-white/20 hover:bg-slate-900 lg:w-auto lg:px-3"
@@ -691,6 +1038,31 @@ function FriendsTrackerTopBar({
           <Settings2 className="h-4 w-4 shrink-0" />
           <span className="hidden lg:inline">Config</span>
         </Link>
+        {showWaybackButton ? (
+          <div ref={waybackMenuRef} className="relative pointer-events-auto">
+            <button
+              type="button"
+              onClick={onToggleWayback}
+              className={`relative inline-flex h-9 w-9 items-center justify-center gap-2 rounded-full border p-2 text-sm font-medium text-slate-100 shadow backdrop-blur-sm transition hover:border-white/20 hover:bg-slate-900 ${
+                isWaybackActive
+                  ? 'border-cyan-400/35 bg-cyan-500/10'
+                  : 'border-white/12 bg-slate-950/80'
+              }`}
+              aria-label="Open wayback machine"
+              aria-expanded={isWaybackMenuOpen ? 'true' : 'false'}
+              aria-haspopup="dialog"
+            >
+              <Clock3 className="h-4 w-4 shrink-0" />
+              <span
+                aria-hidden="true"
+                className={`absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full ${
+                  isWaybackActive ? 'bg-cyan-300' : 'bg-rose-500'
+                }`}
+              />
+            </button>
+            {mobileWaybackDropdown}
+          </div>
+        ) : null}
         <FlightMapViewToggle mapView={mapView} onChange={onMapViewChange} />
         <TrackerZoomControls />
         <button
@@ -720,22 +1092,50 @@ function FriendsTrackerDashboard({
   const [config, setConfig] = useState(() => normalizeFriendsTrackerConfig(initialConfig));
   const [data, setData] = useState<TrackerApiResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const locale = useLocale();
   const [isLoading, setIsLoading] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
+  const [selectedTimeMs, setSelectedTimeMs] = useState<number | null>(null);
+  const [isWaybackModalOpen, setIsWaybackModalOpen] = useState(false);
   const autoLockSignatureRef = useRef<string | null>(null);
 
   const identifiers = useMemo(() => extractFriendTrackerIdentifiers(config), [config]);
   const identifiersQuery = identifiers.join(',');
+  const liveTimeMs = data?.fetchedAt ?? Date.now();
 
-  const statuses = useMemo(() => buildFriendFlightStatuses(config, data?.flights ?? []), [config, data?.flights]);
+  const waybackBounds = useMemo(
+    () => computeWaybackBounds(config, data?.flights ?? [], liveTimeMs),
+    [config, data?.flights, liveTimeMs],
+  );
+
+  const referenceTimeMs = selectedTimeMs == null
+    ? waybackBounds.endMs
+    : Math.min(Math.max(selectedTimeMs, waybackBounds.startMs), waybackBounds.endMs);
+  const isWaybackActive = referenceTimeMs < waybackBounds.endMs - WAYBACK_RETURN_TO_LIVE_THRESHOLD_MS;
+
+  const displayFlights = useMemo(() => {
+    if (!isWaybackActive) {
+      return data?.flights ?? [];
+    }
+
+    return (data?.flights ?? []).flatMap((flight) => {
+      const historicalFlight = buildHistoricalFlightView(flight, referenceTimeMs, liveTimeMs);
+      return historicalFlight ? [historicalFlight] : [];
+    });
+  }, [data?.flights, isWaybackActive, liveTimeMs, referenceTimeMs]);
+
+  const statuses = useMemo(
+    () => buildFriendFlightStatuses(config, displayFlights, referenceTimeMs),
+    [config, displayFlights, referenceTimeMs],
+  );
 
   const mapStatuses = useMemo(() => {
     return config.friends.flatMap((friend) => {
       const friendStatuses = statuses.filter((status) => status.friend.id === friend.id);
-      const preferredStatus = pickPreferredMapStatus(friendStatuses);
+      const preferredStatus = pickPreferredMapStatus(friendStatuses, referenceTimeMs);
       return preferredStatus ? [preferredStatus] : [];
     });
-  }, [config.friends, statuses]);
+  }, [config.friends, referenceTimeMs, statuses]);
 
   const visibleFlights = useMemo(() => {
     const flightsByIcao24 = new Map<string, TrackedFlight>();
@@ -953,10 +1353,112 @@ function FriendsTrackerDashboard({
       .catch(() => undefined);
   }, [config, data?.flights]);
 
+  useEffect(() => {
+    if (selectedTimeMs == null) {
+      return;
+    }
+
+    if (selectedTimeMs < waybackBounds.startMs) {
+      setSelectedTimeMs(waybackBounds.startMs);
+      return;
+    }
+
+    if (selectedTimeMs >= waybackBounds.endMs - WAYBACK_RETURN_TO_LIVE_THRESHOLD_MS) {
+      setSelectedTimeMs(null);
+    }
+  }, [selectedTimeMs, waybackBounds.endMs, waybackBounds.startMs]);
+
+  const { isMobile } = useTrackerLayout();
   const currentTrip = getCurrentTripConfig(config);
   const totalFriends = config.friends.length;
-  const now = Date.now();
   const destinationAirport = config.destinationAirport ?? null;
+  const sliderValue = isWaybackActive ? referenceTimeMs : waybackBounds.endMs;
+  const hasWaybackRange = waybackBounds.endMs - waybackBounds.startMs >= WAYBACK_STEP_MS;
+
+  const waybackCard = hasWaybackRange ? (
+    <div className="rounded-2xl border border-cyan-400/20 bg-slate-950/55 p-4 shadow-sm shadow-cyan-950/30">
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.24em] text-cyan-200">
+            <Clock3 className="h-4 w-4 shrink-0" />
+            <span>Wayback machine</span>
+          </div>
+          <div className="mt-1 text-xs text-slate-300">
+            {isWaybackActive ? 'Historical snapshot' : 'Live now'}
+          </div>
+          <div className="text-[11px] text-slate-400">
+            {formatDateTimeMillis(sliderValue, locale)} UTC
+          </div>
+        </div>
+
+        <button
+          type="button"
+          onClick={() => setSelectedTimeMs(null)}
+          disabled={!isWaybackActive}
+          className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold transition ${
+            isWaybackActive
+              ? 'border-cyan-400/40 bg-cyan-500/10 text-cyan-100 hover:bg-cyan-500/15'
+              : 'border-rose-400/35 bg-rose-500/10 text-rose-100'
+          }`}
+        >
+          <span className="inline-flex items-center gap-1.5">
+            {!isWaybackActive ? (
+              <span aria-hidden="true" className="h-2 w-2 rounded-full bg-rose-500 shadow-[0_0_8px_rgba(244,63,94,0.8)]" />
+            ) : null}
+            <span>Live</span>
+          </span>
+        </button>
+      </div>
+
+      <label htmlFor="chantal-wayback-slider" className="sr-only">Wayback machine</label>
+      <input
+        id="chantal-wayback-slider"
+        aria-label="Wayback machine"
+        type="range"
+        min={waybackBounds.startMs}
+        max={waybackBounds.endMs}
+        step={WAYBACK_STEP_MS}
+        value={sliderValue}
+        onChange={(event) => {
+          const nextValue = Number.parseInt(event.currentTarget.value, 10);
+          if (!Number.isFinite(nextValue)) {
+            return;
+          }
+
+          if (nextValue >= waybackBounds.endMs - WAYBACK_RETURN_TO_LIVE_THRESHOLD_MS) {
+            setSelectedTimeMs(null);
+            return;
+          }
+
+          setSelectedTimeMs(nextValue);
+        }}
+        className="mt-3 w-full accent-cyan-400"
+      />
+
+      <div className="mt-2 flex items-center justify-between gap-3 text-[10px] text-slate-500">
+        <span>{formatDateTimeMillis(waybackBounds.startMs, locale)}</span>
+        <span>Live</span>
+      </div>
+
+      <p className="mt-2 text-[11px] text-slate-400">
+        Stored provider telemetry is used first, then itinerary timing fills any gaps.
+      </p>
+    </div>
+  ) : null;
+
+  useEffect(() => {
+    if (!isMobile || !hasWaybackRange) {
+      setIsWaybackModalOpen(false);
+    }
+  }, [hasWaybackRange, isMobile]);
+
+  const mobileWaybackPopup = isMobile && hasWaybackRange && isWaybackModalOpen ? (
+    <div className="absolute right-0 top-full z-10 mt-2 w-[min(calc(100vw-1.5rem),24rem)] md:hidden">
+      <div className="max-h-[calc(100dvh-6rem)] overflow-y-auto rounded-2xl border border-white/10 bg-slate-950/95 shadow-[0_20px_60px_rgba(2,6,23,0.45)] backdrop-blur-md">
+        {waybackCard}
+      </div>
+    </div>
+  ) : null;
 
   const sidebarContent = (
     <div className="space-y-3">
@@ -986,8 +1488,8 @@ function FriendsTrackerDashboard({
 
       {data?.notFoundIdentifiers.length ? (
         <div className="rounded-2xl border border-cyan-400/30 bg-cyan-500/10 p-3 text-xs text-cyan-100">
-          <div className="mb-1 flex items-center gap-1.5 font-semibold">
-            <Clock3 className="h-3.5 w-3.5" />
+          <div className="mb-1 flex items-center gap-2 font-semibold">
+            <Clock3 className="h-4.5 w-4.5 shrink-0" />
             Awaiting telemetry: {data.notFoundIdentifiers.join(', ')}
           </div>
         </div>
@@ -1007,7 +1509,7 @@ function FriendsTrackerDashboard({
             friend={friend}
             friendStatuses={friendStatuses}
             destinationAirport={destinationAirport}
-            now={now}
+            referenceTimeMs={referenceTimeMs}
             airportMarkers={airportMarkers}
             accentColor={friendAccentColors.get(friend.id) ?? getFlightMapColor(index, false)}
           />
@@ -1030,6 +1532,12 @@ function FriendsTrackerDashboard({
           }}
           mapView={mapView}
           onMapViewChange={onMapViewChange}
+          showWaybackButton={isMobile && hasWaybackRange}
+          onToggleWayback={() => setIsWaybackModalOpen((current) => !current)}
+          onCloseWayback={() => setIsWaybackModalOpen(false)}
+          isWaybackActive={isWaybackActive}
+          isWaybackMenuOpen={isWaybackModalOpen}
+          mobileWaybackDropdown={mobileWaybackPopup}
         />
       }
       showBackgroundGrid
@@ -1051,6 +1559,7 @@ function FriendsTrackerDashboard({
         </div>
       }
       sidebarContent={sidebarContent}
+      sidebarFooter={!isMobile ? waybackCard : null}
       isLoading={isLoading || !mapReady}
       loadingContent={
         loadingTargetView === 'globe'

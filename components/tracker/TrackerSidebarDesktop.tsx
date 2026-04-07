@@ -13,7 +13,7 @@ export default function TrackerSidebarDesktop({ children, footer }: TrackerSideb
   const { sidebarOpen, setSidebarOpen, sidebarRef, sidebarToggleRef } = useTrackerLayout();
   const [isPeekActive, setIsPeekActive] = useState(false);
 
-  const desktopWrapperClass = 'z-40 absolute top-[5rem] right-3 flex w-[min(92vw,25rem)] xl:w-[min(40vw,30rem)] 2xl:w-[min(36vw,34rem)] flex-col gap-3';
+  const desktopWrapperClass = 'z-40 absolute top-[5rem] right-3 flex max-h-[calc(100dvh-6.5rem)] w-[min(92vw,25rem)] xl:w-[min(40vw,30rem)] 2xl:w-[min(36vw,34rem)] flex-col gap-3';
 
   return (
     <div
@@ -41,7 +41,7 @@ export default function TrackerSidebarDesktop({ children, footer }: TrackerSideb
       } : undefined}
       aria-label={!sidebarOpen ? 'Expand tracker panel' : undefined}
     >
-      <aside className="relative h-fit max-h-[calc(100dvh-6.5rem)] rounded-3xl border border-white/12 bg-slate-950/72 shadow-[0_30px_90px_rgba(2,6,23,0.55)] backdrop-blur-md pointer-events-auto flex flex-col">
+      <aside className="relative min-h-0 flex-1 rounded-3xl border border-white/12 bg-slate-950/72 shadow-[0_30px_90px_rgba(2,6,23,0.55)] backdrop-blur-md pointer-events-auto flex flex-col">
         <button
           ref={sidebarToggleRef}
           type="button"
@@ -70,13 +70,13 @@ export default function TrackerSidebarDesktop({ children, footer }: TrackerSideb
         >
           {sidebarOpen ? <ChevronRight className="h-5 w-5" /> : <ChevronLeft className="h-5 w-5" />}
         </button>
-        <div className="flex flex-col gap-4 overflow-y-auto overscroll-contain p-4 transition-all duration-300">
+        <div className="flex min-h-0 flex-col gap-4 overflow-y-auto overscroll-contain p-4 transition-all duration-300">
           {children}
         </div>
       </aside>
 
       {footer ? (
-        <div className="rounded-3xl border border-white/12 bg-slate-950/72 p-4 shadow-[0_20px_60px_rgba(2,6,23,0.45)] backdrop-blur-md pointer-events-auto">
+        <div className="shrink-0 pointer-events-auto">
           {footer}
         </div>
       ) : null}

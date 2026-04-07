@@ -107,7 +107,7 @@ describe('friends tracker helpers', () => {
     expect(status?.canAutoLock).toBe(true);
   });
 
-  it('does not auto-lock a repeated daily flight too early', () => {
+  it('does not treat a repeated daily flight as live when the configured departure is still far in the future', () => {
     const departureTime = Date.UTC(2026, 3, 14, 9, 30);
     const now = Date.UTC(2026, 3, 5, 9, 30);
     const config: FriendsTrackerConfig = {
@@ -134,7 +134,8 @@ describe('friends tracker helpers', () => {
       now,
     );
 
-    expect(status?.flight?.icao24).toBe('3c675a');
+    expect(status?.flight).toBeNull();
+    expect(status?.status).toBe('scheduled');
     expect(status?.canAutoLock).toBe(false);
   });
 

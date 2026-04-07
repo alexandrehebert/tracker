@@ -2,6 +2,7 @@ import type { TrackedFlight } from '~/components/tracker/flight/types';
 
 const AUTO_LOCK_WINDOW_HOURS = 36;
 const AUTO_LOCK_LOOKBACK_DAYS = 7;
+const FLIGHT_MATCH_WINDOW_HOURS = 36;
 const DEMO_REFERENCE_BUCKET_MS = 15 * 60 * 1000;
 
 export interface FriendFlightLeg {
@@ -59,6 +60,33 @@ export interface FriendFlightStatus {
   status: 'matched' | 'scheduled' | 'awaiting';
 }
 
+function isMatchedStatusActiveAtTime(status: FriendFlightStatus | undefined, referenceTimeMs: number): boolean {
+  if (status?.status !== 'matched') {
+    return false;
+  }
+
+  if (!status.flight) {
+    return true;
+  }
+
+  if (!status.flight.onGround) {
+    return true;
+  }
+
+  const firstSeenMs = typeof status.flight.route.firstSeen === 'number'
+    ? status.flight.route.firstSeen * 1000
+    : null;
+  const lastSeenMs = typeof status.flight.route.lastSeen === 'number'
+    ? status.flight.route.lastSeen * 1000
+    : null;
+
+  if (firstSeenMs == null || lastSeenMs == null) {
+    return false;
+  }
+
+  return referenceTimeMs >= firstSeenMs && referenceTimeMs <= lastSeenMs;
+}
+
 function normalizeOptionalText(value: unknown): string | null {
   return typeof value === 'string' && value.trim() ? value.trim() : null;
 }
@@ -112,6 +140,26 @@ function resolveFlightReferenceTimeMs(flight: TrackedFlight): number | null {
   }
 
   return null;
+}
+
+function isFlightTimingPlausibleForLeg(
+  flight: TrackedFlight,
+  leg: FriendFlightLeg,
+  now = Date.now(),
+): boolean {
+  const scheduledTime = Date.parse(leg.departureTime);
+  if (!Number.isFinite(scheduledTime)) {
+    return true;
+  }
+
+  const matchWindowMs = FLIGHT_MATCH_WINDOW_HOURS * 60 * 60 * 1000;
+  const referenceTime = resolveFlightReferenceTimeMs(flight);
+
+  if (referenceTime != null) {
+    return Math.abs(referenceTime - scheduledTime) <= matchWindowMs;
+  }
+
+  return Math.abs(now - scheduledTime) <= matchWindowMs;
 }
 
 export function normalizeFriendFlightIdentifier(value: string | null | undefined): string {
@@ -525,10 +573,14 @@ function doesFlightMatchIdentifier(flight: TrackedFlight, identifier: string): b
 export function findMatchingTrackedFlightForLeg(
   flights: TrackedFlight[],
   leg: FriendFlightLeg,
+  now = Date.now(),
 ): TrackedFlight | null {
   const lockedIcao24 = normalizeFriendFlightIdentifier(leg.resolvedIcao24);
   if (lockedIcao24) {
-    return flights.find((flight) => normalizeFriendFlightIdentifier(flight.icao24) === lockedIcao24) ?? null;
+    const lockedMatch = flights.find((flight) => normalizeFriendFlightIdentifier(flight.icao24) === lockedIcao24) ?? null;
+    return lockedMatch && isFlightTimingPlausibleForLeg(lockedMatch, leg, now)
+      ? lockedMatch
+      : null;
   }
 
   const normalizedFlightNumber = normalizeFriendFlightIdentifier(leg.flightNumber);
@@ -537,7 +589,9 @@ export function findMatchingTrackedFlightForLeg(
   }
 
   const scheduledTime = Date.parse(leg.departureTime);
-  const matchingFlights = flights.filter((flight) => doesFlightMatchIdentifier(flight, normalizedFlightNumber));
+  const matchingFlights = flights
+    .filter((flight) => doesFlightMatchIdentifier(flight, normalizedFlightNumber))
+    .filter((flight) => isFlightTimingPlausibleForLeg(flight, leg, now));
   if (matchingFlights.length <= 1) {
     return matchingFlights[0] ?? null;
   }
@@ -589,7 +643,7 @@ export function buildFriendFlightStatuses(
 ): FriendFlightStatus[] {
   return config.friends.flatMap((friend) => {
     return friend.flights.map((leg, legIndex) => {
-      const flight = findMatchingTrackedFlightForLeg(flights, leg);
+      const flight = findMatchingTrackedFlightForLeg(flights, leg, now);
       const scheduledTime = Date.parse(leg.departureTime);
 
       return {
@@ -725,11 +779,11 @@ export function getCurrentTripLegs(
     return sorted;
   }
 
-  // Priority 1: any trip containing a currently active (matched) leg.
+  // Priority 1: any trip containing a currently active matched leg.
   for (const trip of trips) {
     const hasActiveLeg = trip.some((leg) => {
-      const s = statuses.find((st) => st.leg.id === leg.id);
-      return s?.status === 'matched';
+      const status = statuses.find((st) => st.leg.id === leg.id);
+      return isMatchedStatusActiveAtTime(status, now);
     });
     if (hasActiveLeg) {
       return trip;

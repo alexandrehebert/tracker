@@ -118,12 +118,16 @@ const FLIGHTAWARE_API_BASE = 'https://aeroapi.flightaware.com/aeroapi';
 const TRACKER_MAP_VIEWBOX = { width: 1000, height: 560 };
 const PROVIDER_COOLDOWN_MS = 15 * 60 * 1000;
 const DEFAULT_CACHE_TTL_MS = 5 * 60 * 1000;
+const DEFAULT_MIN_REQUEST_GAP_MS = 400;
 
 const projection = geoNaturalEarth1();
 projection.fitSize([TRACKER_MAP_VIEWBOX.width, TRACKER_MAP_VIEWBOX.height], { type: 'Sphere' } as never);
 
 let providerCooldownUntil = 0;
+let lastFlightAwareRequestStartedAt = 0;
+let flightAwareRequestQueue = Promise.resolve();
 const inMemoryFallbackCache = new Map<string, { payload: FlightAwareFlightEnrichment | null; expiresAt: number }>();
+const inFlightFlightAwareRequests = new Map<string, Promise<unknown>>();
 
 function normalizeIdentifier(value: string | null | undefined): string {
   return typeof value === 'string' ? value.replace(/\s+/g, '').trim().toUpperCase() : '';
@@ -166,6 +170,76 @@ function getApiKey(): string {
     || process.env.FLIGHTAWARE_API_KEY?.trim()
     || process.env.FLIGHTAWARE_AEROAPI_KEY?.trim()
     || '';
+}
+
+function getMinRequestGapMs(): number {
+  const configuredValue = process.env.FLIGHTAWARE_MIN_REQUEST_GAP_MS?.trim();
+  const parsedValue = configuredValue ? Number.parseInt(configuredValue, 10) : NaN;
+  return Number.isFinite(parsedValue) && parsedValue >= 0 ? parsedValue : DEFAULT_MIN_REQUEST_GAP_MS;
+}
+
+function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function parseRetryAfterMs(value: string | null): number | null {
+  if (!value) {
+    return null;
+  }
+
+  const seconds = Number.parseInt(value, 10);
+  if (Number.isFinite(seconds) && seconds > 0) {
+    return seconds * 1000;
+  }
+
+  const retryAtMs = Date.parse(value);
+  if (!Number.isFinite(retryAtMs)) {
+    return null;
+  }
+
+  const deltaMs = retryAtMs - Date.now();
+  return deltaMs > 0 ? deltaMs : null;
+}
+
+function getRateLimitCooldownMs(response: Response, payload: Record<string, unknown>): number {
+  const retryAfterMs = parseRetryAfterMs(response.headers.get('retry-after'));
+  const message = typeof payload.message === 'string'
+    ? payload.message
+    : typeof payload.error === 'string'
+      ? payload.error
+      : '';
+
+  if (response.status === 402 || /(quota|credit)/i.test(message)) {
+    return Math.max(retryAfterMs ?? 0, PROVIDER_COOLDOWN_MS);
+  }
+
+  return retryAfterMs ?? PROVIDER_COOLDOWN_MS;
+}
+
+async function enqueueFlightAwareRequest<T>(requestKey: string, fetcher: () => Promise<T>): Promise<T> {
+  const inFlightRequest = inFlightFlightAwareRequests.get(requestKey);
+  if (inFlightRequest) {
+    return inFlightRequest as Promise<T>;
+  }
+
+  const scheduledRequest = flightAwareRequestQueue.then(async () => {
+    const waitMs = Math.max(0, getMinRequestGapMs() - (Date.now() - lastFlightAwareRequestStartedAt));
+    if (waitMs > 0) {
+      await wait(waitMs);
+    }
+
+    lastFlightAwareRequestStartedAt = Date.now();
+    return fetcher();
+  });
+
+  flightAwareRequestQueue = scheduledRequest.then(() => undefined, () => undefined);
+  inFlightFlightAwareRequests.set(requestKey, scheduledRequest as Promise<unknown>);
+
+  try {
+    return await scheduledRequest;
+  } finally {
+    inFlightFlightAwareRequests.delete(requestKey);
+  }
 }
 
 function isRateLimited(): boolean {
@@ -287,35 +361,37 @@ async function fetchFlightAware<T>(pathname: string, searchParams?: Record<strin
     url.searchParams.set(key, String(value));
   }
 
-  const response = await fetch(url, {
-    headers: {
-      Accept: 'application/json',
-      'x-apikey': apiKey,
-    },
-    cache: 'no-store',
-  });
+  return enqueueFlightAwareRequest(url.toString(), async () => {
+    const response = await fetch(url, {
+      headers: {
+        Accept: 'application/json',
+        'x-apikey': apiKey,
+      },
+      cache: 'no-store',
+    });
 
-  if (response.status === 404) {
-    return null;
-  }
-
-  const payload = await response.json().catch(() => ({})) as Record<string, unknown>;
-  if (!response.ok) {
-    const message = typeof payload.message === 'string'
-      ? payload.message
-      : typeof payload.error === 'string'
-        ? payload.error
-        : `FlightAware request failed with status ${response.status}`;
-
-    if (response.status === 402 || response.status === 429 || /(rate|quota|credit|limit)/i.test(message)) {
-      providerCooldownUntil = Date.now() + PROVIDER_COOLDOWN_MS;
+    if (response.status === 404) {
       return null;
     }
 
-    throw new Error(message);
-  }
+    const payload = await response.json().catch(() => ({})) as Record<string, unknown>;
+    if (!response.ok) {
+      const message = typeof payload.message === 'string'
+        ? payload.message
+        : typeof payload.error === 'string'
+          ? payload.error
+          : `FlightAware request failed with status ${response.status}`;
 
-  return payload as T;
+      if (response.status === 402 || response.status === 429 || /(rate|quota|credit|limit)/i.test(message)) {
+        providerCooldownUntil = Date.now() + getRateLimitCooldownMs(response, payload);
+        return null;
+      }
+
+      throw new Error(message);
+    }
+
+    return payload as T;
+  });
 }
 
 function toAltitudeMeters(value: unknown): number | null {
@@ -531,18 +607,6 @@ export async function lookupFlightAwareFlightWithReport(
     };
   }
 
-  if (isRateLimited()) {
-    return {
-      match: null,
-      report: createFlightAwareReport(
-        'no-data',
-        'FlightAware AeroAPI is temporarily cooling down after a rate-limit or quota response.',
-        false,
-        { identifier: normalizedIdentifier, cooldownUntil: providerCooldownUntil },
-      ),
-    };
-  }
-
   // Synchronous in-memory cache check (preserves original scheduling behavior)
   const memEntry = inMemoryFallbackCache.get(normalizedIdentifier);
   if (memEntry && Date.now() < memEntry.expiresAt) {
@@ -587,6 +651,22 @@ export async function lookupFlightAwareFlightWithReport(
             ),
       };
     }
+  }
+
+  if (isRateLimited()) {
+    return {
+      match: null,
+      report: createFlightAwareReport(
+        'no-data',
+        'FlightAware AeroAPI is temporarily cooling down after a rate-limit or quota response.',
+        false,
+        {
+          identifier: normalizedIdentifier,
+          cooldownUntil: providerCooldownUntil,
+          cooldownRemainingMs: Math.max(0, providerCooldownUntil - Date.now()),
+        },
+      ),
+    };
   }
 
   let bestMatch: FlightAwareFlightEnrichment | null = null;

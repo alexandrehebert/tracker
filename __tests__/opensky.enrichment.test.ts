@@ -87,6 +87,11 @@ async function loadFlightCache() {
   return await import('~/lib/server/flightCache');
 }
 
+async function loadFlightAwareProvider() {
+  vi.resetModules();
+  return await import('~/lib/server/providers/flightaware');
+}
+
 describe('searchFlights', () => {
   const originalClientId = process.env.OPENSKY_CLIENT_ID;
   const originalClientSecret = process.env.OPENSKY_CLIENT_SECRET;
@@ -593,6 +598,71 @@ describe('searchFlights', () => {
         }),
       ]),
     );
+  });
+
+  it('reuses a single FlightAware AeroAPI request for identical concurrent lookups', async () => {
+    process.env.FLIGHT_AWARE_API_KEY = 'flightaware-key';
+    delete process.env.FLIGHTAWARE_API_KEY;
+    delete process.env.AVIATION_STACK_API_KEY;
+    delete process.env.MONGODB_URI;
+
+    const fetchMock = vi.fn().mockImplementation(async () => new Response(JSON.stringify({
+      links: {},
+      num_pages: 1,
+      flights: [
+        {
+          ident: 'AFR123',
+          ident_icao: 'AFR123',
+          ident_iata: 'AF123',
+          fa_flight_id: 'AFR123-1712225100-airline-0123',
+          operator: 'Air France',
+          operator_icao: 'AFR',
+          operator_iata: 'AF',
+          flight_number: '123',
+          registration: 'F-GZNN',
+          atc_ident: 'AFR123',
+          aircraft_type: 'B77W',
+          origin: {
+            code: 'LFPG',
+            code_icao: 'LFPG',
+            code_iata: 'CDG',
+            name: 'Paris Charles de Gaulle Airport',
+          },
+          destination: {
+            code: 'KJFK',
+            code_icao: 'KJFK',
+            code_iata: 'JFK',
+            name: 'John F. Kennedy International Airport',
+          },
+          scheduled_out: '2026-04-04T08:15:00Z',
+          estimated_in: '2026-04-04T14:10:00Z',
+          last_position: {
+            fa_flight_id: 'AFR123-1712225100-airline-0123',
+            altitude: 35000,
+            groundspeed: 485,
+            heading: 281,
+            latitude: 49.5,
+            longitude: -15.4,
+            timestamp: '2026-04-04T10:05:00Z',
+          },
+        },
+      ],
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }));
+
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { lookupFlightAwareFlightWithReport } = await loadFlightAwareProvider();
+    const [first, second] = await Promise.all([
+      lookupFlightAwareFlightWithReport('AF123'),
+      lookupFlightAwareFlightWithReport('AF123'),
+    ]);
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(first.match?.callsign).toBe('AFR123');
+    expect(second.match?.callsign).toBe('AFR123');
   });
 
   it('falls back to Aviationstack when OpenSky has no live match', async () => {

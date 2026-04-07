@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useEffect, type ReactNode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -292,6 +292,381 @@ describe('FriendsTrackerClient', () => {
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith('/api/tracker?q=AF123&refresh=1', { cache: 'no-store' });
+    });
+  });
+
+  it('rewinds the crew map when the wayback slider is moved back through the trip', async () => {
+    const nowMs = Date.now();
+    const nowSeconds = Math.floor(nowMs / 1000);
+    const earlierHistoricalPointTime = nowSeconds - (90 * 60);
+    const historicalPointTime = nowSeconds - (45 * 60);
+
+    vi.spyOn(window, 'fetch').mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          query: 'AF123',
+          requestedIdentifiers: ['AF123'],
+          matchedIdentifiers: ['AF123'],
+          notFoundIdentifiers: [],
+          fetchedAt: nowMs,
+          flights: [
+            {
+              icao24: 'abc123',
+              callsign: 'AF123',
+              originCountry: 'France',
+              matchedBy: ['AF123'],
+              lastContact: nowSeconds - 30,
+              current: {
+                time: nowSeconds - 30,
+                latitude: 53.94,
+                longitude: -31.25,
+                x: 0,
+                y: 0,
+                altitude: 10650,
+                heading: 290,
+                onGround: false,
+              },
+              originPoint: {
+                time: nowSeconds - 3 * 60 * 60,
+                latitude: 49.0097,
+                longitude: 2.5479,
+                x: 0,
+                y: 0,
+                altitude: 0,
+                heading: 290,
+                onGround: true,
+              },
+              track: [
+                {
+                  time: nowSeconds - 75 * 60,
+                  latitude: 50.45,
+                  longitude: -4.2,
+                  x: 0,
+                  y: 0,
+                  altitude: 9200,
+                  heading: 285,
+                  onGround: false,
+                },
+                {
+                  time: historicalPointTime,
+                  latitude: 52.31,
+                  longitude: -18.8,
+                  x: 0,
+                  y: 0,
+                  altitude: 10100,
+                  heading: 288,
+                  onGround: false,
+                },
+              ],
+              rawTrack: [],
+              onGround: false,
+              velocity: 247,
+              heading: 290,
+              verticalRate: 0,
+              geoAltitude: 10650,
+              baroAltitude: 10690,
+              squawk: '2201',
+              category: 1,
+              route: {
+                departureAirport: 'CDG',
+                arrivalAirport: 'JFK',
+                firstSeen: nowSeconds - 2 * 60 * 60,
+                lastSeen: null,
+              },
+              dataSource: 'opensky',
+              sourceDetails: [],
+              fetchHistory: [
+                {
+                  id: `abc123:search:${nowMs - 90 * 60 * 1000}`,
+                  capturedAt: nowMs - 90 * 60 * 1000,
+                  trigger: 'search',
+                  dataSource: 'opensky',
+                  matchedBy: ['AF123'],
+                  route: {
+                    departureAirport: 'CDG',
+                    arrivalAirport: 'JFK',
+                    firstSeen: nowSeconds - 2 * 60 * 60,
+                    lastSeen: null,
+                  },
+                  current: {
+                    time: nowSeconds - 90 * 60,
+                    latitude: 49.8,
+                    longitude: -1.8,
+                    x: 0,
+                    y: 0,
+                    altitude: 6100,
+                    heading: 284,
+                    onGround: false,
+                  },
+                  onGround: false,
+                  lastContact: nowSeconds - 90 * 60,
+                  velocity: 230,
+                  heading: 284,
+                  geoAltitude: 6100,
+                  baroAltitude: 6120,
+                  flightNumber: 'AF123',
+                  airline: null,
+                  aircraft: null,
+                  departureAirport: null,
+                  arrivalAirport: null,
+                  sourceDetails: [],
+                },
+              ],
+            },
+          ],
+        }),
+        {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        },
+      ),
+    );
+
+    render(
+      <FriendsTrackerClient
+        map={map}
+        initialConfig={{
+          ...initialConfig,
+          destinationAirport: 'JFK',
+          friends: [
+            {
+              id: 'friend-1',
+              name: 'Alice',
+              flights: [
+                {
+                  id: 'leg-1',
+                  flightNumber: 'AF123',
+                  departureTime: new Date(nowMs - 3 * 60 * 60 * 1000).toISOString(),
+                  from: 'CDG',
+                  to: 'JFK',
+                },
+              ],
+            },
+          ],
+        }}
+        airportMarkers={[
+          { id: 'cdg', code: 'CDG', label: 'Paris CDG', latitude: 49.0097, longitude: 2.5479, usage: 'both' },
+          { id: 'jfk', code: 'JFK', label: 'New York JFK', latitude: 40.6413, longitude: -73.7781, usage: 'both' },
+        ]}
+      />,
+    );
+
+    const slider = await screen.findByLabelText(/wayback machine/i);
+    expect(slider).toHaveAttribute('type', 'range');
+
+    await waitFor(() => {
+      const liveFlight = (latestFlightMapProps?.flights as Array<{ current?: { time?: number | null } }> | undefined)?.[0];
+      expect(liveFlight?.current?.time).toBe(nowSeconds - 30);
+    });
+
+    fireEvent.input(slider, {
+      target: { value: String((earlierHistoricalPointTime * 1000) + 1_000) },
+    });
+
+    let earlierCursorLeft = '';
+    await waitFor(() => {
+      const rewoundFlight = (latestFlightMapProps?.flights as Array<{ current?: { time?: number | null }; onGround?: boolean }> | undefined)?.[0];
+      expect(rewoundFlight?.current?.time).toBe(earlierHistoricalPointTime);
+      expect(rewoundFlight?.onGround).toBe(false);
+
+      const earlierPlane = screen.getByLabelText(/flight af123/i);
+      earlierCursorLeft = earlierPlane.parentElement?.style.left ?? '';
+      expect(earlierCursorLeft).not.toBe('');
+    });
+
+    fireEvent.input(slider, {
+      target: { value: String((historicalPointTime * 1000) + 1_000) },
+    });
+
+    await waitFor(() => {
+      const rewoundFlight = (latestFlightMapProps?.flights as Array<{ current?: { time?: number | null }; track?: Array<{ time?: number | null }>; onGround?: boolean }> | undefined)?.[0];
+      expect(rewoundFlight?.current?.time).toBe(historicalPointTime);
+      expect(rewoundFlight?.track?.every((point) => (point.time ?? 0) <= historicalPointTime)).toBe(true);
+      expect(rewoundFlight?.onGround).toBe(false);
+    });
+
+    const laterPlane = screen.getByLabelText(/flight af123/i);
+    const laterCursorLeft = laterPlane.parentElement?.style.left ?? '';
+    expect(laterCursorLeft).not.toBe(earlierCursorLeft);
+    expect(screen.getByText(/historical snapshot/i)).toBeInTheDocument();
+
+    fireEvent.input(slider, {
+      target: { value: String(nowMs - (2 * 60 * 1000)) },
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText(/live now/i)).toBeInTheDocument();
+      const liveFlight = (latestFlightMapProps?.flights as Array<{ current?: { time?: number | null } }> | undefined)?.[0];
+      expect(liveFlight?.current?.time).toBe(nowSeconds - 30);
+    });
+  });
+
+  it('opens the wayback machine from a mobile top-bar button', async () => {
+    vi.stubGlobal(
+      'matchMedia',
+      vi.fn().mockImplementation(() => ({
+        matches: true,
+        media: '(max-width: 1023px)',
+        onchange: null,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+        addListener: vi.fn(),
+        removeListener: vi.fn(),
+        dispatchEvent: vi.fn(),
+      })),
+    );
+
+    const nowMs = Date.now();
+    const nowSeconds = Math.floor(nowMs / 1000);
+
+    vi.spyOn(window, 'fetch').mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          query: 'AF123',
+          requestedIdentifiers: ['AF123'],
+          matchedIdentifiers: ['AF123'],
+          notFoundIdentifiers: [],
+          fetchedAt: nowMs,
+          flights: [
+            {
+              icao24: 'abc123',
+              callsign: 'AF123',
+              originCountry: 'France',
+              matchedBy: ['AF123'],
+              lastContact: nowSeconds - 30,
+              current: {
+                time: nowSeconds - 30,
+                latitude: 53.94,
+                longitude: -31.25,
+                x: 0,
+                y: 0,
+                altitude: 10650,
+                heading: 290,
+                onGround: false,
+              },
+              originPoint: {
+                time: nowSeconds - 3 * 60 * 60,
+                latitude: 49.0097,
+                longitude: 2.5479,
+                x: 0,
+                y: 0,
+                altitude: 0,
+                heading: 290,
+                onGround: true,
+              },
+              track: [],
+              rawTrack: [],
+              onGround: false,
+              velocity: 247,
+              heading: 290,
+              verticalRate: 0,
+              geoAltitude: 10650,
+              baroAltitude: 10690,
+              squawk: '2201',
+              category: 1,
+              route: {
+                departureAirport: 'CDG',
+                arrivalAirport: 'JFK',
+                firstSeen: nowSeconds - 2 * 60 * 60,
+                lastSeen: null,
+              },
+              dataSource: 'opensky',
+              sourceDetails: [],
+              fetchHistory: [
+                {
+                  id: `abc123:search:${nowMs - 90 * 60 * 1000}`,
+                  capturedAt: nowMs - 90 * 60 * 1000,
+                  trigger: 'search',
+                  dataSource: 'opensky',
+                  matchedBy: ['AF123'],
+                  route: {
+                    departureAirport: 'CDG',
+                    arrivalAirport: 'JFK',
+                    firstSeen: nowSeconds - 2 * 60 * 60,
+                    lastSeen: null,
+                  },
+                  current: {
+                    time: nowSeconds - 90 * 60,
+                    latitude: 49.8,
+                    longitude: -1.8,
+                    x: 0,
+                    y: 0,
+                    altitude: 6100,
+                    heading: 284,
+                    onGround: false,
+                  },
+                  onGround: false,
+                  lastContact: nowSeconds - 90 * 60,
+                  velocity: 230,
+                  heading: 284,
+                  geoAltitude: 6100,
+                  baroAltitude: 6120,
+                  flightNumber: 'AF123',
+                  airline: null,
+                  aircraft: null,
+                  departureAirport: null,
+                  arrivalAirport: null,
+                  sourceDetails: [],
+                },
+              ],
+            },
+          ],
+        }),
+        {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        },
+      ),
+    );
+
+    render(
+      <FriendsTrackerClient
+        map={map}
+        initialConfig={{
+          ...initialConfig,
+          destinationAirport: 'JFK',
+          friends: [
+            {
+              id: 'friend-1',
+              name: 'Alice',
+              flights: [
+                {
+                  id: 'leg-1',
+                  flightNumber: 'AF123',
+                  departureTime: new Date(nowMs - 3 * 60 * 60 * 1000).toISOString(),
+                  from: 'CDG',
+                  to: 'JFK',
+                },
+              ],
+            },
+          ],
+        }}
+        airportMarkers={[
+          { id: 'cdg', code: 'CDG', label: 'Paris CDG', latitude: 49.0097, longitude: 2.5479, usage: 'both' },
+          { id: 'jfk', code: 'JFK', label: 'New York JFK', latitude: 40.6413, longitude: -73.7781, usage: 'both' },
+        ]}
+      />,
+    );
+
+    expect(await screen.findByText(/chantal crew tracker/i)).toBeInTheDocument();
+
+    const user = userEvent.setup();
+    const openWaybackButton = screen.getByRole('button', { name: /open wayback machine/i });
+
+    await user.click(openWaybackButton);
+    expect(await screen.findByRole('slider', { name: /wayback machine/i })).toBeInTheDocument();
+
+    await user.click(openWaybackButton);
+    await waitFor(() => {
+      expect(screen.queryByRole('slider', { name: /wayback machine/i })).not.toBeInTheDocument();
+    });
+
+    await user.click(openWaybackButton);
+    expect(await screen.findByRole('slider', { name: /wayback machine/i })).toBeInTheDocument();
+
+    fireEvent.pointerDown(document.body);
+    await waitFor(() => {
+      expect(screen.queryByRole('slider', { name: /wayback machine/i })).not.toBeInTheDocument();
     });
   });
 

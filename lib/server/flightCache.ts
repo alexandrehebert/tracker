@@ -160,6 +160,8 @@ function mergeUniqueStrings(...lists: Array<string[] | undefined>): string[] {
 
 const MAX_RECONCILED_TRACK_POINTS = 120;
 const TRACK_POINT_BUCKET_DECIMALS = 2;
+const MAX_FETCH_HISTORY_ENTRIES = 1_500;
+const FETCH_HISTORY_TIME_BUCKET_SECONDS = 5 * 60;
 
 function chooseMostRecentPoint(next: FlightMapPoint | null, previous: FlightMapPoint | null): FlightMapPoint | null {
   if (!next) {
@@ -418,15 +420,34 @@ function buildSnapshotMaterialKey(snapshot: FlightFetchSnapshot): string {
     .map((detail) => `${detail.source}:${detail.status}:${detail.usedInResult ? 'used' : 'unused'}`)
     .sort();
 
+  const currentPoint = snapshot.current
+    ? {
+        timeBucket: snapshot.current.time != null
+          ? Math.floor(snapshot.current.time / FETCH_HISTORY_TIME_BUCKET_SECONDS)
+          : null,
+        latitude: Number(snapshot.current.latitude.toFixed(2)),
+        longitude: Number(snapshot.current.longitude.toFixed(2)),
+        altitude: snapshot.current.altitude != null
+          ? Math.round(snapshot.current.altitude / 100) * 100
+          : null,
+        onGround: snapshot.current.onGround,
+      }
+    : null;
+
   return JSON.stringify({
     dataSource: snapshot.dataSource,
     route: {
       departureAirport: snapshot.route.departureAirport ?? null,
       arrivalAirport: snapshot.route.arrivalAirport ?? null,
     },
+    currentPoint,
+    lastContactBucket: snapshot.lastContact != null
+      ? Math.floor(snapshot.lastContact / FETCH_HISTORY_TIME_BUCKET_SECONDS)
+      : null,
     onGround: snapshot.onGround,
     velocity: snapshot.velocity ?? null,
     geoAltitude: snapshot.geoAltitude ?? null,
+    heading: snapshot.heading ?? null,
     flightNumber: snapshot.flightNumber ?? null,
     airline: snapshot.airline?.name ?? null,
     aircraft: snapshot.aircraft
@@ -491,7 +512,7 @@ function mergeFlightFetchHistory(
   }
 
   nextHistory.push(snapshot);
-  return nextHistory.slice(-8);
+  return nextHistory.slice(-MAX_FETCH_HISTORY_ENTRIES);
 }
 
 function mergeFetchHistoryLists(...lists: Array<FlightFetchSnapshot[] | undefined>): FlightFetchSnapshot[] {
