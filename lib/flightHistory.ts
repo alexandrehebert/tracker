@@ -166,6 +166,31 @@ function pickMostRecentFlightPoint(points: Array<FlightMapPoint | null | undefin
   return bestPoint;
 }
 
+function getEarliestHistoricalEvidenceTimeMs(flight: TrackedFlight): number | null {
+  let earliestTimeMs: number | null = null;
+
+  const consider = (value: number | null | undefined) => {
+    if (typeof value !== 'number' || !Number.isFinite(value)) {
+      return;
+    }
+
+    earliestTimeMs = earliestTimeMs == null ? value : Math.min(earliestTimeMs, value);
+  };
+
+  consider(typeof flight.route.firstSeen === 'number' ? flight.route.firstSeen * 1000 : null);
+
+  for (const point of [flight.originPoint, ...flight.track, ...(flight.rawTrack ?? []), flight.current]) {
+    consider(getFlightPointTimeMs(point));
+  }
+
+  for (const snapshot of flight.fetchHistory ?? []) {
+    consider(typeof snapshot.route.firstSeen === 'number' ? snapshot.route.firstSeen * 1000 : null);
+    consider(getFlightPointTimeMs(snapshot.current));
+  }
+
+  return earliestTimeMs;
+}
+
 function getLatestHistoricalSnapshot(
   history: FlightFetchSnapshot[] | undefined,
   referenceTimeMs: number,
@@ -252,10 +277,12 @@ export function buildHistoricalFlightView(
   liveTimeMs: number,
   options?: {
     returnToLiveThresholdMs?: number;
+    preTelemetryLeadInMs?: number;
   },
 ): TrackedFlight | null {
   const clampedReferenceTimeMs = Math.min(referenceTimeMs, liveTimeMs);
   const returnToLiveThresholdMs = options?.returnToLiveThresholdMs ?? 0;
+  const preTelemetryLeadInMs = Math.max(options?.preTelemetryLeadInMs ?? 0, 0);
 
   if (clampedReferenceTimeMs >= liveTimeMs - returnToLiveThresholdMs) {
     return flight;
@@ -263,6 +290,15 @@ export function buildHistoricalFlightView(
 
   const routeFirstSeenMs = flight.route.firstSeen != null ? flight.route.firstSeen * 1000 : null;
   const routeLastSeenMs = flight.route.lastSeen != null ? flight.route.lastSeen * 1000 : null;
+  const earliestEvidenceTimeMs = getEarliestHistoricalEvidenceTimeMs(flight);
+
+  if (routeFirstSeenMs != null && clampedReferenceTimeMs < routeFirstSeenMs - preTelemetryLeadInMs) {
+    return null;
+  }
+
+  if (earliestEvidenceTimeMs != null && clampedReferenceTimeMs < earliestEvidenceTimeMs - preTelemetryLeadInMs) {
+    return null;
+  }
   const latestSnapshot = getLatestHistoricalSnapshot(flight.fetchHistory, clampedReferenceTimeMs);
   const liveReferencePoint = flight.current ?? flight.track.at(-1) ?? flight.rawTrack?.at(-1) ?? flight.originPoint ?? null;
   const liveReferenceTimeMs = getFlightPointTimeMs(liveReferencePoint)

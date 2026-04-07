@@ -109,6 +109,15 @@ function isDemoFlightIdentifier(value: string): value is DemoFlightIdentifier {
     || value === 'TEST6';
 }
 
+function resolveDemoFlightIdentifier(value: string): DemoFlightIdentifier | null {
+  if (isDemoFlightIdentifier(value)) {
+    return value;
+  }
+
+  const normalizedAlias = value.match(/^DEMO[-_]?(TEST[1-6])$/)?.[1] ?? null;
+  return normalizedAlias as DemoFlightIdentifier | null;
+}
+
 function createDemoFlightPoint(params: {
   time: number;
   latitude: number;
@@ -751,8 +760,9 @@ function createDemoTrackedFlight(identifier: DemoFlightIdentifier, nowSeconds = 
 function createPresetDemoSearchPayload(query: string, requestedIdentifiers: string[]): TrackerApiResponse | null {
   const matchedEntries = requestedIdentifiers.flatMap((identifier) => {
     const normalizedIdentifier = normalizeIdentifier(identifier);
-    return isDemoFlightIdentifier(normalizedIdentifier)
-      ? [{ requestedIdentifier: identifier, demoIdentifier: normalizedIdentifier }]
+    const demoIdentifier = resolveDemoFlightIdentifier(normalizedIdentifier);
+    return demoIdentifier
+      ? [{ requestedIdentifier: identifier, demoIdentifier }]
       : [];
   });
 
@@ -764,7 +774,7 @@ function createPresetDemoSearchPayload(query: string, requestedIdentifiers: stri
     query,
     requestedIdentifiers,
     matchedIdentifiers: matchedEntries.map((entry) => entry.requestedIdentifier),
-    notFoundIdentifiers: requestedIdentifiers.filter((identifier) => !isDemoFlightIdentifier(normalizeIdentifier(identifier))),
+    notFoundIdentifiers: requestedIdentifiers.filter((identifier) => !resolveDemoFlightIdentifier(normalizeIdentifier(identifier))),
     fetchedAt: Date.now(),
     flights: matchedEntries.map((entry) => createDemoTrackedFlight(entry.demoIdentifier)),
   };

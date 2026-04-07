@@ -308,6 +308,44 @@ describe('searchFlights', () => {
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
+  it('treats auto-locked DEMO-TEST identifiers as fresh preset demo flights', async () => {
+    vi.useFakeTimers();
+
+    try {
+      const firstNow = new Date('2026-04-06T12:00:00.000Z');
+      const secondNow = new Date('2026-04-07T12:00:00.000Z');
+      const fetchMock = vi.fn();
+      vi.stubGlobal('fetch', fetchMock);
+
+      const searchFlights = await loadSearchFlights();
+
+      vi.setSystemTime(firstNow);
+      const firstResult = await searchFlights('DEMO-TEST2,DEMO-TEST4');
+
+      vi.setSystemTime(secondNow);
+      const secondResult = await searchFlights('DEMO-TEST2,DEMO-TEST4');
+
+      expect(fetchMock).not.toHaveBeenCalled();
+      expect(secondResult.requestedIdentifiers).toEqual(['DEMO-TEST2', 'DEMO-TEST4']);
+      expect(secondResult.matchedIdentifiers).toEqual(['DEMO-TEST2', 'DEMO-TEST4']);
+      expect(secondResult.notFoundIdentifiers).toEqual([]);
+
+      const firstBruno = firstResult.flights.find((flight) => flight.callsign === 'BAW117');
+      const secondBruno = secondResult.flights.find((flight) => flight.callsign === 'BAW117');
+      const secondEmma = secondResult.flights.find((flight) => flight.callsign === 'IBE6253');
+
+      expect(firstBruno).toBeTruthy();
+      expect(secondBruno).toBeTruthy();
+      expect(secondEmma).toBeTruthy();
+      expect((secondBruno?.track.at(0)?.time ?? 0)).toBeGreaterThan(Math.floor(secondNow.getTime() / 1000) - (2 * 60 * 60));
+      expect((secondBruno?.track.at(-1)?.time ?? 0)).toBeGreaterThan((firstBruno?.track.at(-1)?.time ?? 0) + (20 * 60 * 60));
+      expect(secondEmma?.matchedBy).toEqual(expect.arrayContaining(['TEST4']));
+      expect(secondEmma?.onGround).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('lets the provider allowlist disable OpenSky before any network call', async () => {
     process.env.OPENSKY_CLIENT_ID = 'client-from-env';
     process.env.OPENSKY_CLIENT_SECRET = 'secret-from-env';

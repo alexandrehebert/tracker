@@ -505,12 +505,21 @@ describe('FlightMap2D', () => {
     const overflowCluster = container.querySelector('[data-cluster-layout="overflow"]');
 
     expect(splitTwoCluster).not.toBeNull();
-    expect(splitTwoCluster?.querySelector('text')).toBeNull();
+    expect(splitTwoCluster?.textContent).toContain('A');
+    expect(splitTwoCluster?.textContent).toContain('B');
     expect(splitThreeCluster).not.toBeNull();
-    expect(splitThreeCluster?.querySelector('text')).toBeNull();
+    expect(splitThreeCluster?.textContent).toContain('C');
+    expect(splitThreeCluster?.textContent).toContain('D');
+    expect(splitThreeCluster?.textContent).toContain('E');
     expect(splitFourCluster).not.toBeNull();
-    expect(splitFourCluster?.querySelector('text')).toBeNull();
+    expect(splitFourCluster?.textContent).toContain('F');
+    expect(splitFourCluster?.textContent).toContain('G');
+    expect(splitFourCluster?.textContent).toContain('H');
+    expect(splitFourCluster?.textContent).toContain('I');
     expect(overflowCluster).not.toBeNull();
+    expect(overflowCluster?.textContent).toContain('J');
+    expect(overflowCluster?.textContent).toContain('K');
+    expect(overflowCluster?.textContent).toContain('L');
     expect(overflowCluster?.textContent).toContain('+1');
   });
 

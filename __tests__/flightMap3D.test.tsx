@@ -863,6 +863,56 @@ describe('FlightMap3D', () => {
     expect(friendOverlay.altitude).toBeGreaterThan(airportOverlay.altitude);
   });
 
+  it('renders clustered friend bubbles with the same grid layout logic as the 2D map', async () => {
+    const { globe } = createGlobeMock();
+    globeFactory.mockReturnValue(() => globe);
+
+    render(
+      <TrackerMapProvider
+        value={{
+          globeRef: { current: null },
+          setGlobeRef: vi.fn(),
+          svgRef: { current: null },
+          mapTransform: { x: 0, y: 0, k: 1, apply: vi.fn(), applyX: vi.fn(), applyY: vi.fn(), invert: vi.fn(), invertX: vi.fn(), invertY: vi.fn(), rescaleX: vi.fn(), rescaleY: vi.fn(), scale: vi.fn(), translate: vi.fn(), toString: vi.fn(() => 'translate(0,0) scale(1)') },
+          zoomBy: vi.fn(),
+          resetZoom: vi.fn(),
+        }}
+      >
+        <FlightMap3D
+          flights={[trackedFlight]}
+          selectedIcao24={null}
+          selectionMode="all"
+          flightAvatars={{
+            [trackedFlight.icao24]: [
+              { friendId: 'friend-1', name: 'Alice Demo', avatarUrl: 'https://example.com/alice.jpg', color: '#22c55e' },
+              { friendId: 'friend-2', name: 'Bob Demo', avatarUrl: 'https://example.com/bob.jpg', color: '#0ea5e9' },
+              { friendId: 'friend-3', name: 'Chloé Demo', avatarUrl: 'https://example.com/chloe.jpg', color: '#f97316' },
+              { friendId: 'friend-4', name: 'Diego Demo', avatarUrl: 'https://example.com/diego.jpg', color: '#a855f7' },
+              { friendId: 'friend-5', name: 'Emma Demo', avatarUrl: null, color: '#ef4444' },
+            ],
+          }}
+        />
+      </TrackerMapProvider>,
+    );
+
+    await waitFor(() => {
+      expect(globe.htmlElement).toHaveBeenCalled();
+      expect(globe.htmlElementsData).toHaveBeenCalled();
+    });
+
+    const htmlElementAccessor = globe.htmlElement.mock.calls.at(-1)?.[0];
+    const renderedHtmlElements = globe.htmlElementsData.mock.calls.at(-1)?.[0] ?? [];
+    const friendOverlay = renderedHtmlElements.find((item: { type?: string; members?: Array<unknown> }) => item.type === 'friend-avatar' && (item.members?.length ?? 0) >= 5);
+    const friendElement = htmlElementAccessor?.(friendOverlay) as HTMLDivElement | undefined;
+    const clusterGrid = friendElement?.querySelector('[data-cluster-layout="overflow"]');
+
+    expect(friendOverlay).toBeDefined();
+    expect(clusterGrid).not.toBeNull();
+    expect(clusterGrid?.querySelectorAll('[data-friend-cluster-segment]').length).toBe(4);
+    expect(clusterGrid?.querySelectorAll('img').length).toBe(4);
+    expect(clusterGrid?.textContent).toContain('+1');
+  });
+
   it('renders an orange departure marker for the selected route like the 2D map', async () => {
     const { globe } = createGlobeMock();
     globeFactory.mockReturnValue(() => globe);

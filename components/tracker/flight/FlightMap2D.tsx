@@ -19,6 +19,8 @@ interface FlightMap2DProps {
   onSelectFlight?: (icao24: string) => void;
   onInitialZoomEnd?: () => void;
   selectionMode?: 'single' | 'all';
+  flightColorIndexes?: ReadonlyMap<string, number>;
+  flightColors?: ReadonlyMap<string, string>;
   flightLabels?: Record<string, string>;
   flightAvatars?: Record<string, FriendAvatarInfo[]>;
   staticFriendMarkers?: FriendAvatarMarker[];
@@ -634,6 +636,13 @@ function renderFriendClusterSegmentFill(
   key: string,
 ) {
   const fill = member?.color ?? FRIEND_CLUSTER_FALLBACK_FILL;
+  const initials = member
+    ? getFriendInitials(member.name).slice(0, width <= 17 || height <= 17 ? 1 : 2)
+    : '';
+  const textColor = getReadableTextColor(fill, { light: '#ffffff' });
+  const textStroke = textColor.startsWith('rgba(15, 23, 42')
+    ? 'rgba(255,255,255,0.28)'
+    : 'rgba(2,6,23,0.5)';
 
   return (
     <g key={key}>
@@ -653,6 +662,23 @@ function renderFriendClusterSegmentFill(
           height={height}
           preserveAspectRatio="xMidYMid slice"
         />
+      ) : null}
+      {member ? (
+        <text
+          x={x + (width / 2)}
+          y={y + (height / 2)}
+          textAnchor="middle"
+          dominantBaseline="middle"
+          fill={textColor}
+          stroke={textStroke}
+          strokeWidth="0.9"
+          paintOrder="stroke"
+          fontSize={width <= 17 || height <= 17 ? '8' : '9.5'}
+          fontWeight="800"
+          fontFamily="ui-sans-serif, system-ui, sans-serif"
+        >
+          {initials}
+        </text>
       ) : null}
     </g>
   );
@@ -939,6 +965,8 @@ export default function FlightMap2D({
   onSelectFlight,
   onInitialZoomEnd,
   selectionMode = 'single',
+  flightColorIndexes,
+  flightColors,
   flightLabels,
   flightAvatars,
   staticFriendMarkers,
@@ -1103,9 +1131,13 @@ export default function FlightMap2D({
     ];
   }, [projectedFlights, selectedFlight]);
 
-  const flightColorIndexes = useMemo(() => {
+  const resolvedFlightColorIndexes = useMemo(() => {
+    if (flightColorIndexes?.size) {
+      return flightColorIndexes;
+    }
+
     return new Map(projectedFlights.map((flight, index) => [flight.icao24, index]));
-  }, [projectedFlights]);
+  }, [flightColorIndexes, projectedFlights]);
 
   const labelObstacles = useMemo(() => {
     return projectedFlights.flatMap<LabelObstacle>((flight) => {
@@ -1296,10 +1328,11 @@ export default function FlightMap2D({
               ?? visibleRoutePoints.at(-1)
               ?? groundFallbackPoint
               ?? routeStartPoint;
-            const colorIndex = flightColorIndexes.get(flight.icao24) ?? index;
+            const colorIndex = resolvedFlightColorIndexes.get(flight.icao24) ?? index;
+            const baseStrokeColor = flightColors?.get(flight.icao24) ?? getFlightMapColor(colorIndex, false);
             const strokeColor = selectionMode === 'all'
-              ? getFlightMapColor(colorIndex, false)
-              : getFlightMapColor(colorIndex, isSelected);
+              ? baseStrokeColor
+              : (isSelected ? getFlightMapColor(colorIndex, true) : baseStrokeColor);
             const activeSelectedFlightDetails = isHighlighted && selectedFlightDetails?.icao24 === flight.icao24
               ? selectedFlightDetails
               : null;

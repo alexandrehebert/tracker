@@ -24,6 +24,7 @@ import {
   getCurrentTripLegs,
   normalizeFriendsTrackerConfig,
   parseDestinationAirportCodes,
+  resolveFriendAccentColor,
   type FriendFlightLeg,
   type FriendFlightStatus,
   type FriendsTrackerConfig,
@@ -55,6 +56,7 @@ const TIMELINE_NODE_SIZE_PX = 14;
 const WAYBACK_STEP_MS = 5 * 60 * 1000;
 const WAYBACK_LIVE_THRESHOLD_MS = 60 * 1000;
 const WAYBACK_RETURN_TO_LIVE_THRESHOLD_MS = Math.max(WAYBACK_LIVE_THRESHOLD_MS, WAYBACK_STEP_MS);
+const WAYBACK_PRE_TELEMETRY_LEAD_IN_MS = 15 * 60 * 1000;
 const STALE_LAST_KNOWN_THRESHOLD_MS = 20 * 60 * 1000;
 
 function snapWaybackSliderValue(valueMs: number, startMs: number, endMs: number): number {
@@ -127,6 +129,18 @@ function withAlphaColor(color: string, alpha: number): string {
 
   if (color.startsWith('rgb(')) {
     return color.replace(/^rgb\((.*)\)$/, `rgba($1, ${normalizedAlpha})`);
+  }
+
+  const hexMatch = color.trim().match(/^#([0-9a-f]{3}|[0-9a-f]{6})$/i);
+  if (hexMatch) {
+    const raw = hexMatch[1]!;
+    const hex = raw.length === 3
+      ? raw.split('').map((character) => `${character}${character}`).join('')
+      : raw;
+    const red = Number.parseInt(hex.slice(0, 2), 16);
+    const green = Number.parseInt(hex.slice(2, 4), 16);
+    const blue = Number.parseInt(hex.slice(4, 6), 16);
+    return `rgba(${red}, ${green}, ${blue}, ${normalizedAlpha})`;
   }
 
   return color;
@@ -417,9 +431,39 @@ function normalizeAirportCode(value: string | null | undefined): string | null {
     : null;
 }
 
+function hasLikelyReachedArrivalAirport(
+  status: FriendFlightStatus,
+  now: number,
+  airportMarkerByCode: Map<string, FlightMapAirportMarker>,
+): boolean {
+  const departureTimeMs = Date.parse(status.leg.departureTime);
+  if (!Number.isFinite(departureTimeMs) || departureTimeMs > now) {
+    return false;
+  }
+
+  if (status.flight?.onGround || status.flight?.current?.onGround) {
+    const landedTimeMs = (status.flight?.route.lastSeen != null ? status.flight.route.lastSeen * 1000 : null)
+      ?? (status.flight?.lastContact != null ? status.flight.lastContact * 1000 : null)
+      ?? getFriendStatusReferenceTimeMs(status);
+
+    return Number.isFinite(landedTimeMs) && landedTimeMs <= now;
+  }
+
+  const fromCode = normalizeAirportCode(status.leg.from);
+  const toCode = normalizeAirportCode(status.leg.to);
+  const fromMarker = fromCode ? airportMarkerByCode.get(fromCode) : undefined;
+  const toMarker = toCode ? airportMarkerByCode.get(toCode) : undefined;
+  const estimatedDurationHours = fromMarker && toMarker
+    ? clampNumber((computeAirportDistanceKm(fromMarker, toMarker) / 780) + 0.75, 1.25, 14)
+    : 4;
+
+  return now >= departureTimeMs + (estimatedDurationHours * 60 * 60 * 1000);
+}
+
 function resolveStaticFriendMarkerAirportCode(
   status: FriendFlightStatus,
   friendStatuses: FriendFlightStatus[],
+  airportMarkerByCode: Map<string, FlightMapAirportMarker>,
   now = Date.now(),
 ): string | null {
   const mostRecentPastStatus = friendStatuses
@@ -432,8 +476,12 @@ function resolveStaticFriendMarkerAirportCode(
     .at(-1)?.status;
 
   if (mostRecentPastStatus) {
-    return normalizeAirportCode(mostRecentPastStatus.leg.to)
-      ?? normalizeAirportCode(mostRecentPastStatus.leg.from);
+    const departureCode = normalizeAirportCode(mostRecentPastStatus.leg.from);
+    const arrivalCode = normalizeAirportCode(mostRecentPastStatus.leg.to);
+
+    return hasLikelyReachedArrivalAirport(mostRecentPastStatus, now, airportMarkerByCode)
+      ? (arrivalCode ?? departureCode)
+      : (departureCode ?? arrivalCode);
   }
 
   return normalizeAirportCode(status.leg.from)
@@ -934,6 +982,7 @@ function FriendsTrackerDashboard({
     return (data?.flights ?? []).flatMap((flight) => {
       const historicalFlight = buildHistoricalFlightView(flight, referenceTimeMs, liveTimeMs, {
         returnToLiveThresholdMs: WAYBACK_RETURN_TO_LIVE_THRESHOLD_MS,
+        preTelemetryLeadInMs: WAYBACK_PRE_TELEMETRY_LEAD_IN_MS,
       });
       return historicalFlight ? [historicalFlight] : [];
     });
@@ -972,13 +1021,60 @@ function FriendsTrackerDashboard({
     ) satisfies Record<string, string>;
   }, [mapStatuses]);
 
-  const flightColorIndexMap = useMemo(() => {
+  const friendColorIndexMap = useMemo(() => {
     return new Map(
-      mapStatuses
-        .filter((status) => status.flight)
-        .map((status, index) => [status.flight!.icao24, index]),
+      config.friends.map((friend, index) => [friend.id, index] as const),
     );
-  }, [mapStatuses]);
+  }, [config.friends]);
+
+  const friendColorMap = useMemo(() => {
+    return new Map(
+      config.friends.map((friend, index) => [friend.id, resolveFriendAccentColor(friend, index)] as const),
+    );
+  }, [config.friends]);
+
+  const flightColorIndexMap = useMemo(() => {
+    const result = new Map<string, number>();
+
+    for (const status of mapStatuses) {
+      if (!status.flight) {
+        continue;
+      }
+
+      const stableColorIndex = friendColorIndexMap.get(status.friend.id) ?? 0;
+      const existingIndex = result.get(status.flight.icao24);
+
+      if (existingIndex == null || stableColorIndex < existingIndex) {
+        result.set(status.flight.icao24, stableColorIndex);
+      }
+    }
+
+    return result;
+  }, [friendColorIndexMap, mapStatuses]);
+
+  const flightColorMap = useMemo(() => {
+    const result = new Map<string, string>();
+    const chosenIndexes = new Map<string, number>();
+
+    for (const status of mapStatuses) {
+      if (!status.flight) {
+        continue;
+      }
+
+      const stableColorIndex = friendColorIndexMap.get(status.friend.id) ?? 0;
+      const existingIndex = chosenIndexes.get(status.flight.icao24);
+
+      if (existingIndex == null || stableColorIndex < existingIndex) {
+        chosenIndexes.set(status.flight.icao24, stableColorIndex);
+        result.set(
+          status.flight.icao24,
+          friendColorMap.get(status.friend.id) ?? getFlightMapColor(stableColorIndex, false),
+        );
+      }
+    }
+
+    return result;
+  }, [friendColorIndexMap, friendColorMap, mapStatuses]);
 
   const flightAvatars = useMemo<Record<string, FriendAvatarInfo[]>>(() => {
     const result: Record<string, FriendAvatarInfo[]> = {};
@@ -989,7 +1085,12 @@ function FriendsTrackerDashboard({
       }
 
       const icao24 = status.flight.icao24;
-      const colorIndex = flightColorIndexMap.get(icao24) ?? 0;
+      const colorIndex = friendColorIndexMap.get(status.friend.id)
+        ?? flightColorIndexMap.get(icao24)
+        ?? 0;
+      const accentColor = friendColorMap.get(status.friend.id)
+        ?? flightColorMap.get(icao24)
+        ?? getFlightMapColor(colorIndex, false);
 
       if (!result[icao24]) {
         result[icao24] = [];
@@ -999,13 +1100,13 @@ function FriendsTrackerDashboard({
         friendId: status.friend.id,
         name: status.friend.name || status.label,
         avatarUrl: status.friend.avatarUrl ?? null,
-        color: getFlightMapColor(colorIndex, false),
+        color: accentColor,
         isStale: isStatusStaleForLiveMap(status, liveTimeMs, isWaybackActive),
       });
     }
 
     return result;
-  }, [flightColorIndexMap, isWaybackActive, liveTimeMs, mapStatuses]);
+  }, [flightColorIndexMap, flightColorMap, friendColorIndexMap, friendColorMap, isWaybackActive, liveTimeMs, mapStatuses]);
 
   const staticFriendMarkers = useMemo<FriendAvatarMarker[]>(() => {
     const airportMarkerByCode = new Map(
@@ -1030,6 +1131,7 @@ function FriendsTrackerDashboard({
       const airportCode = resolveStaticFriendMarkerAirportCode(
         status,
         statusesByFriendId.get(status.friend.id) ?? [status],
+        airportMarkerByCode,
         referenceTimeMs,
       );
       if (!airportCode) {
@@ -1045,39 +1147,22 @@ function FriendsTrackerDashboard({
         id: status.friend.id,
         name: status.friend.name || status.label,
         avatarUrl: status.friend.avatarUrl ?? null,
-        color: getFlightMapColor(index, false),
+        color: friendColorMap.get(status.friend.id) ?? getFlightMapColor(friendColorIndexMap.get(status.friend.id) ?? index, false),
         latitude: airportMarker.latitude,
         longitude: airportMarker.longitude,
         isStale: isStatusStaleForLiveMap(status, liveTimeMs, isWaybackActive),
       } satisfies FriendAvatarMarker];
     });
-  }, [airportMarkers, isWaybackActive, liveTimeMs, mapStatuses, referenceTimeMs, statuses]);
+  }, [airportMarkers, friendColorIndexMap, isWaybackActive, liveTimeMs, mapStatuses, referenceTimeMs, statuses]);
 
   const friendAccentColors = useMemo(() => {
-    const result = new Map<string, string>();
-
-    for (const avatarInfos of Object.values(flightAvatars)) {
-      for (const info of avatarInfos) {
-        if (!result.has(info.friendId)) {
-          result.set(info.friendId, info.color);
-        }
-      }
-    }
-
-    for (const marker of staticFriendMarkers) {
-      if (!result.has(marker.id)) {
-        result.set(marker.id, marker.color);
-      }
-    }
-
-    config.friends.forEach((friend, index) => {
-      if (!result.has(friend.id)) {
-        result.set(friend.id, getFlightMapColor(index, false));
-      }
-    });
-
-    return result;
-  }, [config.friends, flightAvatars, staticFriendMarkers]);
+    return new Map(
+      config.friends.map((friend, index) => [
+        friend.id,
+        friendColorMap.get(friend.id) ?? getFlightMapColor(index, false),
+      ] as const),
+    );
+  }, [config.friends, friendColorMap]);
 
   const runSearch = useCallback(async (
     options: {
@@ -1353,7 +1438,7 @@ function FriendsTrackerDashboard({
             destinationAirport={destinationAirport}
             referenceTimeMs={referenceTimeMs}
             airportMarkers={airportMarkers}
-            accentColor={friendAccentColors.get(friend.id) ?? getFlightMapColor(index, false)}
+            accentColor={friendAccentColors.get(friend.id) ?? resolveFriendAccentColor(friend, index)}
           />
         );
       })}
@@ -1401,6 +1486,8 @@ function FriendsTrackerDashboard({
             mapView={mapView}
             selectedIcao24={null}
             selectionMode="all"
+            flightColorIndexes={flightColorIndexMap}
+            flightColors={flightColorMap}
             flightLabels={flightLabels}
             flightAvatars={flightAvatars}
             staticFriendMarkers={staticFriendMarkers}

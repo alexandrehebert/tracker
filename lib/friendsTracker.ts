@@ -22,6 +22,7 @@ export interface FriendTravelConfig {
   id: string;
   name: string;
   avatarUrl?: string | null;
+  color?: string | null;
   flights: FriendFlightLeg[];
 }
 
@@ -130,6 +131,108 @@ function isMatchedStatusActiveAtTime(status: FriendFlightStatus | undefined, ref
 
 function normalizeOptionalText(value: unknown): string | null {
   return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+const CSS_HEX_COLOR_PATTERN = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i;
+const CSS_FUNCTION_COLOR_PATTERN = /^(?:rgb|rgba|hsl|hsla)\(([^)]+)\)$/i;
+const AUTO_FRIEND_COLOR_PALETTE = [
+  '#ef4444',
+  '#06b6d4',
+  '#f59e0b',
+  '#8b5cf6',
+  '#22c55e',
+  '#ec4899',
+  '#3b82f6',
+  '#84cc16',
+  '#f97316',
+  '#14b8a6',
+  '#e11d48',
+  '#6366f1',
+] as const;
+const AUTO_FRIEND_COLOR_STEP = 5;
+
+export function normalizeConfiguredFriendColor(value: unknown): string | null {
+  if (typeof value !== 'string') {
+    return null;
+  }
+
+  const normalized = value.trim();
+  if (!normalized) {
+    return null;
+  }
+
+  return CSS_HEX_COLOR_PATTERN.test(normalized) || CSS_FUNCTION_COLOR_PATTERN.test(normalized)
+    ? normalized
+    : null;
+}
+
+function hashFriendColorSeed(value: string): number {
+  let hash = 0;
+
+  for (const character of value) {
+    hash = ((hash * 31) + character.charCodeAt(0)) >>> 0;
+  }
+
+  return hash;
+}
+
+function getGeneratedFriendColorFromSeed(seedIndex: number, attempt = 0): string {
+  const paletteIndex = (seedIndex + (attempt * AUTO_FRIEND_COLOR_STEP)) % AUTO_FRIEND_COLOR_PALETTE.length;
+  return AUTO_FRIEND_COLOR_PALETTE[paletteIndex]!;
+}
+
+function assignAutoFriendColors(friends: FriendTravelConfig[]): FriendTravelConfig[] {
+  const usedColors = new Set<string>();
+
+  return friends.map((friend, friendIndex) => {
+    const configuredColor = normalizeConfiguredFriendColor(friend.color);
+    if (configuredColor) {
+      usedColors.add(configuredColor);
+      return {
+        ...friend,
+        color: configuredColor,
+      };
+    }
+
+    const seed = [friend.id, friend.name]
+      .filter((value): value is string => typeof value === 'string' && Boolean(value.trim()))
+      .map((value) => value.trim().toLowerCase())
+      .join(':');
+    const seedIndex = seed ? hashFriendColorSeed(seed) : friendIndex;
+
+    let resolvedColor = getGeneratedFriendColorFromSeed(seedIndex);
+    for (let attempt = 0; attempt < AUTO_FRIEND_COLOR_PALETTE.length; attempt += 1) {
+      const candidateColor = getGeneratedFriendColorFromSeed(seedIndex, attempt);
+      if (!usedColors.has(candidateColor)) {
+        resolvedColor = candidateColor;
+        break;
+      }
+    }
+
+    usedColors.add(resolvedColor);
+    return {
+      ...friend,
+      color: resolvedColor,
+    };
+  });
+}
+
+export function resolveFriendAccentColor(
+  friend: Pick<Partial<FriendTravelConfig>, 'id' | 'name' | 'color'> | null | undefined,
+  fallbackIndex = 0,
+): string {
+  const configuredColor = normalizeConfiguredFriendColor(friend?.color);
+  if (configuredColor) {
+    return configuredColor;
+  }
+
+  const seed = [friend?.id, friend?.name]
+    .filter((value): value is string => typeof value === 'string' && Boolean(value.trim()))
+    .map((value) => value.trim().toLowerCase())
+    .join(':');
+
+  const seedIndex = seed ? hashFriendColorSeed(seed) : fallbackIndex;
+  return getGeneratedFriendColorFromSeed(seedIndex);
 }
 
 function getServiceDayKey(timestampMs: number, timeZone: string | null | undefined): string {
@@ -281,6 +384,7 @@ export function createEmptyFriendConfig(): FriendTravelConfig {
     id: '',
     name: '',
     avatarUrl: null,
+    color: null,
     flights: [createEmptyFriendFlightLeg()],
   };
 }
@@ -467,6 +571,7 @@ function mergeDemoFriend(
     ...freshFriend,
     name: existingFriend.name || freshFriend.name,
     avatarUrl: existingFriend.avatarUrl ?? freshFriend.avatarUrl,
+    color: normalizeConfiguredFriendColor(existingFriend.color) ?? freshFriend.color,
     flights: [...mergedFlights, ...extraFlights],
   };
 }
@@ -500,7 +605,9 @@ function ensureDemoTrip(
   trips: FriendsTrackerTripConfig[],
   demoReferenceTime = getDemoReferenceTime(),
 ): FriendsTrackerTripConfig[] {
-  const freshDemoTrip = buildDefaultDemoTrip(getDemoReferenceTime(demoReferenceTime));
+  const freshDemoTrip = normalizeFriendsTrackerTripConfig(
+    buildDefaultDemoTrip(getDemoReferenceTime(demoReferenceTime)),
+  );
   let hasDemoTrip = false;
 
   const refreshedTrips = trips.map((trip) => {
@@ -545,11 +652,14 @@ export function normalizeFriendConfig(
   const flights = Array.isArray(input?.flights)
     ? input.flights.map((leg, legIndex) => normalizeFriendFlightLeg(leg, friendIndex, legIndex))
     : [normalizeFriendFlightLeg(null, friendIndex, 0)];
+  const id = typeof input?.id === 'string' && input.id.trim() ? input.id.trim() : getFallbackId('friend', friendIndex);
+  const name = typeof input?.name === 'string' && input.name.trim() ? input.name.trim() : `Friend ${friendIndex + 1}`;
 
   return {
-    id: typeof input?.id === 'string' && input.id.trim() ? input.id.trim() : getFallbackId('friend', friendIndex),
-    name: typeof input?.name === 'string' && input.name.trim() ? input.name.trim() : `Friend ${friendIndex + 1}`,
+    id,
+    name,
     avatarUrl: typeof input?.avatarUrl === 'string' && input.avatarUrl ? input.avatarUrl : null,
+    color: normalizeConfiguredFriendColor(input?.color),
     flights,
   };
 }
@@ -559,9 +669,10 @@ export function normalizeFriendsTrackerTripConfig(
   tripIndex = 0,
   fallbackName?: string,
 ): FriendsTrackerTripConfig {
-  const friends = Array.isArray(input?.friends)
+  const baseFriends = Array.isArray(input?.friends)
     ? input.friends.map((friend, friendIndex) => normalizeFriendConfig(friend, friendIndex))
     : [];
+  const friends = assignAutoFriendColors(baseFriends);
 
   return {
     id: typeof input?.id === 'string' && input.id.trim() ? input.id.trim() : getFallbackId('trip', tripIndex),

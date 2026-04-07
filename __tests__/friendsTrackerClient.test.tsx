@@ -441,8 +441,8 @@ describe('FriendsTrackerClient', () => {
         expect.arrayContaining([
           expect.objectContaining({
             id: 'friend-1',
-            latitude: 40.6413,
-            longitude: -73.7781,
+            latitude: 40.4983,
+            longitude: -3.5676,
           }),
         ]),
       );
@@ -637,16 +637,29 @@ describe('FriendsTrackerClient', () => {
   });
 
   it('renders the configured friend avatar in the sidebar card with the same color coding as the map', async () => {
-    render(<FriendsTrackerClient map={map} initialConfig={initialConfig} airportMarkers={[]} />);
+    render(
+      <FriendsTrackerClient
+        map={map}
+        initialConfig={{
+          ...initialConfig,
+          friends: [
+            {
+              ...initialConfig.friends[0]!,
+              color: '#f97316',
+            },
+          ],
+        }}
+        airportMarkers={[]}
+      />,
+    );
 
     expect(await screen.findByText(/chantal crew tracker/i)).toBeInTheDocument();
 
     const avatarImage = screen.getByRole('img', { name: /alice/i });
     expect(avatarImage).toHaveAttribute('src', expect.stringContaining('data:image/svg+xml'));
-    expect(avatarImage.parentElement).toHaveStyle({
-      borderColor: 'hsl(0, 78%, 64%)',
-      backgroundColor: 'hsla(0, 78%, 64%, 0.18)',
-    });
+    const avatarStyle = avatarImage.parentElement?.getAttribute('style') ?? '';
+    expect(avatarStyle).toContain('border-color: rgb(249, 115, 22)');
+    expect(avatarStyle).toContain('background-color: rgba(249, 115, 22, 0.18)');
   });
 
   it('keeps the transparent gaps in the top action area from blocking map hover targets', async () => {
@@ -1298,6 +1311,109 @@ describe('FriendsTrackerClient', () => {
     expect(plane.parentElement).toHaveStyle({ transform: 'translate(-50%, -50%)' });
   });
 
+  it('keeps friend bubble colors stable while rewinding even when other demo flights drop out of telemetry', async () => {
+    const nowMs = Date.now();
+    const nowSeconds = Math.floor(nowMs / 1000);
+
+    vi.spyOn(window, 'fetch').mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          query: 'TEST1,TEST2',
+          requestedIdentifiers: ['TEST1', 'TEST2'],
+          matchedIdentifiers: ['TEST1', 'TEST2'],
+          notFoundIdentifiers: [],
+          fetchedAt: nowMs,
+          flights: [
+            {
+              icao24: 'demo-test1',
+              callsign: 'AFR006',
+              originCountry: 'France',
+              matchedBy: ['TEST1'],
+              lastContact: nowSeconds - 45,
+              current: { time: nowSeconds - 45, latitude: 49.01, longitude: 2.55, x: 0, y: 0, altitude: 0, heading: 95, onGround: true },
+              originPoint: { time: nowSeconds - 240, latitude: 49.0088, longitude: 2.5486, x: 0, y: 0, altitude: 0, heading: 90, onGround: true },
+              track: [], rawTrack: [], onGround: true, velocity: 12, heading: 95, verticalRate: 0, geoAltitude: 0, baroAltitude: 0,
+              squawk: '1001', category: 0,
+              route: { departureAirport: 'CDG', arrivalAirport: 'JFK', firstSeen: null, lastSeen: null },
+              dataSource: 'opensky', sourceDetails: [],
+            },
+            {
+              icao24: 'demo-test2',
+              callsign: 'BAW117',
+              originCountry: 'United Kingdom',
+              matchedBy: ['TEST2'],
+              lastContact: nowSeconds - 75,
+              current: { time: nowSeconds - 75, latitude: 53.94, longitude: -31.25, x: 0, y: 0, altitude: 10650, heading: 291, onGround: false },
+              originPoint: { time: nowSeconds - 4200, latitude: 52.62, longitude: -8.41, x: 0, y: 0, altitude: 7200, heading: 287, onGround: false },
+              track: [], rawTrack: [], onGround: false, velocity: 247, heading: 291, verticalRate: 0, geoAltitude: 10650, baroAltitude: 10690,
+              squawk: '2201', category: 1,
+              route: { departureAirport: 'LHR', arrivalAirport: 'JFK', firstSeen: nowSeconds - 5400, lastSeen: null },
+              dataSource: 'opensky', sourceDetails: [],
+            },
+          ],
+        }),
+        {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        },
+      ),
+    );
+
+    render(
+      <FriendsTrackerClient
+        map={map}
+        initialConfig={{
+          ...initialConfig,
+          destinationAirport: 'JFK',
+          friends: [
+            {
+              id: 'friend-1',
+              name: 'Alice Demo',
+              flights: [{ id: 'leg-1', flightNumber: 'TEST1', departureTime: new Date(nowMs + 45 * 60 * 1000).toISOString(), from: 'CDG', to: 'JFK' }],
+            },
+            {
+              id: 'friend-2',
+              name: 'Bruno Demo',
+              flights: [{ id: 'leg-2', flightNumber: 'TEST2', departureTime: new Date(nowMs - 2 * 60 * 60 * 1000).toISOString(), from: 'LHR', to: 'JFK' }],
+            },
+          ],
+        }}
+        airportMarkers={[
+          { id: 'cdg', code: 'CDG', label: 'Paris Charles de Gaulle', latitude: 49.0097, longitude: 2.5479, usage: 'both' },
+          { id: 'lhr', code: 'LHR', label: 'London Heathrow', latitude: 51.47, longitude: -0.4543, usage: 'both' },
+          { id: 'jfk', code: 'JFK', label: 'New York JFK', latitude: 40.6413, longitude: -73.7781, usage: 'both' },
+        ]}
+      />,
+    );
+
+    const slider = await screen.findByLabelText(/wayback machine/i);
+
+    let liveBrunoColor = '';
+    let liveBrunoRouteColor = '';
+    await waitFor(() => {
+      const flightAvatars = latestFlightMapProps?.flightAvatars as Record<string, Array<{ friendId: string; color: string }>> | undefined;
+      const flightColors = latestFlightMapProps?.flightColors as Map<string, string> | undefined;
+      liveBrunoColor = flightAvatars?.['demo-test2']?.find((entry) => entry.friendId === 'friend-2')?.color ?? '';
+      liveBrunoRouteColor = flightColors?.get('demo-test2') ?? '';
+      expect(liveBrunoColor).not.toBe('');
+      expect(liveBrunoRouteColor).toBe(liveBrunoColor);
+    });
+
+    fireEvent.input(slider, {
+      target: { value: String(nowMs - (30 * 60 * 1000)) },
+    });
+
+    await waitFor(() => {
+      const flightAvatars = latestFlightMapProps?.flightAvatars as Record<string, Array<{ friendId: string; color: string }>> | undefined;
+      const flightColors = latestFlightMapProps?.flightColors as Map<string, string> | undefined;
+      const rewoundBrunoColor = flightAvatars?.['demo-test2']?.find((entry) => entry.friendId === 'friend-2')?.color ?? '';
+      const rewoundBrunoRouteColor = flightColors?.get('demo-test2') ?? '';
+      expect(rewoundBrunoColor).toBe(liveBrunoColor);
+      expect(rewoundBrunoRouteColor).toBe(liveBrunoRouteColor);
+      expect(rewoundBrunoRouteColor).toBe(rewoundBrunoColor);
+    });
+  });
+
   it('shows not-started, in-flight, and arrived states across demo-style friends', async () => {
     const nowSeconds = Math.floor(Date.now() / 1000);
 
@@ -1524,6 +1640,105 @@ describe('FriendsTrackerClient', () => {
       const brunoCard = screen.getByText(/bruno demo/i).closest('article');
       expect(brunoCard).toHaveTextContent(/not started/i);
       expect(within(brunoCard!).queryByLabelText(/flight test2/i)).not.toBeInTheDocument();
+    });
+  });
+
+  it('keeps a landed demo friend pinned to the departure airport before the historical track actually begins', async () => {
+    const nowMs = Date.now();
+    const nowSeconds = Math.floor(nowMs / 1000);
+
+    vi.spyOn(window, 'fetch').mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          query: 'TEST3',
+          requestedIdentifiers: ['TEST3'],
+          matchedIdentifiers: ['TEST3'],
+          notFoundIdentifiers: [],
+          fetchedAt: nowMs,
+          flights: [
+            {
+              icao24: 'demo-test3',
+              callsign: 'DAL220',
+              originCountry: 'United States',
+              matchedBy: ['TEST3'],
+              lastContact: nowSeconds - 90,
+              current: { time: nowSeconds - 90, latitude: 40.6413, longitude: -73.7781, x: 0, y: 0, altitude: 0, heading: 89, onGround: true },
+              originPoint: { time: nowSeconds - 3600, latitude: 33.6407, longitude: -84.4277, x: 0, y: 0, altitude: 0, heading: 45, onGround: true },
+              track: [], rawTrack: [], onGround: true, velocity: 6, heading: 89, verticalRate: 0, geoAltitude: 0, baroAltitude: 0,
+              squawk: '1453', category: 1,
+              route: { departureAirport: 'ATL', arrivalAirport: 'JFK', firstSeen: nowSeconds - 4800, lastSeen: nowSeconds - 120 },
+              dataSource: 'opensky', sourceDetails: [],
+            },
+          ],
+        }),
+        {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        },
+      ),
+    );
+
+    render(
+      <FriendsTrackerClient
+        map={map}
+        initialConfig={{
+          ...initialConfig,
+          destinationAirport: 'JFK',
+          friends: [
+            {
+              id: 'friend-1',
+              name: 'Chloe Demo',
+              flights: [
+                {
+                  id: 'leg-1',
+                  flightNumber: 'TEST3',
+                  departureTime: new Date(nowMs - 3 * 60 * 60 * 1000).toISOString(),
+                  from: 'ATL',
+                  to: 'JFK',
+                },
+              ],
+            },
+          ],
+        }}
+        airportMarkers={[
+          { id: 'atl', code: 'ATL', label: 'Atlanta', latitude: 33.6407, longitude: -84.4277, usage: 'both' },
+          { id: 'jfk', code: 'JFK', label: 'New York JFK', latitude: 40.6413, longitude: -73.7781, usage: 'both' },
+        ]}
+      />,
+    );
+
+    const slider = await screen.findByLabelText(/wayback machine/i);
+    fireEvent.input(slider, {
+      target: { value: String(nowMs - (2 * 60 * 60) - (30 * 60 * 1000)) },
+    });
+
+    await waitFor(() => {
+      const visibleFlight = (latestFlightMapProps?.flights as Array<{
+        current?: { latitude?: number | null; longitude?: number | null } | null;
+        originPoint?: { latitude?: number | null; longitude?: number | null } | null;
+      }> | undefined)?.[0] ?? null;
+      const staticFriendMarkers = latestFlightMapProps?.staticFriendMarkers as Array<{
+        id: string;
+        latitude: number;
+        longitude: number;
+      }> | undefined;
+
+      if (visibleFlight) {
+        const anchoredPoint = visibleFlight.current ?? visibleFlight.originPoint;
+        expect(anchoredPoint?.latitude ?? 0).toBeLessThan(39.5);
+        expect(anchoredPoint?.longitude ?? 0).toBeLessThan(-75);
+        return;
+      }
+
+      expect(staticFriendMarkers).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            id: 'friend-1',
+            latitude: 33.6407,
+            longitude: -84.4277,
+          }),
+        ]),
+      );
     });
   });
 

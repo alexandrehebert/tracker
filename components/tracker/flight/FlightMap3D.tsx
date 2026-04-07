@@ -41,6 +41,63 @@ const PATH_POINT_DUPLICATE_DISTANCE_KM = 12;
 const GROUND_RING_ALTITUDE = COUNTRY_ALTITUDE + 0.001;
 const FRIEND_AVATAR_CLUSTER_DEGREES = 2.5;
 const FRIEND_AVATAR_ALTITUDE = DEPARTURE_MARKER_ALTITUDE + 0.006;
+const FRIEND_CLUSTER_FALLBACK_FILL = 'rgba(15,23,42,0.94)';
+const FRIEND_CLUSTER_DIVIDER_STROKE = 'rgba(255,255,255,0.42)';
+
+type FriendClusterLayout = 'single' | 'split-2' | 'split-3' | 'split-4' | 'overflow';
+
+type FriendClusterSegmentDefinition = {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+};
+
+function getFriendClusterLayout(memberCount: number): FriendClusterLayout {
+  if (memberCount <= 1) {
+    return 'single';
+  }
+
+  if (memberCount === 2) {
+    return 'split-2';
+  }
+
+  if (memberCount === 3) {
+    return 'split-3';
+  }
+
+  if (memberCount === 4) {
+    return 'split-4';
+  }
+
+  return 'overflow';
+}
+
+function getFriendClusterSegmentDefinitions(
+  layout: Exclude<FriendClusterLayout, 'single'>,
+): FriendClusterSegmentDefinition[] {
+  if (layout === 'split-2') {
+    return [
+      { left: 0, top: 0, width: 50, height: 100 },
+      { left: 50, top: 0, width: 50, height: 100 },
+    ];
+  }
+
+  if (layout === 'split-3') {
+    return [
+      { left: 0, top: 0, width: 50, height: 50 },
+      { left: 0, top: 50, width: 50, height: 50 },
+      { left: 50, top: 0, width: 50, height: 100 },
+    ];
+  }
+
+  return [
+    { left: 0, top: 0, width: 50, height: 50 },
+    { left: 50, top: 0, width: 50, height: 50 },
+    { left: 0, top: 50, width: 50, height: 50 },
+    { left: 50, top: 50, width: 50, height: 50 },
+  ];
+}
 
 interface FlightMap3DProps {
   flights: TrackedFlight[];
@@ -50,6 +107,8 @@ interface FlightMap3DProps {
   onSelectFlight?: (icao24: string) => void;
   onInitialZoomEnd?: () => void;
   selectionMode?: 'single' | 'all';
+  flightColorIndexes?: ReadonlyMap<string, number>;
+  flightColors?: ReadonlyMap<string, string>;
   flightLabels?: Record<string, string>;
   flightAvatars?: Record<string, FriendAvatarInfo[]>;
   staticFriendMarkers?: FriendAvatarMarker[];
@@ -747,6 +806,8 @@ export default function FlightMap3D({
   onSelectFlight,
   onInitialZoomEnd,
   selectionMode = 'single',
+  flightColorIndexes,
+  flightColors,
   flightLabels,
   flightAvatars,
   staticFriendMarkers,
@@ -852,6 +913,8 @@ export default function FlightMap3D({
         const selected = selectionMode === 'single' && flight.icao24 === selectedIcao24;
         const highlighted = selectionMode === 'all' || selected;
         const flightAltitude = getFlightDisplayAltitude(currentPoint, highlighted);
+        const colorIndex = flightColorIndexes?.get(flight.icao24) ?? index;
+        const defaultColor = flightColors?.get(flight.icao24) ?? getFlightMapColor(colorIndex, false);
 
         return {
           icao24: flight.icao24,
@@ -861,12 +924,12 @@ export default function FlightMap3D({
           lng: currentPoint.longitude,
           altitude: highlighted ? SELECTED_POINT_MARKER_ALTITUDE : POINT_MARKER_ALTITUDE,
           flightAltitude,
-          color: selected ? SELECTED_FLIGHT_COLOR : getFlightMapColor(index, false),
+          color: selected ? SELECTED_FLIGHT_COLOR : defaultColor,
           selected: highlighted,
         } satisfies GlobePointDatum;
       })
       .filter((point): point is GlobePointDatum => Boolean(point));
-  }, [flightLabels, flights, selectedIcao24, selectionMode]);
+  }, [flightColorIndexes, flightColors, flightLabels, flights, selectedIcao24, selectionMode]);
 
   const activeRouteIcao24 = useMemo(() => {
     if (selectionMode !== 'single') {
@@ -882,7 +945,9 @@ export default function FlightMap3D({
     if (selectionMode === 'all') {
       return flights.flatMap((flight, index) => {
         const matchingDetails = selectedFlightDetails?.icao24 === flight.icao24 ? selectedFlightDetails : null;
-        return buildFlightPathData(flight, matchingDetails, true, getFlightMapColor(index, false));
+        const colorIndex = flightColorIndexes?.get(flight.icao24) ?? index;
+        const defaultColor = flightColors?.get(flight.icao24) ?? getFlightMapColor(colorIndex, false);
+        return buildFlightPathData(flight, matchingDetails, true, defaultColor);
       });
     }
 
@@ -895,9 +960,10 @@ export default function FlightMap3D({
       return [];
     }
 
-    const colorIndex = Math.max(0, flights.findIndex((flight) => flight.icao24 === activeRouteIcao24));
+    const colorIndex = flightColorIndexes?.get(activeRouteIcao24)
+      ?? Math.max(0, flights.findIndex((flight) => flight.icao24 === activeRouteIcao24));
     return buildFlightPathData(activeFlight, selectedFlightDetails, true, SELECTED_FLIGHT_COLOR || getFlightMapColor(colorIndex, true));
-  }, [activeRouteIcao24, flights, selectedFlightDetails, selectionMode]);
+  }, [activeRouteIcao24, flightColorIndexes, flightColors, flights, selectedFlightDetails, selectionMode]);
 
   const labelData = useMemo(() => {
     const labels = selectionMode === 'all'
@@ -1355,89 +1421,144 @@ export default function FlightMap3D({
 
             element.appendChild(bubble);
           } else {
-            const clusterNames = item.members.length <= 3
-              ? item.members.map((m) => m.isStale ? `${m.name} (last known)` : m.name).join(', ')
-              : `${item.members.slice(0, 2).map((m) => m.isStale ? `${m.name} (last known)` : m.name).join(', ')} +${item.members.length - 2}`;
+            const clusterLayout = getFriendClusterLayout(item.members.length);
+            const memberLabels = item.members.map((member) => member.isStale ? `${member.name} (last known)` : member.name);
+            const clusterNames = item.members.length <= 4
+              ? memberLabels.join(', ')
+              : `${memberLabels.slice(0, 4).join(', ')} +${item.members.length - 4}`;
             nameBadge.textContent = hasStaleMembers ? `${clusterNames} • ${staleCount} stale` : clusterNames;
 
             const clusterContainer = document.createElement('div');
+            clusterContainer.dataset.clusterLayout = clusterLayout;
+            clusterContainer.dataset.clusterSize = String(item.members.length);
+            clusterContainer.dataset.clusterStale = isFullyStale ? 'all' : hasStaleMembers ? 'partial' : 'none';
             clusterContainer.style.width = `${size}px`;
             clusterContainer.style.height = `${size}px`;
             clusterContainer.style.borderRadius = '50%';
             clusterContainer.style.position = 'relative';
-            clusterContainer.style.background = 'rgba(2,6,23,0.85)';
+            clusterContainer.style.background = 'rgba(15,23,42,0.24)';
             clusterContainer.style.border = '2.5px solid rgba(255,255,255,0.95)';
-            clusterContainer.style.boxShadow = '0 6px 16px rgba(2,6,23,0.4)';
+            clusterContainer.style.boxShadow = '0 0 0 3px rgba(15,23,42,0.24), 0 6px 16px rgba(2,6,23,0.4)';
             clusterContainer.style.overflow = 'hidden';
             clusterContainer.style.filter = 'none';
-            clusterContainer.style.display = 'flex';
-            clusterContainer.style.alignItems = 'center';
-            clusterContainer.style.justifyContent = 'center';
 
-            const memberCount = Math.min(item.members.length, 3);
-            item.members.slice(0, memberCount).forEach((member, memberIndex) => {
-              const angle = (memberIndex / memberCount) * 2 * Math.PI - Math.PI / 2;
-              const offset = 9;
-              const tx = Math.cos(angle) * offset + halfSize;
-              const ty = Math.sin(angle) * offset + halfSize;
-              const thumbSize = 12;
+            const fillLayer = document.createElement('div');
+            fillLayer.style.position = 'absolute';
+            fillLayer.style.inset = '0';
+            fillLayer.style.borderRadius = '50%';
+            fillLayer.style.overflow = 'hidden';
+            fillLayer.style.background = 'rgba(2,6,23,0.9)';
 
-              const thumb = document.createElement('div');
-              thumb.style.position = 'absolute';
-              thumb.style.width = `${thumbSize}px`;
-              thumb.style.height = `${thumbSize}px`;
-              thumb.style.borderRadius = '50%';
-              thumb.style.left = `${tx - thumbSize / 2}px`;
-              thumb.style.top = `${ty - thumbSize / 2}px`;
-              thumb.style.background = member.color;
-              thumb.style.border = '1.5px solid rgba(255,255,255,0.8)';
-              thumb.style.overflow = 'hidden';
-              thumb.style.display = 'flex';
-              thumb.style.filter = 'none';
-              thumb.style.alignItems = 'center';
-              thumb.style.justifyContent = 'center';
+            const segmentDefinitions = getFriendClusterSegmentDefinitions(clusterLayout === 'single' ? 'split-2' : clusterLayout);
+            const overflowCount = Math.max(0, item.members.length - 4);
+            const overflowSegment = clusterLayout === 'overflow'
+              ? segmentDefinitions[3] ?? null
+              : null;
 
-              if (member.avatarUrl) {
+            segmentDefinitions.forEach((segment, segmentIndex) => {
+              const member = item.members[segmentIndex];
+              const segmentElement = document.createElement('div');
+              segmentElement.dataset.friendClusterSegment = `${segmentIndex}`;
+              segmentElement.style.position = 'absolute';
+              segmentElement.style.left = `${segment.left}%`;
+              segmentElement.style.top = `${segment.top}%`;
+              segmentElement.style.width = `${segment.width}%`;
+              segmentElement.style.height = `${segment.height}%`;
+              segmentElement.style.background = member?.color ?? FRIEND_CLUSTER_FALLBACK_FILL;
+              segmentElement.style.overflow = 'hidden';
+
+              if (member?.avatarUrl) {
                 const img = document.createElement('img');
                 img.src = member.avatarUrl;
+                img.alt = member.name;
                 img.style.width = '100%';
                 img.style.height = '100%';
                 img.style.objectFit = 'cover';
-                img.alt = member.name;
-                thumb.appendChild(img);
-              } else {
+                segmentElement.appendChild(img);
+              }
+
+              if (member) {
                 const initSpan = document.createElement('span');
                 const initialsColor = getReadableTextColor(member.color, { light: '#ffffff' });
                 initSpan.textContent = getFriendInitials(member.name).slice(0, 1);
+                initSpan.style.position = 'absolute';
+                initSpan.style.left = '50%';
+                initSpan.style.top = '50%';
+                initSpan.style.transform = 'translate(-50%, -50%)';
                 initSpan.style.color = initialsColor;
                 initSpan.style.textShadow = initialsColor.startsWith('rgba(15, 23, 42')
                   ? '0 1px 1px rgba(255,255,255,0.22)'
                   : '0 1px 1px rgba(2,6,23,0.4)';
-                initSpan.style.fontSize = '6px';
-                initSpan.style.fontWeight = '700';
+                initSpan.style.fontSize = segment.width < 100 || segment.height < 100 ? '8px' : '10px';
+                initSpan.style.fontWeight = '800';
                 initSpan.style.fontFamily = 'ui-sans-serif, system-ui, sans-serif';
-                thumb.appendChild(initSpan);
+                initSpan.style.pointerEvents = 'none';
+
+                if (member.avatarUrl) {
+                  initSpan.style.background = 'rgba(2,6,23,0.68)';
+                  initSpan.style.borderRadius = '999px';
+                  initSpan.style.padding = '0 3px';
+                  initSpan.style.left = 'auto';
+                  initSpan.style.right = '2px';
+                  initSpan.style.top = 'auto';
+                  initSpan.style.bottom = '1px';
+                  initSpan.style.transform = 'none';
+                  initSpan.style.fontSize = '7px';
+                  initSpan.style.lineHeight = '1.2';
+                }
+
+                segmentElement.appendChild(initSpan);
               }
 
-              clusterContainer.appendChild(thumb);
+              fillLayer.appendChild(segmentElement);
             });
 
-            const countBadge = document.createElement('span');
-            countBadge.textContent = String(item.members.length);
-            countBadge.style.position = 'absolute';
-            countBadge.style.color = 'white';
-            countBadge.style.fontSize = '11px';
-            countBadge.style.fontWeight = '700';
-            countBadge.style.fontFamily = 'ui-sans-serif, system-ui, sans-serif';
-            countBadge.style.zIndex = '1';
-            countBadge.style.background = 'rgba(2,6,23,0.72)';
-            countBadge.style.borderRadius = '50%';
-            countBadge.style.width = '18px';
-            countBadge.style.height = '18px';
-            countBadge.style.display = 'flex';
-            countBadge.style.alignItems = 'center';
-            countBadge.style.justifyContent = 'center';
-            clusterContainer.appendChild(countBadge);
+            if (overflowSegment && overflowCount > 0) {
+              const overflowOverlay = document.createElement('div');
+              overflowOverlay.style.position = 'absolute';
+              overflowOverlay.style.left = `${overflowSegment.left}%`;
+              overflowOverlay.style.top = `${overflowSegment.top}%`;
+              overflowOverlay.style.width = `${overflowSegment.width}%`;
+              overflowOverlay.style.height = `${overflowSegment.height}%`;
+              overflowOverlay.style.background = 'rgba(2,6,23,0.58)';
+              overflowOverlay.style.display = 'flex';
+              overflowOverlay.style.alignItems = 'center';
+              overflowOverlay.style.justifyContent = 'center';
+              overflowOverlay.style.color = 'white';
+              overflowOverlay.style.fontSize = '10px';
+              overflowOverlay.style.fontWeight = '800';
+              overflowOverlay.style.fontFamily = 'ui-sans-serif, system-ui, sans-serif';
+              overflowOverlay.textContent = `+${overflowCount}`;
+              fillLayer.appendChild(overflowOverlay);
+            }
+
+            const dividerLayer = document.createElement('div');
+            dividerLayer.style.position = 'absolute';
+            dividerLayer.style.inset = '0';
+            dividerLayer.style.pointerEvents = 'none';
+
+            const addDivider = (left: string, top: string, width: string, height: string) => {
+              const divider = document.createElement('div');
+              divider.style.position = 'absolute';
+              divider.style.left = left;
+              divider.style.top = top;
+              divider.style.width = width;
+              divider.style.height = height;
+              divider.style.background = FRIEND_CLUSTER_DIVIDER_STROKE;
+              dividerLayer.appendChild(divider);
+            };
+
+            if (clusterLayout === 'split-2') {
+              addDivider('50%', '0', '1.2px', '100%');
+            } else if (clusterLayout === 'split-3') {
+              addDivider('50%', '0', '1.2px', '100%');
+              addDivider('0', '50%', '50%', '1.2px');
+            } else {
+              addDivider('50%', '0', '1.2px', '100%');
+              addDivider('0', '50%', '100%', '1.2px');
+            }
+
+            clusterContainer.append(fillLayer, dividerLayer);
             element.appendChild(clusterContainer);
           }
 

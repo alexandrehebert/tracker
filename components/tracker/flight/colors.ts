@@ -95,6 +95,19 @@ export function getReadableTextColor(
   return luminance >= luminanceThreshold ? dark : light;
 }
 
+function toHexByte(value: number) {
+  return Math.max(0, Math.min(255, Math.round(value))).toString(16).padStart(2, '0');
+}
+
+export function colorToHex(color: string, fallback = SELECTED_FLIGHT_COLOR) {
+  const rgb = parseColorToRgb(color);
+  if (!rgb) {
+    return fallback;
+  }
+
+  return `#${toHexByte(rgb.r)}${toHexByte(rgb.g)}${toHexByte(rgb.b)}`;
+}
+
 export function getFlightMapColor(index: number, isSelected: boolean) {
   if (isSelected) {
     return SELECTED_FLIGHT_COLOR;

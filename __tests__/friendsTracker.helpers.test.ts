@@ -199,6 +199,83 @@ describe('friends tracker helpers', () => {
     expect(config.friends[0]?.flights[0]?.resolvedIcao24).toBe('3C675A');
   });
 
+  it('preserves explicit friend colors and generates stable, distinct defaults when missing', () => {
+    const config = normalizeFriendsTrackerConfig({
+      friends: [
+        {
+          id: 'friend-1',
+          name: 'Alice',
+          color: '#ff6b6b',
+          flights: [
+            {
+              id: 'leg-1',
+              flightNumber: 'AF123',
+              departureTime: '2026-04-14T09:30:00.000Z',
+            },
+          ],
+        },
+        {
+          id: 'friend-2',
+          name: 'Bruno',
+          flights: [
+            {
+              id: 'leg-2',
+              flightNumber: 'BA117',
+              departureTime: '2026-04-14T10:30:00.000Z',
+            },
+          ],
+        },
+        {
+          id: 'friend-3',
+          name: 'Chloe',
+          flights: [
+            {
+              id: 'leg-3',
+              flightNumber: 'DL220',
+              departureTime: '2026-04-14T11:30:00.000Z',
+            },
+          ],
+        },
+        {
+          id: 'friend-4',
+          name: 'Diego',
+          flights: [
+            {
+              id: 'leg-4',
+              flightNumber: 'UX321',
+              departureTime: '2026-04-14T12:30:00.000Z',
+            },
+          ],
+        },
+      ],
+    } as Partial<FriendsTrackerConfig>);
+
+    const autoColors = config.friends.slice(1).map((friend) => friend.color);
+    const generatedColor = autoColors[0];
+
+    expect(config.friends[0]?.color).toBe('#ff6b6b');
+    expect(generatedColor).toMatch(/^#/);
+    expect(new Set(autoColors).size).toBe(autoColors.length);
+
+    const reordered = normalizeFriendsTrackerConfig({
+      friends: [
+        {
+          id: 'friend-2',
+          name: 'Bruno',
+          flights: [
+            {
+              id: 'leg-2',
+              flightNumber: 'BA117',
+              departureTime: '2026-04-14T10:30:00.000Z',
+            },
+          ],
+        },
+      ],
+    } as Partial<FriendsTrackerConfig>);
+
+    expect(reordered.friends[0]?.color).toBe(generatedColor);
+  });
+
   it('preserves destinationAirport when normalizing config', () => {
     const config = normalizeFriendsTrackerConfig({
       destinationAirport: '  mia  ',

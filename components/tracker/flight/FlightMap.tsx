@@ -23,6 +23,8 @@ interface FlightMapProps {
   onSelectFlight?: (icao24: string) => void;
   onInitialZoomEnd?: () => void;
   selectionMode?: 'single' | 'all';
+  flightColorIndexes?: ReadonlyMap<string, number>;
+  flightColors?: ReadonlyMap<string, string>;
   flightLabels?: Record<string, string>;
   flightAvatars?: Record<string, FriendAvatarInfo[]>;
   staticFriendMarkers?: FriendAvatarMarker[];
@@ -39,6 +41,8 @@ export default function FlightMap({
   onSelectFlight,
   onInitialZoomEnd,
   selectionMode = 'single',
+  flightColorIndexes,
+  flightColors,
   flightLabels,
   flightAvatars,
   staticFriendMarkers,
@@ -99,6 +103,8 @@ export default function FlightMap({
         onSelectFlight={onSelectFlight}
         onInitialZoomEnd={handleMapReady}
         selectionMode={selectionMode}
+        flightColorIndexes={flightColorIndexes}
+        flightColors={flightColors}
         flightLabels={flightLabels}
         flightAvatars={flightAvatars}
         staticFriendMarkers={staticFriendMarkers}
@@ -116,6 +122,8 @@ export default function FlightMap({
       onSelectFlight={onSelectFlight}
       onInitialZoomEnd={handleMapReady}
       selectionMode={selectionMode}
+      flightColorIndexes={flightColorIndexes}
+      flightColors={flightColors}
       flightLabels={flightLabels}
       flightAvatars={flightAvatars}
       staticFriendMarkers={staticFriendMarkers}

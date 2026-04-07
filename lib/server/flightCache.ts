@@ -248,18 +248,27 @@ function mergeTrackPoints(previous: FlightMapPoint[] = [], next: FlightMapPoint[
       return first.time - second.time;
     });
 
-  const dedupedPoints: FlightMapPoint[] = [];
-  const seenSpatialKeys = new Set<string>();
+  const latestPointBySpatialKey = new Map<string, FlightMapPoint>();
 
   for (const point of sortedPoints) {
-    const spatialKey = getTrackSpatialKey(point);
-    if (seenSpatialKeys.has(spatialKey)) {
-      continue;
+    latestPointBySpatialKey.set(getTrackSpatialKey(point), point);
+  }
+
+  const dedupedPoints = Array.from(latestPointBySpatialKey.values()).sort((first, second) => {
+    if (first.time == null && second.time == null) {
+      return 0;
     }
 
-    seenSpatialKeys.add(spatialKey);
-    dedupedPoints.push(point);
-  }
+    if (first.time == null) {
+      return 1;
+    }
+
+    if (second.time == null) {
+      return -1;
+    }
+
+    return first.time - second.time;
+  });
 
   return limitTrackPoints(dedupedPoints);
 }

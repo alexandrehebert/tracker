@@ -6,7 +6,8 @@ import { FlightLegCard } from './FlightLegCard';
 import { createDraftLeg } from '~/lib/utils/friendsConfigUtils';
 import { resizeImageToDataUrl } from '~/lib/utils/imageUtils';
 import { getFriendInitials } from '~/lib/utils/friendInitials';
-import type { FriendTravelConfig } from '~/lib/friendsTracker';
+import { resolveFriendAccentColor, type FriendTravelConfig } from '~/lib/friendsTracker';
+import { colorToHex } from '../flight/colors';
 
 interface FriendCardProps {
   friend: FriendTravelConfig;
@@ -117,6 +118,37 @@ export function FriendCard({ friend, friendIndex }: FriendCardProps) {
               className="w-full rounded-2xl border border-white/10 bg-slate-950/90 px-3 py-2 text-sm text-slate-100 outline-none transition focus:border-cyan-400/60 focus:ring-2 focus:ring-cyan-500/20"
             />
             <p className="mt-1.5 text-xs text-slate-500">Click the avatar to upload a photo (shown as bubble on map)</p>
+
+            <div className="mt-3 flex flex-wrap items-center gap-2">
+              <label className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">
+                Accent color
+              </label>
+              <input
+                type="color"
+                aria-label={`Accent color for ${friend.name || `Friend ${friendIndex + 1}`}`}
+                value={colorToHex(resolveFriendAccentColor(friend, friendIndex))}
+                onChange={(event) => {
+                  const color = event.target.value;
+                  updateFriend(friend.id, (currentFriend) => ({
+                    ...currentFriend,
+                    color,
+                  }));
+                }}
+                className="h-9 w-12 cursor-pointer rounded-xl border border-white/15 bg-slate-950/80 p-1"
+              />
+              <button
+                type="button"
+                onClick={() => {
+                  updateFriend(friend.id, (currentFriend) => ({
+                    ...currentFriend,
+                    color: null,
+                  }));
+                }}
+                className="rounded-full border border-white/10 bg-slate-900/80 px-2.5 py-1 text-[11px] font-medium text-slate-200 transition hover:border-cyan-400/40 hover:text-white"
+              >
+                Auto
+              </button>
+            </div>
           </div>
         </div>
 
