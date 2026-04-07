@@ -1424,7 +1424,7 @@ function FriendsTrackerDashboard({
   const hasWaybackRange = waybackBounds.endMs - waybackBounds.startMs >= WAYBACK_STEP_MS;
 
   const waybackCard = hasWaybackRange ? (
-    <div className="rounded-2xl border border-cyan-400/20 bg-slate-950/55 p-4 shadow-sm shadow-cyan-950/30">
+    <div className="rounded-2xl border border-white/12 bg-slate-950/72 p-4 shadow-[0_30px_90px_rgba(2,6,23,0.55)] backdrop-blur-md">
       <div className="flex items-start justify-between gap-3">
         <div>
           <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-[0.24em] text-cyan-200">
