@@ -1259,9 +1259,9 @@ export default function FlightMap3D({
           nameBadge.style.borderRadius = '999px';
           nameBadge.style.fontSize = '10px';
           nameBadge.style.fontWeight = '700';
-          nameBadge.style.color = hasStaleMembers ? '#cbd5e1' : 'rgba(226,232,240,0.96)';
+          nameBadge.style.color = 'rgba(226,232,240,0.96)';
           nameBadge.style.background = 'rgba(2,6,23,0.92)';
-          nameBadge.style.border = hasStaleMembers ? '1px solid #475569' : '1px solid rgba(56,189,248,0.65)';
+          nameBadge.style.border = '1px solid rgba(56,189,248,0.65)';
           nameBadge.style.boxShadow = '0 4px 12px rgba(2,6,23,0.35)';
           nameBadge.style.pointerEvents = 'none';
           nameBadge.style.opacity = '0';
@@ -1276,10 +1276,10 @@ export default function FlightMap3D({
             bubble.style.borderRadius = '50%';
             bubble.style.overflow = 'hidden';
             bubble.style.background = firstMember.color;
-            bubble.style.border = firstMember.isStale ? '2.5px solid #94a3b8' : '2.5px solid rgba(255,255,255,0.95)';
+            bubble.style.border = '2.5px solid rgba(255,255,255,0.95)';
             bubble.style.boxShadow = `0 0 0 3px color-mix(in srgb, ${firstMember.color} 22%, transparent), 0 6px 16px rgba(2,6,23,0.4)`;
             bubble.style.display = 'flex';
-            bubble.style.filter = firstMember.isStale ? 'saturate(0.42) brightness(0.78)' : 'none';
+            bubble.style.filter = 'none';
             bubble.style.alignItems = 'center';
             bubble.style.justifyContent = 'center';
 
@@ -1318,10 +1318,10 @@ export default function FlightMap3D({
             clusterContainer.style.borderRadius = '50%';
             clusterContainer.style.position = 'relative';
             clusterContainer.style.background = 'rgba(2,6,23,0.85)';
-            clusterContainer.style.border = hasStaleMembers ? '2.5px solid #94a3b8' : '2.5px solid rgba(255,255,255,0.95)';
+            clusterContainer.style.border = '2.5px solid rgba(255,255,255,0.95)';
             clusterContainer.style.boxShadow = '0 6px 16px rgba(2,6,23,0.4)';
             clusterContainer.style.overflow = 'hidden';
-            clusterContainer.style.filter = hasStaleMembers ? 'saturate(0.46) brightness(0.8)' : 'none';
+            clusterContainer.style.filter = 'none';
             clusterContainer.style.display = 'flex';
             clusterContainer.style.alignItems = 'center';
             clusterContainer.style.justifyContent = 'center';
@@ -1342,10 +1342,10 @@ export default function FlightMap3D({
               thumb.style.left = `${tx - thumbSize / 2}px`;
               thumb.style.top = `${ty - thumbSize / 2}px`;
               thumb.style.background = member.color;
-              thumb.style.border = member.isStale ? '1.5px solid #94a3b8' : '1.5px solid rgba(255,255,255,0.8)';
+              thumb.style.border = '1.5px solid rgba(255,255,255,0.8)';
               thumb.style.overflow = 'hidden';
               thumb.style.display = 'flex';
-              thumb.style.filter = member.isStale ? 'saturate(0.42) brightness(0.78)' : 'none';
+              thumb.style.filter = 'none';
               thumb.style.alignItems = 'center';
               thumb.style.justifyContent = 'center';
 

@@ -515,10 +515,9 @@ function renderFriendClusterSegmentFill(
   key: string,
 ) {
   const fill = member?.color ?? FRIEND_CLUSTER_FALLBACK_FILL;
-  const isStale = member?.isStale === true;
 
   return (
-    <g key={key} style={isStale ? { filter: 'saturate(0.38) brightness(0.78)' } : undefined}>
+    <g key={key}>
       <rect
         x={x}
         y={y}
@@ -1420,7 +1419,7 @@ export default function FlightMap2D({
                         <circle cx="0" cy="0" r={innerRadius} />
                       </clipPath>
                     </defs>
-                    <g style={firstMember.isStale ? { filter: 'saturate(0.42) brightness(0.78)' } : undefined}>
+                    <g>
                       <circle cx="0" cy="0" r={outerRadius} fill={firstMember.color} fillOpacity="0.22" />
                       <circle cx="0" cy="0" r={innerRadius} fill={firstMember.color} />
                       {firstMember.avatarUrl ? (
@@ -1439,7 +1438,7 @@ export default function FlightMap2D({
                           y="0"
                           textAnchor="middle"
                           dominantBaseline="middle"
-                          fill={getReadableTextColor(firstMember.color, { light: firstMember.isStale ? '#e2e8f0' : '#ffffff' })}
+                          fill={getReadableTextColor(firstMember.color, { light: '#ffffff' })}
                           fontSize="11"
                           fontWeight="700"
                           fontFamily="ui-sans-serif, system-ui, sans-serif"
@@ -1452,7 +1451,7 @@ export default function FlightMap2D({
                         cy="0"
                         r={innerRadius}
                         fill="none"
-                        stroke={firstMember.isStale ? '#94a3b8' : 'white'}
+                        stroke="white"
                         strokeWidth="2"
                         vectorEffect="non-scaling-stroke"
                       />
@@ -1469,7 +1468,7 @@ export default function FlightMap2D({
                       cx="0"
                       cy="0"
                       r={outerRadius}
-                      fill={isHovered ? 'rgba(56,189,248,0.24)' : isFullyStale ? 'rgba(15,23,42,0.34)' : 'rgba(15,23,42,0.24)'}
+                      fill={isHovered ? 'rgba(56,189,248,0.24)' : 'rgba(15,23,42,0.24)'}
                     />
                     <g clipPath={`url(#${clusterFillClipId})`}>
                       {segmentDefinitions.length > 0 ? (
