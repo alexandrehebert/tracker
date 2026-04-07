@@ -1224,7 +1224,7 @@ function TrackerTopBar({
 
   return (
     <div ref={topBarRef} className="pointer-events-none absolute inset-x-0 top-0 z-40 grid grid-cols-[minmax(0,1fr)_auto] items-start gap-3 p-3 md:p-4">
-      <div className="pointer-events-auto min-w-0 rounded-2xl border border-white/10 bg-slate-950/75 px-4 py-3 backdrop-blur-md">
+      <div className="pointer-events-auto min-w-0 w-fit max-w-full justify-self-start rounded-2xl border border-white/10 bg-slate-950/75 px-4 py-3 backdrop-blur-md">
         <div className="flex items-center gap-2 text-cyan-200">
           <Radar className="h-4 w-4" />
           <span className="text-xs font-semibold uppercase tracking-[0.24em]">Live flight tracker</span>

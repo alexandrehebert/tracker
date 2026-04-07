@@ -278,6 +278,17 @@ describe('FlightTrackerClient', () => {
     expect(window.location.search).toBe('');
   });
 
+  it('keeps the tracker title popup sized to its content', () => {
+    render(<FlightTrackerClient map={map} />);
+
+    const title = screen.getByText(/live flight tracker/i);
+    const popup = title.closest('div')?.parentElement;
+
+    expect(popup).not.toBeNull();
+    expect(popup).toHaveClass('justify-self-start');
+    expect(popup).toHaveClass('max-w-full');
+  });
+
   it('shows a map color dot for each tracked flight in the list', async () => {
     const user = userEvent.setup();
 
