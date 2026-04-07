@@ -1150,6 +1150,26 @@ describe('FlightMap2D', () => {
     expect(Number(shadowPath?.getAttribute('stroke-width'))).toBeGreaterThan(Number(forecastPath?.getAttribute('stroke-width')));
   });
 
+  it('extends the 2D forecast as a smooth continuation of the live route toward the destination', () => {
+    const { container } = renderMap(false, {
+      flights: [trackedFlight],
+      selectedIcao24: trackedFlight.icao24,
+      selectedFlightDetails,
+    });
+
+    const forecastPath = Array.from(container.querySelectorAll('path')).find(
+      (path) => path.getAttribute('stroke-dasharray') === '8 8'
+        && (path.getAttribute('stroke') ?? '').includes('selected-flight-forecast-gradient'),
+    );
+
+    expect(forecastPath).toBeTruthy();
+
+    const pathDefinition = forecastPath?.getAttribute('d') ?? '';
+    expect((pathDefinition.match(/\bQ\b/g) ?? []).length).toBeGreaterThanOrEqual(2);
+    expect(pathDefinition).toContain(getProjectedPathToken(trackedFlight.current));
+    expect(pathDefinition).toContain(getProjectedPathToken(selectedFlightDetails.arrivalAirport));
+  });
+
   it('does not show a dashed forecast route before takeoff while the flight is still on the departure airport', () => {
     const { container } = renderMap(false, {
       flights: [preDepartureFlight],

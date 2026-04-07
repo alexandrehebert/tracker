@@ -283,6 +283,26 @@ function getHeadingDeltaDegrees(first: number, second: number): number {
   return Math.abs((((first - second) % 360) + 540) % 360 - 180);
 }
 
+function getRecentRouteBearing(flight: TrackedFlight, currentPoint: FlightMapPoint): number | null {
+  for (let index = flight.track.length - 1; index >= 0; index -= 1) {
+    const candidate = flight.track[index];
+    if (candidate && getPointDistanceKm(candidate, currentPoint) > 8) {
+      return getBearingBetweenPoints(candidate, currentPoint);
+    }
+  }
+
+  if (flight.originPoint && getPointDistanceKm(flight.originPoint, currentPoint) > 8) {
+    return getBearingBetweenPoints(flight.originPoint, currentPoint);
+  }
+
+  return null;
+}
+
+function interpolateHeadingDegrees(start: number, end: number, factor: number): number {
+  const delta = (((end - start) % 360) + 540) % 360 - 180;
+  return (start + delta * clamp(factor, 0, 1) + 360) % 360;
+}
+
 function createFlightMapPointProjector(map: WorldMapPayload) {
   const projection = geoNaturalEarth1();
 
@@ -422,21 +442,39 @@ function getForecastRoutePoints({
       })
     : null;
 
+  const distanceToArrivalKm = arrivalPoint ? getPointDistanceKm(currentPoint, arrivalPoint) : null;
   const bearingToArrival = arrivalPoint ? getBearingBetweenPoints(currentPoint, arrivalPoint) : null;
-  const liveHeading = flight.heading ?? currentPoint.heading ?? null;
-  const forecastHeading = liveHeading != null && bearingToArrival != null && getHeadingDeltaDegrees(liveHeading, bearingToArrival) > 105
-    ? bearingToArrival
-    : liveHeading ?? bearingToArrival;
+  const routeBearing = getRecentRouteBearing(flight, currentPoint);
+  const liveHeading = flight.heading ?? currentPoint.heading ?? routeBearing ?? null;
+  const forecastBaseHeading = routeBearing ?? liveHeading ?? bearingToArrival;
+  const headingDeltaToArrival = forecastBaseHeading != null && bearingToArrival != null
+    ? getHeadingDeltaDegrees(forecastBaseHeading, bearingToArrival)
+    : 0;
+  const arrivalBlendFactor = bearingToArrival != null && distanceToArrivalKm != null
+    ? clamp(
+        0.12
+          + (1 - clamp(distanceToArrivalKm / 2200, 0, 1)) * 0.22
+          + clamp(headingDeltaToArrival / 180, 0, 1) * 0.18,
+        0.12,
+        0.52,
+      )
+    : 0;
+  const forecastHeading = forecastBaseHeading != null && bearingToArrival != null
+    ? interpolateHeadingDegrees(forecastBaseHeading, bearingToArrival, arrivalBlendFactor)
+    : forecastBaseHeading ?? bearingToArrival;
 
   if (forecastHeading == null) {
     return arrivalPoint ? [currentPoint, arrivalPoint] : [];
   }
 
   const speedKmh = flight.velocity != null && Number.isFinite(flight.velocity) ? flight.velocity * 3.6 : 820;
-  const leadDistanceKm = clamp(speedKmh * 0.35, 180, 540);
-  const distanceToArrivalKm = arrivalPoint ? getPointDistanceKm(currentPoint, arrivalPoint) : null;
+  const leadDistanceKm = clamp(speedKmh * 0.55, 260, 880);
   const guidedLeadDistanceKm = distanceToArrivalKm != null
-    ? clamp(Math.min(leadDistanceKm, distanceToArrivalKm * 0.55), 90, leadDistanceKm)
+    ? clamp(
+        Math.min(leadDistanceKm, Math.max(distanceToArrivalKm * 0.7, Math.min(160, distanceToArrivalKm * 0.45))),
+        14,
+        leadDistanceKm,
+      )
     : leadDistanceKm;
   const leadPoint = projectForecastHeadingPoint({
     start: currentPoint,
@@ -445,15 +483,26 @@ function getForecastRoutePoints({
     projectPoint,
   });
 
-  const forecastPoints = [currentPoint, leadPoint];
+  const forecastPoints: Array<FlightMapPoint | null> = [currentPoint, leadPoint];
 
-  if (arrivalPoint && (distanceToArrivalKm ?? 0) > 18) {
-    forecastPoints.push(arrivalPoint);
-  } else if (!arrivalPoint) {
+  if (arrivalPoint) {
+    const approachHeading = bearingToArrival ?? forecastHeading;
+    const approachDistanceKm = distanceToArrivalKm != null
+      ? clamp(Math.min(guidedLeadDistanceKm * 0.45, Math.max(distanceToArrivalKm * 0.28, 8)), 8, 120)
+      : 60;
+    const approachPoint = projectForecastHeadingPoint({
+      start: arrivalPoint,
+      heading: (approachHeading + 180) % 360,
+      distanceKm: approachDistanceKm,
+      projectPoint,
+    });
+
+    forecastPoints.push(approachPoint, arrivalPoint);
+  } else {
     forecastPoints.push(projectForecastHeadingPoint({
-      start: currentPoint,
+      start: leadPoint ?? currentPoint,
       heading: forecastHeading,
-      distanceKm: leadDistanceKm * 1.7,
+      distanceKm: clamp(leadDistanceKm * 0.9, 120, 420),
       projectPoint,
     }));
   }
