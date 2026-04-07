@@ -139,6 +139,41 @@ describe('friends tracker helpers', () => {
     expect(status?.canAutoLock).toBe(false);
   });
 
+  it('rejects same-number matches from the previous service day or much later that day', () => {
+    const departureTime = Date.UTC(2026, 3, 14, 0, 0);
+    const now = departureTime + (30 * 60 * 1000);
+    const config: FriendsTrackerConfig = {
+      updatedAt: null,
+      updatedBy: null,
+      friends: [
+        {
+          id: 'friend-1',
+          name: 'Alice',
+          flights: [
+            {
+              id: 'leg-1',
+              flightNumber: 'AF123',
+              departureTime: new Date(departureTime).toISOString(),
+            },
+          ],
+        },
+      ],
+    };
+
+    const [status] = buildFriendFlightStatuses(
+      config,
+      [
+        createTrackedFlight('AF123', '3c675a', { firstSeen: Math.floor(Date.UTC(2026, 3, 13, 23, 15) / 1000) }),
+        createTrackedFlight('AF123', '3c675b', { firstSeen: Math.floor(Date.UTC(2026, 3, 14, 15, 0) / 1000) }),
+      ],
+      now,
+    );
+
+    expect(status?.flight).toBeNull();
+    expect(status?.status).toBe('awaiting');
+    expect(status?.canAutoLock).toBe(false);
+  });
+
   it('normalizes imported JSON configs with missing ids and casing differences', () => {
     const config = normalizeFriendsTrackerConfig({
       cronEnabled: false,

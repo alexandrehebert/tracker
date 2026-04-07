@@ -2,7 +2,7 @@ import type { TrackedFlight } from '~/components/tracker/flight/types';
 
 const AUTO_LOCK_WINDOW_HOURS = 36;
 const AUTO_LOCK_LOOKBACK_DAYS = 7;
-const FLIGHT_MATCH_WINDOW_HOURS = 36;
+const FLIGHT_MATCH_WINDOW_HOURS = 6;
 const DEMO_REFERENCE_BUCKET_MS = 15 * 60 * 1000;
 
 export interface FriendFlightLeg {
@@ -137,6 +137,51 @@ function normalizeOptionalText(value: unknown): string | null {
   return typeof value === 'string' && value.trim() ? value.trim() : null;
 }
 
+function getServiceDayKey(timestampMs: number, timeZone: string | null | undefined): string {
+  const normalizedTimeZone = normalizeOptionalText(timeZone) ?? 'UTC';
+
+  try {
+    return new Intl.DateTimeFormat('en-CA', {
+      timeZone: normalizedTimeZone,
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(new Date(timestampMs));
+  } catch {
+    return new Intl.DateTimeFormat('en-CA', {
+      timeZone: 'UTC',
+      year: 'numeric',
+      month: '2-digit',
+      day: '2-digit',
+    }).format(new Date(timestampMs));
+  }
+}
+
+function isSameServiceDay(
+  referenceTimeMs: number,
+  scheduledTimeMs: number,
+  timeZone: string | null | undefined,
+): boolean {
+  return getServiceDayKey(referenceTimeMs, timeZone) === getServiceDayKey(scheduledTimeMs, timeZone);
+}
+
+function doesFlightRouteMatchLeg(flight: TrackedFlight, leg: FriendFlightLeg): boolean {
+  const configuredFrom = normalizeOptionalText(leg.from)?.toUpperCase() ?? null;
+  const configuredTo = normalizeOptionalText(leg.to)?.toUpperCase() ?? null;
+  const departureAirport = normalizeOptionalText(flight.route.departureAirport)?.toUpperCase() ?? null;
+  const arrivalAirport = normalizeOptionalText(flight.route.arrivalAirport)?.toUpperCase() ?? null;
+
+  if (configuredFrom && departureAirport && configuredFrom !== departureAirport) {
+    return false;
+  }
+
+  if (configuredTo && arrivalAirport && configuredTo !== arrivalAirport) {
+    return false;
+  }
+
+  return true;
+}
+
 export function parseDestinationAirportCodes(value: string | null | undefined): string[] {
   if (typeof value !== 'string') {
     return [];
@@ -192,20 +237,26 @@ function isFlightTimingPlausibleForLeg(
   flight: TrackedFlight,
   leg: FriendFlightLeg,
   now = Date.now(),
+  options?: { isLockedMatch?: boolean },
 ): boolean {
+  if (!doesFlightRouteMatchLeg(flight, leg)) {
+    return false;
+  }
+
   const scheduledTime = Date.parse(leg.departureTime);
   if (!Number.isFinite(scheduledTime)) {
     return true;
   }
 
-  const matchWindowMs = FLIGHT_MATCH_WINDOW_HOURS * 60 * 60 * 1000;
-  const referenceTime = resolveFlightReferenceTimeMs(flight);
+  const referenceTime = resolveFlightReferenceTimeMs(flight) ?? now;
+  const matchWindowHours = options?.isLockedMatch ? AUTO_LOCK_WINDOW_HOURS : FLIGHT_MATCH_WINDOW_HOURS;
+  const matchWindowMs = matchWindowHours * 60 * 60 * 1000;
 
-  if (referenceTime != null) {
-    return Math.abs(referenceTime - scheduledTime) <= matchWindowMs;
+  if (!options?.isLockedMatch && !isSameServiceDay(referenceTime, scheduledTime, leg.departureTimezone)) {
+    return false;
   }
 
-  return Math.abs(now - scheduledTime) <= matchWindowMs;
+  return Math.abs(referenceTime - scheduledTime) <= matchWindowMs;
 }
 
 export function normalizeFriendFlightIdentifier(value: string | null | undefined): string {
@@ -611,9 +662,7 @@ function doesFlightMatchIdentifier(flight: TrackedFlight, identifier: string): b
 
   return normalizedCallsign === identifier
     || normalizedFlightNumber === identifier
-    || normalizedMatchedBy.includes(identifier)
-    || normalizedCallsign.includes(identifier)
-    || normalizedMatchedBy.some((value) => value.includes(identifier));
+    || normalizedMatchedBy.includes(identifier);
 }
 
 export function findMatchingTrackedFlightForLeg(
@@ -624,7 +673,7 @@ export function findMatchingTrackedFlightForLeg(
   const lockedIcao24 = normalizeFriendFlightIdentifier(leg.resolvedIcao24);
   if (lockedIcao24) {
     const lockedMatch = flights.find((flight) => normalizeFriendFlightIdentifier(flight.icao24) === lockedIcao24) ?? null;
-    return lockedMatch && isFlightTimingPlausibleForLeg(lockedMatch, leg, now)
+    return lockedMatch && isFlightTimingPlausibleForLeg(lockedMatch, leg, now, { isLockedMatch: true })
       ? lockedMatch
       : null;
   }
