@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTrackerLayout } from '../contexts/TrackerLayoutContext';
 import { useTrackerMap } from '../contexts/TrackerMapContext';
-import { getFlightMapColor, SELECTED_FLIGHT_COLOR } from './colors';
+import { getFlightMapColor, getReadableTextColor, SELECTED_FLIGHT_COLOR } from './colors';
 import { getFriendInitials } from '~/lib/utils/friendInitials';
 import type { FlightMapAirportMarker, FlightMapPoint, FriendAvatarInfo, FriendAvatarMarker, SelectedFlightDetails, TrackedFlight } from './types';
 
@@ -122,7 +122,7 @@ interface GlobeFriendAvatarDatum {
   lat: number;
   lng: number;
   altitude: number;
-  members: Array<{ friendId: string; name: string; avatarUrl: string | null; color: string }>;
+  members: Array<{ friendId: string; name: string; avatarUrl: string | null; color: string; isStale?: boolean }>;
   onSelect?: string;
 }
 
@@ -165,6 +165,7 @@ interface FriendGeoMarker {
   avatarUrl: string | null;
   color: string;
   icao24?: string;
+  isStale?: boolean;
 }
 
 function clusterFriendGeoMarkers(
@@ -752,6 +753,7 @@ export default function FlightMap3D({
             avatarUrl: info.avatarUrl,
             color: info.color,
             icao24: flight.icao24,
+            isStale: info.isStale === true,
           });
         }
       }
@@ -767,6 +769,7 @@ export default function FlightMap3D({
           name: marker.name,
           avatarUrl: marker.avatarUrl,
           color: marker.color,
+          isStale: marker.isStale === true,
         });
       }
     }
@@ -784,6 +787,7 @@ export default function FlightMap3D({
         name: m.name,
         avatarUrl: m.avatarUrl,
         color: m.color,
+        isStale: m.isStale === true,
       })),
       onSelect: cluster.members.find((m) => m.icao24)?.icao24,
     }));
@@ -1230,6 +1234,9 @@ export default function FlightMap3D({
           const firstMember = item.members[0]!;
           const size = isSingle ? 30 : 36;
           const halfSize = size / 2;
+          const staleCount = item.members.filter((member) => member.isStale).length;
+          const hasStaleMembers = staleCount > 0;
+          const isFullyStale = staleCount === item.members.length;
 
           element.style.pointerEvents = 'auto';
           element.style.cursor = 'pointer';
@@ -1252,16 +1259,16 @@ export default function FlightMap3D({
           nameBadge.style.borderRadius = '999px';
           nameBadge.style.fontSize = '10px';
           nameBadge.style.fontWeight = '700';
-          nameBadge.style.color = 'rgba(226,232,240,0.96)';
+          nameBadge.style.color = hasStaleMembers ? '#cbd5e1' : 'rgba(226,232,240,0.96)';
           nameBadge.style.background = 'rgba(2,6,23,0.92)';
-          nameBadge.style.border = '1px solid rgba(56,189,248,0.65)';
+          nameBadge.style.border = hasStaleMembers ? '1px solid #475569' : '1px solid rgba(56,189,248,0.65)';
           nameBadge.style.boxShadow = '0 4px 12px rgba(2,6,23,0.35)';
           nameBadge.style.pointerEvents = 'none';
           nameBadge.style.opacity = '0';
           nameBadge.style.transition = 'opacity 140ms ease, transform 140ms ease';
 
           if (isSingle) {
-            nameBadge.textContent = firstMember.name;
+            nameBadge.textContent = firstMember.isStale ? `${firstMember.name} • last known` : firstMember.name;
 
             const bubble = document.createElement('div');
             bubble.style.width = `${size}px`;
@@ -1269,9 +1276,10 @@ export default function FlightMap3D({
             bubble.style.borderRadius = '50%';
             bubble.style.overflow = 'hidden';
             bubble.style.background = firstMember.color;
-            bubble.style.border = '2.5px solid rgba(255,255,255,0.95)';
+            bubble.style.border = firstMember.isStale ? '2.5px solid #94a3b8' : '2.5px solid rgba(255,255,255,0.95)';
             bubble.style.boxShadow = `0 0 0 3px color-mix(in srgb, ${firstMember.color} 22%, transparent), 0 6px 16px rgba(2,6,23,0.4)`;
             bubble.style.display = 'flex';
+            bubble.style.filter = firstMember.isStale ? 'saturate(0.42) brightness(0.78)' : 'none';
             bubble.style.alignItems = 'center';
             bubble.style.justifyContent = 'center';
 
@@ -1285,8 +1293,12 @@ export default function FlightMap3D({
               bubble.appendChild(img);
             } else {
               const initials = document.createElement('span');
+              const initialsColor = getReadableTextColor(firstMember.color, { light: '#ffffff' });
               initials.textContent = getFriendInitials(firstMember.name);
-              initials.style.color = 'white';
+              initials.style.color = initialsColor;
+              initials.style.textShadow = initialsColor.startsWith('rgba(15, 23, 42')
+                ? '0 1px 1px rgba(255,255,255,0.22)'
+                : '0 1px 1px rgba(2,6,23,0.4)';
               initials.style.fontSize = '11px';
               initials.style.fontWeight = '700';
               initials.style.fontFamily = 'ui-sans-serif, system-ui, sans-serif';
@@ -1296,9 +1308,9 @@ export default function FlightMap3D({
             element.appendChild(bubble);
           } else {
             const clusterNames = item.members.length <= 3
-              ? item.members.map((m) => m.name).join(', ')
-              : `${item.members.slice(0, 2).map((m) => m.name).join(', ')} +${item.members.length - 2}`;
-            nameBadge.textContent = clusterNames;
+              ? item.members.map((m) => m.isStale ? `${m.name} (last known)` : m.name).join(', ')
+              : `${item.members.slice(0, 2).map((m) => m.isStale ? `${m.name} (last known)` : m.name).join(', ')} +${item.members.length - 2}`;
+            nameBadge.textContent = hasStaleMembers ? `${clusterNames} • ${staleCount} stale` : clusterNames;
 
             const clusterContainer = document.createElement('div');
             clusterContainer.style.width = `${size}px`;
@@ -1306,9 +1318,10 @@ export default function FlightMap3D({
             clusterContainer.style.borderRadius = '50%';
             clusterContainer.style.position = 'relative';
             clusterContainer.style.background = 'rgba(2,6,23,0.85)';
-            clusterContainer.style.border = '2.5px solid rgba(255,255,255,0.95)';
+            clusterContainer.style.border = hasStaleMembers ? '2.5px solid #94a3b8' : '2.5px solid rgba(255,255,255,0.95)';
             clusterContainer.style.boxShadow = '0 6px 16px rgba(2,6,23,0.4)';
             clusterContainer.style.overflow = 'hidden';
+            clusterContainer.style.filter = hasStaleMembers ? 'saturate(0.46) brightness(0.8)' : 'none';
             clusterContainer.style.display = 'flex';
             clusterContainer.style.alignItems = 'center';
             clusterContainer.style.justifyContent = 'center';
@@ -1329,9 +1342,10 @@ export default function FlightMap3D({
               thumb.style.left = `${tx - thumbSize / 2}px`;
               thumb.style.top = `${ty - thumbSize / 2}px`;
               thumb.style.background = member.color;
-              thumb.style.border = '1.5px solid rgba(255,255,255,0.8)';
+              thumb.style.border = member.isStale ? '1.5px solid #94a3b8' : '1.5px solid rgba(255,255,255,0.8)';
               thumb.style.overflow = 'hidden';
               thumb.style.display = 'flex';
+              thumb.style.filter = member.isStale ? 'saturate(0.42) brightness(0.78)' : 'none';
               thumb.style.alignItems = 'center';
               thumb.style.justifyContent = 'center';
 
@@ -1345,8 +1359,12 @@ export default function FlightMap3D({
                 thumb.appendChild(img);
               } else {
                 const initSpan = document.createElement('span');
+                const initialsColor = getReadableTextColor(member.color, { light: '#ffffff' });
                 initSpan.textContent = getFriendInitials(member.name).slice(0, 1);
-                initSpan.style.color = 'white';
+                initSpan.style.color = initialsColor;
+                initSpan.style.textShadow = initialsColor.startsWith('rgba(15, 23, 42')
+                  ? '0 1px 1px rgba(255,255,255,0.22)'
+                  : '0 1px 1px rgba(2,6,23,0.4)';
                 initSpan.style.fontSize = '6px';
                 initSpan.style.fontWeight = '700';
                 initSpan.style.fontFamily = 'ui-sans-serif, system-ui, sans-serif';

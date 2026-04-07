@@ -7,7 +7,7 @@ import { getFriendInitials } from '~/lib/utils/friendInitials';
 import type { WorldMapPayload } from '~/lib/server/worldMap';
 import { useTrackerLayout } from '../contexts/TrackerLayoutContext';
 import { useTrackerMap } from '../contexts/TrackerMapContext';
-import { getFlightMapColor } from './colors';
+import { getFlightMapColor, getReadableTextColor } from './colors';
 import type { FlightMapAirportMarker, FlightMapPoint, FriendAvatarInfo, FriendAvatarMarker, SelectedFlightDetails, TrackedFlight } from './types';
 
 interface FlightMap2DProps {
@@ -437,6 +437,7 @@ interface FriendSvgMarker {
   x: number;
   y: number;
   icao24?: string;
+  isStale?: boolean;
 }
 
 interface FriendSvgCluster {
@@ -514,9 +515,10 @@ function renderFriendClusterSegmentFill(
   key: string,
 ) {
   const fill = member?.color ?? FRIEND_CLUSTER_FALLBACK_FILL;
+  const isStale = member?.isStale === true;
 
   return (
-    <g key={key}>
+    <g key={key} style={isStale ? { filter: 'saturate(0.38) brightness(0.78)' } : undefined}>
       <rect
         x={x}
         y={y}
@@ -908,6 +910,7 @@ export default function FlightMap2D({
             x: currentPoint.x,
             y: currentPoint.y,
             icao24: flight.icao24,
+            isStale: info.isStale === true,
           });
         }
       }
@@ -934,6 +937,7 @@ export default function FlightMap2D({
           color: marker.color,
           x: point.x,
           y: point.y,
+          isStale: marker.isStale === true,
         });
       }
     }
@@ -1381,11 +1385,15 @@ export default function FlightMap2D({
             const innerRadius = isSingle ? 14 : 17;
             const clusterLayout = getFriendClusterLayout(cluster.members.length);
             const clusterTransform = `translate(${cluster.x} ${cluster.y}) scale(${mapTransform.k > 0 ? 1 / mapTransform.k : 1})`;
+            const staleMemberCount = cluster.members.filter((member) => member.isStale).length;
+            const hasStaleMembers = staleMemberCount > 0;
+            const isFullyStale = staleMemberCount === cluster.members.length;
+            const memberLabels = cluster.members.map((member) => member.isStale ? `${member.name} (last known)` : member.name);
             const labelText = isSingle
-              ? firstMember.name
+              ? memberLabels[0] ?? firstMember.name
               : cluster.members.length <= 4
-                ? cluster.members.map((m) => m.name).join(', ')
-                : `${cluster.members.slice(0, 4).map((m) => m.name).join(', ')} +${cluster.members.length - 4}`;
+                ? memberLabels.join(', ')
+                : `${memberLabels.slice(0, 4).join(', ')} +${cluster.members.length - 4}`;
             const estimatedLabelWidth = Math.max(60, labelText.length * 7 + 20);
             const clusterFillClipId = `friend-cluster-fill-${safeClusterKey}`;
             const segmentDefinitions = clusterLayout === 'single'
@@ -1402,6 +1410,7 @@ export default function FlightMap2D({
                 transform={clusterTransform}
                 data-cluster-layout={clusterLayout}
                 data-cluster-size={cluster.members.length}
+                data-cluster-stale={isFullyStale ? 'all' : hasStaleMembers ? 'partial' : 'none'}
               >
                 <title>{isSingle ? firstMember.name : `${cluster.members.length} friends: ${labelText}`}</title>
                 {isSingle ? (
@@ -1411,41 +1420,43 @@ export default function FlightMap2D({
                         <circle cx="0" cy="0" r={innerRadius} />
                       </clipPath>
                     </defs>
-                    <circle cx="0" cy="0" r={outerRadius} fill={firstMember.color} fillOpacity="0.22" />
-                    <circle cx="0" cy="0" r={innerRadius} fill={firstMember.color} />
-                    {firstMember.avatarUrl ? (
-                      <image
-                        href={firstMember.avatarUrl}
-                        x={-innerRadius}
-                        y={-innerRadius}
-                        width={innerRadius * 2}
-                        height={innerRadius * 2}
-                        clipPath={`url(#friend-avatar-clip-${firstMember.key})`}
-                        preserveAspectRatio="xMidYMid slice"
+                    <g style={firstMember.isStale ? { filter: 'saturate(0.42) brightness(0.78)' } : undefined}>
+                      <circle cx="0" cy="0" r={outerRadius} fill={firstMember.color} fillOpacity="0.22" />
+                      <circle cx="0" cy="0" r={innerRadius} fill={firstMember.color} />
+                      {firstMember.avatarUrl ? (
+                        <image
+                          href={firstMember.avatarUrl}
+                          x={-innerRadius}
+                          y={-innerRadius}
+                          width={innerRadius * 2}
+                          height={innerRadius * 2}
+                          clipPath={`url(#friend-avatar-clip-${firstMember.key})`}
+                          preserveAspectRatio="xMidYMid slice"
+                        />
+                      ) : (
+                        <text
+                          x="0"
+                          y="0"
+                          textAnchor="middle"
+                          dominantBaseline="middle"
+                          fill={getReadableTextColor(firstMember.color, { light: firstMember.isStale ? '#e2e8f0' : '#ffffff' })}
+                          fontSize="11"
+                          fontWeight="700"
+                          fontFamily="ui-sans-serif, system-ui, sans-serif"
+                        >
+                          {getFriendInitials(firstMember.name)}
+                        </text>
+                      )}
+                      <circle
+                        cx="0"
+                        cy="0"
+                        r={innerRadius}
+                        fill="none"
+                        stroke={firstMember.isStale ? '#94a3b8' : 'white'}
+                        strokeWidth="2"
+                        vectorEffect="non-scaling-stroke"
                       />
-                    ) : (
-                      <text
-                        x="0"
-                        y="0"
-                        textAnchor="middle"
-                        dominantBaseline="middle"
-                        fill="white"
-                        fontSize="11"
-                        fontWeight="700"
-                        fontFamily="ui-sans-serif, system-ui, sans-serif"
-                      >
-                        {getFriendInitials(firstMember.name)}
-                      </text>
-                    )}
-                    <circle
-                      cx="0"
-                      cy="0"
-                      r={innerRadius}
-                      fill="none"
-                      stroke="white"
-                      strokeWidth="2"
-                      vectorEffect="non-scaling-stroke"
-                    />
+                    </g>
                   </>
                 ) : (
                   <>
@@ -1458,7 +1469,7 @@ export default function FlightMap2D({
                       cx="0"
                       cy="0"
                       r={outerRadius}
-                      fill={isHovered ? 'rgba(56,189,248,0.24)' : 'rgba(15,23,42,0.24)'}
+                      fill={isHovered ? 'rgba(56,189,248,0.24)' : isFullyStale ? 'rgba(15,23,42,0.34)' : 'rgba(15,23,42,0.24)'}
                     />
                     <g clipPath={`url(#${clusterFillClipId})`}>
                       {segmentDefinitions.length > 0 ? (

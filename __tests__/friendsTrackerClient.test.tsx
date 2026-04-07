@@ -509,6 +509,78 @@ describe('FriendsTrackerClient', () => {
     });
   });
 
+  it('marks last-known map avatars as stale after extended silence in live mode', async () => {
+    const nowMs = Date.now();
+    const nowSeconds = Math.floor(nowMs / 1000);
+
+    vi.spyOn(window, 'fetch').mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          query: 'TEST5',
+          requestedIdentifiers: ['TEST5'],
+          matchedIdentifiers: ['TEST5'],
+          notFoundIdentifiers: [],
+          fetchedAt: nowMs,
+          flights: [
+            {
+              icao24: 'demo-test5',
+              callsign: 'KLM1698',
+              originCountry: 'Netherlands',
+              matchedBy: ['TEST5'],
+              lastContact: nowSeconds - (31 * 60),
+              current: { time: nowSeconds - (31 * 60), latitude: 52.3086, longitude: 4.7639, x: 0, y: 0, altitude: 0, heading: 88, onGround: true },
+              originPoint: { time: nowSeconds - 5400, latitude: 41.2974, longitude: 2.0833, x: 0, y: 0, altitude: 0, heading: 45, onGround: true },
+              track: [], rawTrack: [], onGround: true, velocity: 8, heading: 88, verticalRate: 0, geoAltitude: 0, baroAltitude: 0,
+              squawk: '4521', category: 0,
+              route: { departureAirport: 'BCN', arrivalAirport: 'AMS', firstSeen: nowSeconds - 5400, lastSeen: nowSeconds - (31 * 60) },
+              dataSource: 'opensky', sourceDetails: [],
+            },
+          ],
+        }),
+        {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        },
+      ),
+    );
+
+    render(
+      <FriendsTrackerClient
+        map={map}
+        initialConfig={{
+          ...initialConfig,
+          destinationAirport: 'JFK',
+          friends: [
+            {
+              id: 'friend-1',
+              name: 'Diego Demo',
+              flights: [
+                {
+                  id: 'leg-1',
+                  flightNumber: 'TEST5',
+                  departureTime: new Date(nowMs - 4 * 60 * 60 * 1000).toISOString(),
+                  from: 'BCN',
+                  to: 'AMS',
+                },
+              ],
+            },
+          ],
+        }}
+        airportMarkers={[
+          { id: 'bcn', code: 'BCN', label: 'Barcelona', latitude: 41.2974, longitude: 2.0833, usage: 'both' },
+          { id: 'ams', code: 'AMS', label: 'Amsterdam Schiphol', latitude: 52.3086, longitude: 4.7639, usage: 'both' },
+        ]}
+      />,
+    );
+
+    expect(await screen.findByText(/diego demo/i)).toBeInTheDocument();
+
+    await waitFor(() => {
+      const flightAvatars = latestFlightMapProps?.flightAvatars as Record<string, Array<{ friendId: string; isStale?: boolean }>> | undefined;
+      expect(flightAvatars?.['demo-test5']?.[0]?.isStale).toBe(true);
+    });
+  });
+
   it('renders the configured friend avatar in the sidebar card with the same color coding as the map', async () => {
     render(<FriendsTrackerClient map={map} initialConfig={initialConfig} airportMarkers={[]} />);
 

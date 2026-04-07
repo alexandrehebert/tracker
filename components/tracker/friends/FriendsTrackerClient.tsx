@@ -56,6 +56,7 @@ const TIMELINE_NODE_SIZE_PX = 14;
 const WAYBACK_STEP_MS = 5 * 60 * 1000;
 const WAYBACK_LIVE_THRESHOLD_MS = 60 * 1000;
 const WAYBACK_RETURN_TO_LIVE_THRESHOLD_MS = Math.max(WAYBACK_LIVE_THRESHOLD_MS, WAYBACK_STEP_MS);
+const STALE_LAST_KNOWN_THRESHOLD_MS = 20 * 60 * 1000;
 
 function snapWaybackSliderValue(valueMs: number, startMs: number, endMs: number): number {
   const clampedValueMs = Math.min(Math.max(valueMs, startMs), endMs);
@@ -611,6 +612,24 @@ function hasRenderableMapPosition(status: FriendFlightStatus): boolean {
       ?? latestSnapshotPoint
       ?? flight.originPoint,
   );
+}
+
+function getMapStatusAgeMs(status: FriendFlightStatus, liveTimeMs: number): number | null {
+  const statusTimeMs = getFriendStatusReferenceTimeMs(status);
+  return Number.isFinite(statusTimeMs) ? Math.max(0, liveTimeMs - statusTimeMs) : null;
+}
+
+function isStatusStaleForLiveMap(
+  status: FriendFlightStatus,
+  liveTimeMs: number,
+  isWaybackActive: boolean,
+): boolean {
+  if (isWaybackActive) {
+    return false;
+  }
+
+  const ageMs = getMapStatusAgeMs(status, liveTimeMs);
+  return ageMs != null && ageMs >= STALE_LAST_KNOWN_THRESHOLD_MS;
 }
 
 function pickPreferredMapStatus(friendStatuses: FriendFlightStatus[], now = Date.now()): FriendFlightStatus | null {
@@ -1244,11 +1263,12 @@ function FriendsTrackerDashboard({
         name: status.friend.name || status.label,
         avatarUrl: status.friend.avatarUrl ?? null,
         color: getFlightMapColor(colorIndex, false),
+        isStale: isStatusStaleForLiveMap(status, liveTimeMs, isWaybackActive),
       });
     }
 
     return result;
-  }, [mapStatuses, flightColorIndexMap]);
+  }, [flightColorIndexMap, isWaybackActive, liveTimeMs, mapStatuses]);
 
   const staticFriendMarkers = useMemo<FriendAvatarMarker[]>(() => {
     const airportMarkerByCode = new Map(
@@ -1291,9 +1311,10 @@ function FriendsTrackerDashboard({
         color: getFlightMapColor(index, false),
         latitude: airportMarker.latitude,
         longitude: airportMarker.longitude,
+        isStale: isStatusStaleForLiveMap(status, liveTimeMs, isWaybackActive),
       } satisfies FriendAvatarMarker];
     });
-  }, [airportMarkers, mapStatuses, referenceTimeMs, statuses]);
+  }, [airportMarkers, isWaybackActive, liveTimeMs, mapStatuses, referenceTimeMs, statuses]);
 
   const friendAccentColors = useMemo(() => {
     const result = new Map<string, string>();

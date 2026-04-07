@@ -505,6 +505,28 @@ describe('FlightMap2D', () => {
     expect(overflowCluster?.textContent).toContain('+1');
   });
 
+  it('uses a dark initials color on bright single-marker backgrounds for readability', () => {
+    const { container } = renderMap(false, {
+      staticFriendMarkers: [
+        {
+          id: 'bright-single',
+          name: 'Bright Gold',
+          avatarUrl: null,
+          color: '#facc15',
+          latitude: 48.8566,
+          longitude: 2.3522,
+        },
+      ],
+    });
+
+    const singleCluster = container.querySelector('[data-cluster-layout="single"]');
+    const initialsText = singleCluster?.querySelector('text');
+
+    expect(singleCluster).not.toBeNull();
+    expect(initialsText).not.toBeNull();
+    expect(initialsText).toHaveAttribute('fill', 'rgba(15, 23, 42, 0.82)');
+  });
+
   it('shows avatar images inside clustered friend bubbles when available', () => {
     const { container } = renderMap(false, {
       staticFriendMarkers: [

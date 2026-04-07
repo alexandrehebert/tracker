@@ -157,6 +157,7 @@ export interface FriendAvatarInfo {
   name: string;
   avatarUrl: string | null;
   color: string;
+  isStale?: boolean;
 }
 
 export interface FriendAvatarMarker {
@@ -166,4 +167,5 @@ export interface FriendAvatarMarker {
   color: string;
   latitude: number;
   longitude: number;
+  isStale?: boolean;
 }
