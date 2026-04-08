@@ -926,7 +926,7 @@ export function getFlightSearchCacheTtlSeconds(): number {
   return getCacheTtlSeconds();
 }
 
-export async function readFlightSearchCache(cacheKey: string): Promise<TrackerApiResponse | null> {
+export async function readFlightSearchCache(cacheKey: string, ignoreExpiry = false): Promise<TrackerApiResponse | null> {
   const collection = await getCacheCollection();
   if (!collection) {
     return null;
@@ -935,7 +935,7 @@ export async function readFlightSearchCache(cacheKey: string): Promise<TrackerAp
   try {
     const cachedDocument = await collection.findOne({
       _id: cacheKey,
-      expiresAt: { $gt: new Date() },
+      ...(ignoreExpiry ? {} : { expiresAt: { $gt: new Date() } }),
     });
 
     if (!cachedDocument) {

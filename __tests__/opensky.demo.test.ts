@@ -63,6 +63,17 @@ vi.mock('mongodb', () => {
                 upsertedCount: current._id ? 0 : 1,
               };
             },
+            find(_query: Record<string, unknown>) {
+              return {
+                async toArray() {
+                  return [...store.values()].map((doc) => structuredClone(doc));
+                },
+              };
+            },
+            async deleteOne(filter: { _id: string }) {
+              store.delete(filter._id);
+              return { acknowledged: true, deletedCount: 1 };
+            },
           };
         },
       };
@@ -446,5 +457,93 @@ describe('searchFlights', () => {
         reason: expect.stringContaining('ENABLED_API_PROVIDERS'),
       }),
     ]));
+  });
+
+  it('returns realistic preset demo flights for TEST7 through TEST10 searches', async () => {
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    const searchFlights = await loadSearchFlights();
+    const result = await searchFlights('TEST7,TEST8,TEST9,TEST10');
+
+    expect(result.requestedIdentifiers).toEqual(['TEST7', 'TEST8', 'TEST9', 'TEST10']);
+    expect(result.matchedIdentifiers).toEqual(['TEST7', 'TEST8', 'TEST9', 'TEST10']);
+    expect(result.notFoundIdentifiers).toEqual([]);
+    expect(result.flights).toHaveLength(4);
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    expect(result.flights).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        callsign: 'KLM641',
+        matchedBy: expect.arrayContaining(['TEST7']),
+        onGround: true,
+        route: expect.objectContaining({
+          departureAirport: 'AMS',
+          arrivalAirport: 'JFK',
+        }),
+      }),
+      expect.objectContaining({
+        callsign: 'VLG1153',
+        matchedBy: expect.arrayContaining(['TEST8']),
+        onGround: true,
+        route: expect.objectContaining({
+          departureAirport: 'LIS',
+          arrivalAirport: 'MAD',
+        }),
+      }),
+      expect.objectContaining({
+        callsign: 'AFR1840',
+        matchedBy: expect.arrayContaining(['TEST9']),
+        onGround: true,
+        route: expect.objectContaining({
+          departureAirport: 'FCO',
+          arrivalAirport: 'CDG',
+        }),
+      }),
+      expect.objectContaining({
+        callsign: 'AFR022',
+        matchedBy: expect.arrayContaining(['TEST10']),
+        onGround: true,
+        route: expect.objectContaining({
+          departureAirport: 'CDG',
+          arrivalAirport: 'JFK',
+        }),
+      }),
+    ]));
+  });
+
+  it('returns cached data without calling providers when cacheOnly is true', async () => {
+    process.env.MONGODB_URI = 'mongodb://localhost:27017';
+    process.env.OPENSKY_CLIENT_ID = 'client-from-env';
+    process.env.OPENSKY_CLIENT_SECRET = 'secret-from-env';
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    const searchFlights = await loadSearchFlights();
+
+    // First call: no cache, cacheOnly → should return empty without calling providers
+    const emptyResult = await searchFlights('AF999', { cacheOnly: true });
+    expect(emptyResult.notFoundIdentifiers).toEqual(['AF999']);
+    expect(emptyResult.flights).toHaveLength(0);
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    // Second call: also cacheOnly, still no cache → no providers called
+    const secondResult = await searchFlights('AF999', { cacheOnly: true });
+    expect(secondResult.notFoundIdentifiers).toEqual(['AF999']);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('returns empty result without provider calls when cacheOnly is true and no cache exists', async () => {
+    process.env.MONGODB_URI = 'mongodb://localhost:27017';
+    const fetchMock = vi.fn();
+    vi.stubGlobal('fetch', fetchMock);
+
+    const searchFlights = await loadSearchFlights();
+    const result = await searchFlights('UNKNOWN123', { cacheOnly: true });
+
+    expect(result.matchedIdentifiers).toEqual([]);
+    expect(result.notFoundIdentifiers).toEqual(['UNKNOWN123']);
+    expect(result.flights).toHaveLength(0);
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

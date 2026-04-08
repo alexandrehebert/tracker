@@ -1,6 +1,6 @@
 import { geoNaturalEarth1 } from 'd3-geo';
 import type { FlightSourceDetail } from '~/components/tracker/flight/types';
-import { getProviderDisabledReason, isProviderEnabled } from './index';
+import { getProviderDisabledReason, getProviderDisabledReasonAsync, isProviderEnabled } from './index';
 import { isProviderHistoryConfigured, readLatestProviderHistory, writeProviderHistory } from './history';
 import { recordProviderRequestLog } from './observability';
 
@@ -669,7 +669,7 @@ export async function lookupFlightAwareFlightWithReport(
   }
 
   if (!isFlightAwareConfigured()) {
-    const disabledReason = getProviderDisabledReason('flightaware');
+    const disabledReason = await getProviderDisabledReasonAsync('flightaware');
 
     return {
       match: null,
@@ -678,6 +678,19 @@ export async function lookupFlightAwareFlightWithReport(
         disabledReason ?? 'FlightAware lookup skipped because `FLIGHT_AWARE_API_KEY` (or legacy `FLIGHTAWARE_API_KEY`) is not configured.',
         false,
         { identifier: normalizedIdentifier, disabledByFlag: Boolean(disabledReason) },
+      ),
+    };
+  }
+
+  const dbDisabledReason = await getProviderDisabledReasonAsync('flightaware');
+  if (dbDisabledReason) {
+    return {
+      match: null,
+      report: createFlightAwareReport(
+        'skipped',
+        dbDisabledReason,
+        false,
+        { identifier: normalizedIdentifier, disabledByFlag: true },
       ),
     };
   }

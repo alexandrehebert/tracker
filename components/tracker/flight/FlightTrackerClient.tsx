@@ -1523,6 +1523,8 @@ function FlightTrackerDashboard({
       const searchParams = new URLSearchParams({ q: trimmedQuery });
       if (forceRefresh) {
         searchParams.set('refresh', '1');
+      } else if (trigger === 'auto-refresh') {
+        searchParams.set('cacheonly', '1');
       }
 
       const response = await fetch(`/api/tracker?${searchParams.toString()}`, {

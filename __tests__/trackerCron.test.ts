@@ -40,7 +40,7 @@ vi.mock('mongodb', () => {
               const documents = Array.from(store.values())
                 .filter((document) => Object.entries(query).every(([key, value]) => document[key] === value));
 
-              return {
+              const cursor = {
                 sort(sortDefinition: Record<string, 1 | -1>) {
                   const [[sortKey, sortDirection]] = Object.entries(sortDefinition);
                   const sorted = [...documents].sort((first, second) => {
@@ -59,7 +59,12 @@ vi.mock('mongodb', () => {
                     },
                   };
                 },
+                async toArray() {
+                  return documents.map((doc) => structuredClone(doc));
+                },
               };
+
+              return cursor;
             },
             async updateOne(
               filter: { _id: string },
@@ -79,6 +84,10 @@ vi.mock('mongodb', () => {
                 modifiedCount: 1,
                 upsertedCount: current._id ? 0 : 1,
               };
+            },
+            async deleteOne(filter: { _id: string }) {
+              store.delete(filter._id);
+              return { acknowledged: true, deletedCount: 1 };
             },
           };
         },

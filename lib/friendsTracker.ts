@@ -466,7 +466,7 @@ function buildDefaultDemoTrip(now = getDemoReferenceTime()): FriendsTrackerTripC
           },
           {
             id: 'demo-leg-4b',
-            flightNumber: 'KL641',
+            flightNumber: 'TEST7',
             departureTime: new Date(now + (70 * 60 * 1000)).toISOString(),
             from: 'AMS',
             to: 'JFK',
@@ -480,7 +480,7 @@ function buildDefaultDemoTrip(now = getDemoReferenceTime()): FriendsTrackerTripC
         flights: [
           {
             id: 'demo-leg-5a',
-            flightNumber: 'UX1153',
+            flightNumber: 'TEST8',
             departureTime: new Date(now - (5 * 60 * 60 * 1000)).toISOString(),
             from: 'LIS',
             to: 'MAD',
@@ -502,7 +502,7 @@ function buildDefaultDemoTrip(now = getDemoReferenceTime()): FriendsTrackerTripC
         flights: [
           {
             id: 'demo-leg-6a',
-            flightNumber: 'AF1840',
+            flightNumber: 'TEST9',
             departureTime: new Date(now + (7 * 60 * 60 * 1000)).toISOString(),
             from: 'FCO',
             to: 'CDG',
@@ -510,7 +510,7 @@ function buildDefaultDemoTrip(now = getDemoReferenceTime()): FriendsTrackerTripC
           },
           {
             id: 'demo-leg-6b',
-            flightNumber: 'AF022',
+            flightNumber: 'TEST10',
             departureTime: new Date(now + (10 * 60 * 60 * 1000)).toISOString(),
             from: 'CDG',
             to: 'JFK',

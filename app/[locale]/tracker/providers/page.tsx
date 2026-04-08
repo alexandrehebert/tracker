@@ -11,6 +11,8 @@ import { isAeroDataBoxConfigured } from '~/lib/server/providers/aerodatabox';
 import { isAviationstackConfigured } from '~/lib/server/providers/aviationstack';
 import { isFlightAwareConfigured } from '~/lib/server/providers/flightaware';
 import { getOpenSkyTokenStatus, isOpenSkyConfigured } from '~/lib/server/providers/opensky';
+import { isProviderOverridesStorageConfigured, readProviderOverrides } from '~/lib/server/providers/overrides';
+import { ProviderOverrideControls } from '~/components/tracker/providers/ProviderOverrideControls';
 
 export const dynamic = 'force-dynamic';
 
@@ -78,9 +80,10 @@ export default async function TrackerProvidersPage({ params }: TrackerProvidersP
     notFound();
   }
 
-  const [dashboard, openSkyTokenStatus] = await Promise.all([
+  const [dashboard, openSkyTokenStatus, providerOverrides] = await Promise.all([
     getProvidersDashboard(250),
     getOpenSkyTokenStatus(),
+    readProviderOverrides(),
   ]);
 
   const providerStates = [
@@ -192,6 +195,11 @@ export default async function TrackerProvidersPage({ params }: TrackerProvidersP
             <p className="mt-1 text-xs text-slate-300">UTC</p>
           </div>
         </div>
+
+        <ProviderOverrideControls
+          initialOverrides={providerOverrides}
+          storageConfigured={isProviderOverridesStorageConfigured()}
+        />
 
         <section className="mt-6 space-y-4">
           <div>
