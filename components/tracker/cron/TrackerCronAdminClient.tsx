@@ -591,37 +591,6 @@ export function TrackerCronAdminClient({ initialDashboard }: { initialDashboard:
               className="mt-2 min-h-56 w-full rounded-2xl border border-white/10 bg-slate-950 px-3 py-3 font-mono text-sm text-slate-100 outline-none transition focus:border-sky-400/60"
             />
 
-            <div className="mt-4 rounded-2xl border border-cyan-400/30 bg-cyan-500/10 p-4">
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                <div>
-                  <div className="text-xs uppercase tracking-[0.2em] text-cyan-100">Managed by /chantal</div>
-                  <p className="mt-1 text-sm text-cyan-50">
-                    Control whether the live Chantal trip is included in the cron queue. This batch keeps running even if the manual tracker cron above is disabled.
-                  </p>
-                  <p className="mt-2 text-xs text-cyan-100/80">
-                    Current live trip: <span className="font-semibold text-white">{chantalCurrentTripName ?? 'No published Chantal trip selected yet'}</span>
-                  </p>
-                </div>
-                <ToggleSwitch
-                  checked={chantalEnabled}
-                  onToggle={handleChantalEnabledToggle}
-                  label="Enable or disable the Chantal cron batch"
-                  disabled={isSaving || isSavingEnabled || isSavingChantalEnabled}
-                  pending={isSavingChantalEnabled}
-                />
-              </div>
-
-              <textarea
-                readOnly
-                aria-label="Chantal-managed flight identifiers"
-                value={chantalIdentifiers.join('\n')}
-                placeholder={chantalEnabled
-                  ? 'No flight identifiers are currently synced from the published Chantal trip.'
-                  : 'Enable the Chantal cron batch to sync the published trip here.'}
-                className="mt-3 min-h-24 w-full rounded-2xl border border-cyan-400/20 bg-slate-950 px-3 py-3 font-mono text-sm text-cyan-50 outline-none"
-              />
-            </div>
-
             <div className="mt-4 flex flex-wrap gap-3">
               <button
                 type="submit"
@@ -640,6 +609,37 @@ export function TrackerCronAdminClient({ initialDashboard }: { initialDashboard:
               </button>
             </div>
           </form>
+
+          <section className="rounded-3xl border border-cyan-400/30 bg-cyan-500/10 p-5 shadow-[0_18px_50px_rgba(2,6,23,0.25)]">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+              <div>
+                <div className="text-xs uppercase tracking-[0.2em] text-cyan-100">Managed by /chantal</div>
+                <p className="mt-1 text-sm text-cyan-50">
+                  Control whether the live Chantal trip is included in the cron queue. This batch keeps running even if the manual tracker cron above is disabled.
+                </p>
+                <p className="mt-2 text-xs text-cyan-100/80">
+                  Current live trip: <span className="font-semibold text-white">{chantalCurrentTripName ?? 'No published Chantal trip selected yet'}</span>
+                </p>
+              </div>
+              <ToggleSwitch
+                checked={chantalEnabled}
+                onToggle={handleChantalEnabledToggle}
+                label="Enable or disable the Chantal cron batch"
+                disabled={isSaving || isSavingEnabled || isSavingChantalEnabled}
+                pending={isSavingChantalEnabled}
+              />
+            </div>
+
+            <textarea
+              readOnly
+              aria-label="Chantal-managed flight identifiers"
+              value={chantalIdentifiers.join('\n')}
+              placeholder={chantalEnabled
+                ? 'No flight identifiers are currently synced from the published Chantal trip.'
+                : 'Enable the Chantal cron batch to sync the published trip here.'}
+              className="mt-3 min-h-24 w-full rounded-2xl border border-cyan-400/20 bg-slate-950 px-3 py-3 font-mono text-sm text-cyan-50 outline-none"
+            />
+          </section>
 
           <section className="rounded-3xl border border-white/10 bg-slate-900/70 p-5 shadow-[0_18px_50px_rgba(2,6,23,0.25)]">
             <h2 className="text-lg font-semibold text-white">Shared OpenSky token cache</h2>
