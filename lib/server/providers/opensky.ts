@@ -1119,9 +1119,12 @@ export async function fetchOpenSky<T>(pathname: string, searchParams?: Record<st
   }
 }
 
+export function hasOpenSkyConfiguration(): boolean {
+  return hasLocalOpenSkyCredentials() || Boolean(getOpenSkyProxyBaseUrl());
+}
+
 export function isOpenSkyConfigured(): boolean {
-  return (hasLocalOpenSkyCredentials() || Boolean(getOpenSkyProxyBaseUrl()))
-    && isProviderEnabled('opensky');
+  return hasOpenSkyConfiguration() && isProviderEnabled('opensky');
 }
 
 export async function getTrackForAircraft(icao24: string, referenceTime = 0): Promise<OpenSkyTrackHistory> {

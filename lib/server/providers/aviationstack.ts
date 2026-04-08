@@ -198,8 +198,12 @@ function summarizeAviationstackMatch(match: AviationstackFlightEnrichment): Reco
   };
 }
 
+export function hasAviationstackCredentials(): boolean {
+  return Boolean(getAccessKey());
+}
+
 export function isAviationstackConfigured(): boolean {
-  return Boolean(getAccessKey()) && isProviderEnabled('aviationstack');
+  return hasAviationstackCredentials() && isProviderEnabled('aviationstack');
 }
 
 function buildSyntheticIcao24(identifier: string): string {

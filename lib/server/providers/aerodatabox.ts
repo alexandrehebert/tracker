@@ -280,8 +280,12 @@ function summarizeAeroDataBoxMatch(match: AeroDataBoxFlightEnrichment): Record<s
   };
 }
 
+export function hasAeroDataBoxCredentials(): boolean {
+  return Boolean(getApiKey());
+}
+
 export function isAeroDataBoxConfigured(): boolean {
-  return Boolean(getApiKey()) && isProviderEnabled('aerodatabox');
+  return hasAeroDataBoxCredentials() && isProviderEnabled('aerodatabox');
 }
 
 function buildSyntheticIcao24(identifier: string): string {

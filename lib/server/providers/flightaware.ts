@@ -278,8 +278,12 @@ function summarizeFlightAwareMatch(match: FlightAwareFlightEnrichment): Record<s
   };
 }
 
+export function hasFlightAwareCredentials(): boolean {
+  return Boolean(getApiKey());
+}
+
 export function isFlightAwareConfigured(): boolean {
-  return Boolean(getApiKey()) && isProviderEnabled('flightaware');
+  return hasFlightAwareCredentials() && isProviderEnabled('flightaware');
 }
 
 function buildSyntheticIcao24(identifier: string): string {
