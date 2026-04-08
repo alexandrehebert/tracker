@@ -1,12 +1,13 @@
 'use client';
 
-import { Camera, Plus, Trash2 } from 'lucide-react';
+import { Camera, Plus, Trash2, X } from 'lucide-react';
+import { useRef } from 'react';
 import { useFriendsConfig } from './FriendsConfigContext';
 import { FlightLegCard } from './FlightLegCard';
 import { createDraftLeg } from '~/lib/utils/friendsConfigUtils';
 import { resizeImageToDataUrl } from '~/lib/utils/imageUtils';
 import { getFriendInitials } from '~/lib/utils/friendInitials';
-import { resolveFriendAccentColor, type FriendTravelConfig } from '~/lib/friendsTracker';
+import { resolveAutoFriendAccentColor, resolveFriendAccentColor, type FriendTravelConfig } from '~/lib/friendsTracker';
 import { colorToHex } from '../flight/colors';
 
 interface FriendCardProps {
@@ -16,6 +17,11 @@ interface FriendCardProps {
 
 export function FriendCard({ friend, friendIndex }: FriendCardProps) {
   const { locale, updateFriend, updateSelectedTripFriends } = useFriendsConfig();
+  const colorInputRef = useRef<HTMLInputElement | null>(null);
+  const friendLabel = friend.name || `Friend ${friendIndex + 1}`;
+  const accentColor = colorToHex(resolveFriendAccentColor(friend, friendIndex));
+  const autoAccentColor = colorToHex(resolveAutoFriendAccentColor(friend, friendIndex));
+  const hasCustomAccentColor = accentColor.toLowerCase() !== autoAccentColor.toLowerCase();
 
   const itineraryPreview = friend.flights
     .filter((leg) => {
@@ -45,60 +51,116 @@ export function FriendCard({ friend, friendIndex }: FriendCardProps) {
     <section className="rounded-3xl border border-white/10 bg-slate-950/55 p-5 backdrop-blur-sm">
       <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
         <div className="flex items-start gap-4">
-          <div className="relative shrink-0">
-            <div
-              className="relative h-16 w-16 cursor-pointer overflow-hidden rounded-full border-2 border-white/20 bg-slate-800 transition hover:border-cyan-400/60"
-              title="Click to upload avatar photo"
-              onClick={() => {
-                const input = document.createElement('input');
-                input.type = 'file';
-                input.accept = 'image/*';
-                input.onchange = async (event) => {
-                  const file = (event.target as HTMLInputElement).files?.[0];
-                  if (!file) return;
-                  try {
-                    const dataUrl = await resizeImageToDataUrl(file);
-                    updateFriend(friend.id, (currentFriend) => ({
-                      ...currentFriend,
-                      avatarUrl: dataUrl,
-                    }));
-                  } catch {
-                    /* ignore */
-                  }
-                };
-                input.click();
-              }}
-            >
-              {friend.avatarUrl ? (
-                <img
-                  src={friend.avatarUrl}
-                  alt={friend.name || `Friend ${friendIndex + 1}`}
-                  className="h-full w-full object-cover"
-                />
-              ) : (
-                <div className="flex h-full w-full items-center justify-center text-lg font-bold text-white/60">
-                  {getFriendInitials(friend.name || `F${friendIndex + 1}`)}
-                </div>
-              )}
-              <div className="absolute inset-0 flex items-center justify-center rounded-full bg-black/40 opacity-0 transition hover:opacity-100">
-                <Camera className="h-5 w-5 text-white" />
-              </div>
-            </div>
-            {friend.avatarUrl ? (
-              <button
-                type="button"
-                title="Remove avatar"
-                className="absolute -right-1 -top-1 flex h-5 w-5 items-center justify-center rounded-full border border-white/20 bg-rose-500/80 text-white transition hover:bg-rose-500"
+          <div className="shrink-0">
+            <div className="relative">
+              <div
+                className="relative h-16 w-16 cursor-pointer overflow-hidden rounded-full border-2 border-white/20 bg-slate-800 transition hover:border-cyan-400/60"
+                title="Click to upload avatar photo"
                 onClick={() => {
-                  updateFriend(friend.id, (currentFriend) => ({
-                    ...currentFriend,
-                    avatarUrl: null,
-                  }));
+                  const input = document.createElement('input');
+                  input.type = 'file';
+                  input.accept = 'image/*';
+                  input.onchange = async (event) => {
+                    const file = (event.target as HTMLInputElement).files?.[0];
+                    if (!file) return;
+                    try {
+                      const dataUrl = await resizeImageToDataUrl(file);
+                      updateFriend(friend.id, (currentFriend) => ({
+                        ...currentFriend,
+                        avatarUrl: dataUrl,
+                      }));
+                    } catch {
+                      /* ignore */
+                    }
+                  };
+                  input.click();
                 }}
               >
-                <span className="text-[10px] font-bold leading-none">×</span>
+                {friend.avatarUrl ? (
+                  <img
+                    src={friend.avatarUrl}
+                    alt={friendLabel}
+                    className="h-full w-full object-cover"
+                  />
+                ) : (
+                  <div className="flex h-full w-full items-center justify-center text-lg font-bold text-white/60">
+                    {getFriendInitials(friendLabel)}
+                  </div>
+                )}
+                <div className="absolute inset-0 flex items-center justify-center rounded-full bg-black/40 opacity-0 transition hover:opacity-100">
+                  <Camera className="h-5 w-5 text-white" />
+                </div>
+              </div>
+              {friend.avatarUrl ? (
+                <button
+                  type="button"
+                  title="Remove avatar"
+                  className="absolute -right-1 -top-1 flex h-5 w-5 items-center justify-center rounded-full border border-white/20 bg-rose-500/80 text-white transition hover:bg-rose-500"
+                  onClick={() => {
+                    updateFriend(friend.id, (currentFriend) => ({
+                      ...currentFriend,
+                      avatarUrl: null,
+                    }));
+                  }}
+                >
+                  <span className="text-[10px] font-bold leading-none">×</span>
+                </button>
+              ) : null}
+            </div>
+
+            <div className="mt-2 flex items-center justify-center gap-1.5">
+              <input
+                ref={colorInputRef}
+                type="color"
+                aria-label={`Accent color for ${friendLabel}`}
+                value={accentColor}
+                onChange={(event) => {
+                  const color = event.target.value;
+                  updateFriend(friend.id, (currentFriend) => ({
+                    ...currentFriend,
+                    color,
+                  }));
+                }}
+                className="sr-only"
+              />
+              <button
+                type="button"
+                aria-label={`Choose accent color for ${friendLabel}`}
+                title={hasCustomAccentColor ? 'Change accent color' : 'Pick accent color'}
+                onClick={() => {
+                  const input = colorInputRef.current;
+                  if (!input) {
+                    return;
+                  }
+
+                  if (typeof input.showPicker === 'function') {
+                    input.showPicker();
+                    return;
+                  }
+
+                  input.click();
+                }}
+                className="inline-flex h-5 w-5 items-center justify-center rounded-full border border-white/20 bg-slate-950/80 transition hover:scale-105 hover:border-cyan-400/60"
+              >
+                <span className="h-3 w-3 rounded-full border border-white/60" style={{ backgroundColor: accentColor }} />
               </button>
-            ) : null}
+              {hasCustomAccentColor ? (
+                <button
+                  type="button"
+                  aria-label={`Use automatic accent color for ${friendLabel}`}
+                  title="Use automatic accent color"
+                  onClick={() => {
+                    updateFriend(friend.id, (currentFriend) => ({
+                      ...currentFriend,
+                      color: null,
+                    }));
+                  }}
+                  className="inline-flex h-4.5 w-4.5 items-center justify-center rounded-full border border-white/15 bg-slate-900/80 text-slate-200 transition hover:border-cyan-400/40 hover:text-white"
+                >
+                  <X className="h-3 w-3" />
+                </button>
+              ) : null}
+            </div>
           </div>
 
           <div className="flex-1">
@@ -117,38 +179,7 @@ export function FriendCard({ friend, friendIndex }: FriendCardProps) {
               placeholder={`Friend ${friendIndex + 1}`}
               className="w-full rounded-2xl border border-white/10 bg-slate-950/90 px-3 py-2 text-sm text-slate-100 outline-none transition focus:border-cyan-400/60 focus:ring-2 focus:ring-cyan-500/20"
             />
-            <p className="mt-1.5 text-xs text-slate-500">Click the avatar to upload a photo (shown as bubble on map)</p>
-
-            <div className="mt-3 flex flex-wrap items-center gap-2">
-              <label className="text-[11px] font-semibold uppercase tracking-[0.18em] text-slate-400">
-                Accent color
-              </label>
-              <input
-                type="color"
-                aria-label={`Accent color for ${friend.name || `Friend ${friendIndex + 1}`}`}
-                value={colorToHex(resolveFriendAccentColor(friend, friendIndex))}
-                onChange={(event) => {
-                  const color = event.target.value;
-                  updateFriend(friend.id, (currentFriend) => ({
-                    ...currentFriend,
-                    color,
-                  }));
-                }}
-                className="h-9 w-12 cursor-pointer rounded-xl border border-white/15 bg-slate-950/80 p-1"
-              />
-              <button
-                type="button"
-                onClick={() => {
-                  updateFriend(friend.id, (currentFriend) => ({
-                    ...currentFriend,
-                    color: null,
-                  }));
-                }}
-                className="rounded-full border border-white/10 bg-slate-900/80 px-2.5 py-1 text-[11px] font-medium text-slate-200 transition hover:border-cyan-400/40 hover:text-white"
-              >
-                Auto
-              </button>
-            </div>
+            <p className="mt-1.5 text-xs text-slate-500">Click the avatar to upload a photo. Use the dot below it to pick or reset the map accent color.</p>
           </div>
         </div>
 

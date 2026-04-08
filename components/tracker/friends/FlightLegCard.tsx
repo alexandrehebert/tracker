@@ -37,6 +37,12 @@ export function FlightLegCard({ friendId, leg, legIndex, totalLegs }: FlightLegC
   const validationResult = flightValidationResults[leg.id];
   const hasAppliedValidation = leg.validatedFlight?.status === 'matched' || leg.validatedFlight?.status === 'warning';
   const isValidationLoading = validationResult?.status === 'loading';
+  const showInlineValidationBanner = Boolean(
+    validationResult
+      && validationResult.status !== 'idle'
+      && validationResult.status !== 'loading'
+      && validationResult.status !== 'matched',
+  );
 
   function formatValidationTimestamp(value: number | null): string | null {
     if (value == null || !Number.isFinite(value)) {
@@ -62,11 +68,18 @@ export function FlightLegCard({ friendId, leg, legIndex, totalLegs }: FlightLegC
   }
 
   return (
-    <div className={`relative rounded-2xl border border-white/10 bg-slate-950/70 p-4 ${hasOpenSuggestions ? 'z-30' : 'z-0'}`}>
+    <div className={`relative rounded-2xl border p-4 transition-colors ${hasAppliedValidation
+      ? 'border-emerald-400/35 bg-emerald-500/10 shadow-lg shadow-emerald-950/10'
+      : 'border-white/10 bg-slate-950/70'} ${hasOpenSuggestions ? 'z-30' : 'z-0'}`}>
       <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2 text-sm font-semibold text-white">
-          <PlaneTakeoff className="h-4 w-4 text-sky-300" />
+          <PlaneTakeoff className={`h-4 w-4 ${hasAppliedValidation ? 'text-emerald-300' : 'text-sky-300'}`} />
           <span>Leg {legIndex + 1}</span>
+          {hasAppliedValidation ? (
+            <span className="rounded-full border border-emerald-400/35 bg-emerald-500/15 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-[0.16em] text-emerald-50">
+              Validated
+            </span>
+          ) : null}
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <button
@@ -233,36 +246,27 @@ export function FlightLegCard({ friendId, leg, legIndex, totalLegs }: FlightLegC
         </div>
       ) : null}
 
-      {validationResult && validationResult.status !== 'idle' && validationResult.status !== 'loading' ? (
-        <div className={`mt-3 rounded-2xl border px-3 py-2 text-xs ${validationResult.status === 'matched'
-          ? 'border-emerald-400/30 bg-emerald-500/10 text-emerald-100'
-          : validationResult.status === 'warning'
-            ? 'border-amber-400/35 bg-amber-500/10 text-amber-100'
-            : validationResult.status === 'skipped'
-              ? 'border-slate-400/25 bg-slate-900/70 text-slate-200'
-              : 'border-rose-400/35 bg-rose-500/10 text-rose-100'}`}
+      {showInlineValidationBanner && validationResult ? (
+        <div className={`mt-3 rounded-2xl border px-3 py-2 text-xs ${validationResult.status === 'warning'
+          ? 'border-amber-400/35 bg-amber-500/10 text-amber-100'
+          : validationResult.status === 'skipped'
+            ? 'border-slate-400/25 bg-slate-900/70 text-slate-200'
+            : 'border-rose-400/35 bg-rose-500/10 text-rose-100'}`}
         >
           <p className="font-semibold">
-            {validationResult.status === 'matched'
-              ? 'Schedule match confirmed'
-              : validationResult.status === 'warning'
-                ? 'Provider match needs review'
-                : validationResult.status === 'skipped'
-                  ? 'Validation skipped'
-                  : validationResult.status === 'not-found'
-                    ? 'No live match found'
-                    : 'Validation error'}
+            {validationResult.status === 'warning'
+              ? 'Provider match needs review'
+              : validationResult.status === 'skipped'
+                ? 'Validation skipped'
+                : validationResult.status === 'not-found'
+                  ? 'No live match found'
+                  : 'Validation error'}
           </p>
           <p className="mt-1">{validationResult.message}</p>
           <div className="mt-2 flex flex-wrap gap-2">
             {validationResult.providerLabel ? (
               <span className="rounded-full border border-white/15 bg-slate-950/40 px-2 py-1">
                 Source: {validationResult.providerLabel}
-              </span>
-            ) : null}
-            {validationResult.matchedIcao24 ? (
-              <span className="rounded-full border border-white/15 bg-slate-950/40 px-2 py-1">
-                ICAO24: {validationResult.matchedIcao24}
               </span>
             ) : null}
             {validationResult.matchedRoute ? (

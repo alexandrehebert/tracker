@@ -134,15 +134,24 @@ export function FlightValidationModal() {
     applyValidationCandidate,
     runValidationModal,
     toggleValidationProvider,
+    flightValidationResults,
+    availableValidationProviders,
   } = useFriendsConfig();
 
   if (!validationModal) {
     return null;
   }
 
-  const { identifier, status, selectedProviders, candidates, message } = validationModal;
+  const { identifier, legId, status, selectedProviders, candidates, message } = validationModal;
   const isLoading = status === 'loading';
   const selectedProviderCount = Object.values(selectedProviders).filter(Boolean).length;
+  const availableProviderOptions = VALIDATION_PROVIDER_OPTIONS.filter((option) => availableValidationProviders[option.id]);
+  const currentValidation = flightValidationResults[legId];
+  const hasCurrentValidation = Boolean(
+    currentValidation
+      && currentValidation.status !== 'idle'
+      && currentValidation.status !== 'loading',
+  );
 
   return (
     <div
@@ -175,7 +184,7 @@ export function FlightValidationModal() {
           <div className="rounded-2xl border border-white/10 bg-slate-900/60 p-3">
             <p className="text-xs font-semibold uppercase tracking-[0.18em] text-sky-200">Select provider(s)</p>
             <div className="mt-3 grid gap-2 sm:grid-cols-2">
-              {VALIDATION_PROVIDER_OPTIONS.map((option) => {
+              {availableProviderOptions.map((option) => {
                 const isSelected = selectedProviders[option.id];
                 return (
                   <button
@@ -200,16 +209,18 @@ export function FlightValidationModal() {
 
             <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
               <p className="text-xs text-slate-400">
-                {selectedProviderCount > 0
-                  ? `${selectedProviderCount} provider${selectedProviderCount === 1 ? '' : 's'} selected.`
-                  : 'Select at least one provider before running validation.'}
+                {availableProviderOptions.length === 0
+                  ? 'No validation providers are currently enabled.'
+                  : selectedProviderCount > 0
+                    ? `${selectedProviderCount} provider${selectedProviderCount === 1 ? '' : 's'} selected.`
+                    : 'Select at least one enabled provider before running validation.'}
               </p>
               <button
                 type="button"
                 onClick={() => {
                   void runValidationModal();
                 }}
-                disabled={isLoading || selectedProviderCount === 0}
+                disabled={isLoading || selectedProviderCount === 0 || availableProviderOptions.length === 0}
                 className="inline-flex items-center justify-center gap-2 rounded-full border border-cyan-400/40 bg-cyan-500/15 px-4 py-2 text-sm font-semibold text-cyan-100 transition hover:bg-cyan-500/25 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 <RefreshCw className={`h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
@@ -217,6 +228,57 @@ export function FlightValidationModal() {
               </button>
             </div>
           </div>
+
+          {hasCurrentValidation && currentValidation ? (
+            <div className={`rounded-2xl border px-4 py-3 text-sm ${currentValidation.status === 'matched'
+              ? 'border-emerald-400/30 bg-emerald-500/10 text-emerald-50'
+              : currentValidation.status === 'warning'
+                ? 'border-amber-400/35 bg-amber-500/10 text-amber-100'
+                : currentValidation.status === 'skipped'
+                  ? 'border-slate-400/25 bg-slate-900/70 text-slate-200'
+                  : 'border-rose-400/35 bg-rose-500/10 text-rose-100'}`}>
+              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] opacity-90">Current leg status</p>
+              <p className="mt-1 font-semibold">
+                {currentValidation.status === 'matched'
+                  ? 'Schedule match confirmed'
+                  : currentValidation.status === 'warning'
+                    ? 'Provider match needs review'
+                    : currentValidation.status === 'skipped'
+                      ? 'Validation skipped'
+                      : currentValidation.status === 'not-found'
+                        ? 'No live match found'
+                        : 'Validation error'}
+              </p>
+              <p className="mt-1 text-xs opacity-90">{currentValidation.message}</p>
+              <div className="mt-2 flex flex-wrap gap-2 text-xs">
+                {currentValidation.providerLabel ? (
+                  <span className="rounded-full border border-white/15 bg-slate-950/40 px-2 py-1">
+                    Source: {currentValidation.providerLabel}
+                  </span>
+                ) : null}
+                {currentValidation.matchedIcao24 ? (
+                  <span className="rounded-full border border-white/15 bg-slate-950/40 px-2 py-1">
+                    ICAO24: {currentValidation.matchedIcao24}
+                  </span>
+                ) : null}
+                {currentValidation.matchedRoute ? (
+                  <span className="rounded-full border border-white/15 bg-slate-950/40 px-2 py-1">
+                    Route: {currentValidation.matchedRoute}
+                  </span>
+                ) : null}
+                {currentValidation.departureDeltaMinutes != null ? (
+                  <span className="rounded-full border border-white/15 bg-slate-950/40 px-2 py-1">
+                    Delta: {currentValidation.departureDeltaMinutes > 0 ? '+' : ''}{currentValidation.departureDeltaMinutes} min
+                  </span>
+                ) : null}
+                {formatTimestampMs(currentValidation.matchedArrivalTime, locale) ? (
+                  <span className="rounded-full border border-white/15 bg-slate-950/40 px-2 py-1">
+                    Arrival: {formatTimestampMs(currentValidation.matchedArrivalTime, locale)} UTC
+                  </span>
+                ) : null}
+              </div>
+            </div>
+          ) : null}
 
           {isLoading ? (
             <div className="flex items-center gap-3 rounded-2xl border border-sky-400/20 bg-sky-500/8 px-4 py-4 text-sm text-sky-100">

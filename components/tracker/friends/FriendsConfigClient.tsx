@@ -11,6 +11,7 @@ import { FlightValidationModal } from './FlightValidationModal';
 import { createDraftFriend } from '~/lib/utils/friendsConfigUtils';
 import type { FriendsTrackerConfig } from '~/lib/friendsTracker';
 import type { TrackerCronDashboard } from '~/lib/server/trackerCron';
+import type { ProviderName } from '~/lib/server/providers';
 
 function FriendsConfigInner() {
   const { friends, selectedTrip, updateSelectedTripFriends } = useFriendsConfig();
@@ -61,6 +62,7 @@ export function FriendsConfigClient({
   initialAirportTimezones = initialConfig.airportTimezones ?? {},
   initialFlightAwareValidationEnabled = true,
   initialFlightAwareValidationNotice = null,
+  initialEnabledValidationProviders = ['opensky', 'flightaware', 'aviationstack', 'aerodatabox'],
 }: {
   initialConfig: FriendsTrackerConfig;
   initialCronDashboard: TrackerCronDashboard;
@@ -68,6 +70,7 @@ export function FriendsConfigClient({
   initialAirportTimezones?: Record<string, string>;
   initialFlightAwareValidationEnabled?: boolean;
   initialFlightAwareValidationNotice?: string | null;
+  initialEnabledValidationProviders?: ProviderName[];
 }) {
   return (
     <FriendsConfigProvider
@@ -77,6 +80,7 @@ export function FriendsConfigClient({
       initialAirportTimezones={initialAirportTimezones}
       initialFlightAwareValidationEnabled={initialFlightAwareValidationEnabled}
       initialFlightAwareValidationNotice={initialFlightAwareValidationNotice}
+      initialEnabledValidationProviders={initialEnabledValidationProviders}
     >
       <FriendsConfigInner />
     </FriendsConfigProvider>

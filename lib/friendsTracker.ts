@@ -245,6 +245,19 @@ function assignAutoFriendColors(friends: FriendTravelConfig[]): FriendTravelConf
   });
 }
 
+export function resolveAutoFriendAccentColor(
+  friend: Pick<Partial<FriendTravelConfig>, 'id' | 'name'> | null | undefined,
+  fallbackIndex = 0,
+): string {
+  const seed = [friend?.id, friend?.name]
+    .filter((value): value is string => typeof value === 'string' && Boolean(value.trim()))
+    .map((value) => value.trim().toLowerCase())
+    .join(':');
+
+  const seedIndex = seed ? hashFriendColorSeed(seed) : fallbackIndex;
+  return getGeneratedFriendColorFromSeed(seedIndex);
+}
+
 export function resolveFriendAccentColor(
   friend: Pick<Partial<FriendTravelConfig>, 'id' | 'name' | 'color'> | null | undefined,
   fallbackIndex = 0,
@@ -254,13 +267,7 @@ export function resolveFriendAccentColor(
     return configuredColor;
   }
 
-  const seed = [friend?.id, friend?.name]
-    .filter((value): value is string => typeof value === 'string' && Boolean(value.trim()))
-    .map((value) => value.trim().toLowerCase())
-    .join(':');
-
-  const seedIndex = seed ? hashFriendColorSeed(seed) : fallbackIndex;
-  return getGeneratedFriendColorFromSeed(seedIndex);
+  return resolveAutoFriendAccentColor(friend, fallbackIndex);
 }
 
 function getServiceDayKey(timestampMs: number, timeZone: string | null | undefined): string {

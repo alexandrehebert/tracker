@@ -16,6 +16,7 @@ import {
 import { getAirportSuggestionCode, normalizeAirportCode } from '~/lib/utils/airportUtils';
 import { buildSaveableConfigSnapshot, createClientId, createDraftTrip, moveArrayItem } from '~/lib/utils/friendsConfigUtils';
 import type { TrackerCronDashboard } from '~/lib/server/trackerCron';
+import type { ProviderName } from '~/lib/server/providers';
 
 export interface FriendsConfigValidationIssue {
   id: string;
@@ -204,16 +205,30 @@ function removeDemoTrips(trips: FriendsTrackerTripConfig[]): FriendsTrackerTripC
 }
 
 const LIVE_VALIDATION_WARNING_MINUTES = 180;
+const DEFAULT_ENABLED_VALIDATION_PROVIDERS: ProviderName[] = ['opensky', 'flightaware', 'aviationstack', 'aerodatabox'];
 
-const DEFAULT_VALIDATION_PROVIDER_SELECTION: FlightValidationProviderSelection = {
-  tracker: true,
-  flightaware: true,
-  aviationstack: true,
-  aerodatabox: true,
-};
+function buildAvailableValidationProviderSelection(
+  enabledProviders: readonly ProviderName[] | null | undefined,
+): FlightValidationProviderSelection {
+  const enabledSet = new Set((enabledProviders?.length ? enabledProviders : DEFAULT_ENABLED_VALIDATION_PROVIDERS));
 
-function createDefaultValidationProviderSelection(): FlightValidationProviderSelection {
-  return { ...DEFAULT_VALIDATION_PROVIDER_SELECTION };
+  return {
+    tracker: enabledSet.has('opensky'),
+    flightaware: enabledSet.has('flightaware'),
+    aviationstack: enabledSet.has('aviationstack'),
+    aerodatabox: enabledSet.has('aerodatabox'),
+  };
+}
+
+function createDefaultValidationProviderSelection(
+  availableProviders: FlightValidationProviderSelection,
+): FlightValidationProviderSelection {
+  return {
+    tracker: availableProviders.tracker,
+    flightaware: availableProviders.flightaware,
+    aviationstack: availableProviders.aviationstack,
+    aerodatabox: availableProviders.aerodatabox,
+  };
 }
 
 function countSelectedValidationProviders(selection: FlightValidationProviderSelection): number {
@@ -372,6 +387,7 @@ export interface FriendsConfigContextValue {
   latestCronRun: TrackerCronDashboard['history'][number] | null;
   validationIssues: FriendsConfigValidationIssue[];
   hasValidationErrors: boolean;
+  availableValidationProviders: FlightValidationProviderSelection;
   flightValidationResults: Record<string, FlightProviderValidationResult>;
   validationModal: FlightValidationModalState | null;
   // Actions
@@ -412,6 +428,7 @@ interface FriendsConfigProviderProps {
   initialAirportTimezones?: Record<string, string>;
   initialFlightAwareValidationEnabled?: boolean;
   initialFlightAwareValidationNotice?: string | null;
+  initialEnabledValidationProviders?: ProviderName[];
   children: ReactNode;
 }
 
@@ -422,6 +439,7 @@ export function FriendsConfigProvider({
   initialAirportTimezones = initialConfig.airportTimezones ?? {},
   initialFlightAwareValidationEnabled = true,
   initialFlightAwareValidationNotice = null,
+  initialEnabledValidationProviders = DEFAULT_ENABLED_VALIDATION_PROVIDERS,
   children,
 }: FriendsConfigProviderProps) {
   const locale = useLocale();
@@ -451,6 +469,10 @@ export function FriendsConfigProvider({
   );
   const [notice, setNotice] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [jsonNotice, setJsonNotice] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const availableValidationProviders = useMemo(
+    () => buildAvailableValidationProviderSelection(initialEnabledValidationProviders),
+    [initialEnabledValidationProviders],
+  );
   const [hasHydrated, setHasHydrated] = useState(false);
   const [airportSuggestions, setAirportSuggestions] = useState<AirportDirectoryResponse['airports']>([]);
   const [airportTimezones, setAirportTimezones] = useState<Record<string, string>>(() => ({ ...initialAirportTimezones }));
@@ -799,6 +821,10 @@ export function FriendsConfigProvider({
   }
 
   function toggleValidationProvider(providerId: FlightValidationProviderId) {
+    if (!availableValidationProviders[providerId]) {
+      return;
+    }
+
     setValidationModal((current) => current
       ? {
           ...current,
@@ -901,7 +927,7 @@ export function FriendsConfigProvider({
       legId,
       identifier,
       status: 'setup',
-      selectedProviders: createDefaultValidationProviderSelection(),
+      selectedProviders: createDefaultValidationProviderSelection(availableValidationProviders),
       candidates: [],
       message: 'Choose one or more providers, then run validation.',
     });
@@ -925,7 +951,7 @@ export function FriendsConfigProvider({
 
     if (countSelectedValidationProviders(selectedProviders) === 0) {
       setValidationModal((current) => current
-        ? { ...current, status: 'error', message: 'Select at least one provider before running validation.' }
+        ? { ...current, status: 'error', message: 'Select at least one enabled provider before running validation.' }
         : null);
       return;
     }
@@ -957,15 +983,19 @@ export function FriendsConfigProvider({
       : null);
 
     try {
+      const currentDepartureTime = typeof leg.departureTime === 'string' ? leg.departureTime : '';
+      const currentFrom = leg.from ?? null;
+      const currentTo = leg.to ?? null;
+
       const response = await fetch('/api/chantal/validate-flight', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           identifier,
           legId,
-          departureTime: leg.departureTime,
-          from: leg.from,
-          to: leg.to,
+          departureTime: currentDepartureTime,
+          from: currentFrom,
+          to: currentTo,
           includeOnDemandProviders: selectedProviders.aerodatabox,
           providers: selectedProviders,
         }),
@@ -1395,6 +1425,7 @@ export function FriendsConfigProvider({
     latestCronRun,
     validationIssues,
     hasValidationErrors,
+    availableValidationProviders,
     flightValidationResults: combinedFlightValidationResults,
     validationModal,
     updateTrip,
@@ -1444,6 +1475,7 @@ export function FriendsConfigProvider({
     latestCronRun,
     validationIssues,
     hasValidationErrors,
+    availableValidationProviders,
     flightValidationResults,
     combinedFlightValidationResults,
     validationModal,

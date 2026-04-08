@@ -76,6 +76,7 @@ export default async function ChantalConfigPage({ params }: ChantalConfigPagePro
             initialDemoReferenceTime={demoReferenceTime}
             initialFlightAwareValidationEnabled={isFlightAwareValidationEnabled}
             initialFlightAwareValidationNotice={flightAwareValidationNotice}
+            initialEnabledValidationProviders={enabledValidationProviders}
           />
         </div>
       </div>

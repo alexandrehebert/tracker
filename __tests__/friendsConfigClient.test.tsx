@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { FriendsConfigClient } from '~/components/tracker/friends/FriendsConfigClient';
@@ -252,6 +252,30 @@ describe('FriendsConfigClient', () => {
 
     const flightNumberInputs = aliceQueries.getAllByLabelText(/flight number/i) as HTMLInputElement[];
     expect(flightNumberInputs.map((input) => input.value)).toEqual(['KL641', 'AF123']);
+  });
+
+  it('uses an avatar accent dot picker with a reset-to-auto action', async () => {
+    render(<FriendsConfigClient initialConfig={initialConfig} initialCronDashboard={initialCronDashboard} />);
+
+    const aliceCard = screen.getByDisplayValue('Alice').closest('section');
+    expect(aliceCard).not.toBeNull();
+
+    const aliceQueries = within(aliceCard as HTMLElement);
+    expect(aliceQueries.getByRole('button', { name: /choose accent color for alice/i })).toBeInTheDocument();
+    expect(aliceQueries.queryByRole('button', { name: /use automatic accent color for alice/i })).not.toBeInTheDocument();
+
+    const colorInput = aliceQueries.getByLabelText(/accent color for alice/i, { selector: 'input' });
+    fireEvent.change(colorInput, { target: { value: '#ff00ff' } });
+
+    await waitFor(() => {
+      expect(aliceQueries.getByRole('button', { name: /use automatic accent color for alice/i })).toBeInTheDocument();
+    });
+
+    fireEvent.click(aliceQueries.getByRole('button', { name: /use automatic accent color for alice/i }));
+
+    await waitFor(() => {
+      expect(aliceQueries.queryByRole('button', { name: /use automatic accent color for alice/i })).not.toBeInTheDocument();
+    });
   });
 
   it('suggests airports for leg from and to fields and stores the selected code', async () => {
@@ -600,6 +624,92 @@ describe('FriendsConfigClient', () => {
     expect(await screen.findByText(/Arrival:/i)).toBeInTheDocument();
   });
 
+  it('uses the current unsaved leg departure time when running validation', async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.mocked(window.fetch);
+    let validationRequestBody: Record<string, unknown> | null = null;
+
+    fetchMock.mockImplementation(async (input, init) => {
+      const url = typeof input === 'string'
+        ? input
+        : input instanceof URL
+          ? input.toString()
+          : input.url;
+
+      if (url.includes('/api/airports')) {
+        return new Response(JSON.stringify(airportDirectoryResponse), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      if (url.includes('/api/chantal/validate-flight')) {
+        validationRequestBody = JSON.parse(typeof init?.body === 'string' ? init.body : '{}') as Record<string, unknown>;
+        return new Response(JSON.stringify({
+          status: 'not-found',
+          message: 'No match for the updated date yet.',
+          candidates: [],
+        }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      return new Response(JSON.stringify(initialConfig), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    });
+
+    render(
+      <FriendsConfigClient
+        initialConfig={initialConfig}
+        initialCronDashboard={initialCronDashboard}
+        initialAirportTimezones={{ CDG: 'UTC', AMS: 'UTC', LIS: 'UTC', JFK: 'UTC' }}
+      />,
+    );
+
+    const aliceCard = screen.getByDisplayValue('Alice').closest('section');
+    expect(aliceCard).not.toBeNull();
+
+    const aliceQueries = within(aliceCard as HTMLElement);
+    fireEvent.change(aliceQueries.getByLabelText(/estimated departure for leg 1/i), {
+      target: { value: '2026-04-15T12:30' },
+    });
+
+    await user.click(aliceQueries.getByRole('button', { name: /validate flight for leg 1/i }));
+    await user.click(await screen.findByRole('button', { name: /run validation/i }));
+
+    await waitFor(() => {
+      expect(validationRequestBody).toMatchObject({
+        departureTime: '2026-04-15T12:30:00.000Z',
+      });
+    });
+  });
+
+  it('defaults the validation modal to enabled providers only', async () => {
+    const user = userEvent.setup();
+
+    render(
+      <FriendsConfigClient
+        initialConfig={initialConfig}
+        initialCronDashboard={initialCronDashboard}
+        initialEnabledValidationProviders={['aerodatabox']}
+      />,
+    );
+
+    const aliceCard = screen.getByDisplayValue('Alice').closest('section');
+    expect(aliceCard).not.toBeNull();
+
+    await user.click(within(aliceCard as HTMLElement).getByRole('button', { name: /validate flight for leg 1/i }));
+
+    expect(await screen.findByRole('button', { name: /select provider aerodatabox/i })).toHaveAttribute('aria-pressed', 'true');
+    expect(screen.queryByRole('button', { name: /select provider flightaware/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /select provider aviationstack/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /select provider tracker search/i })).not.toBeInTheDocument();
+    expect(screen.getByText(/1 provider selected\./i)).toBeInTheDocument();
+  });
+
   it('applies the selected validation match onto the leg and save payload', async () => {
     const user = userEvent.setup();
     const fetchMock = vi.mocked(window.fetch);
@@ -709,7 +819,7 @@ describe('FriendsConfigClient', () => {
     });
   });
 
-  it('restores the applied validation banner and green button state after refresh', async () => {
+  it('restores the applied validation modal summary and green leg state after refresh', async () => {
     const persistedConfig: FriendsTrackerConfig = {
       ...initialConfig,
       trips: [
@@ -749,9 +859,18 @@ describe('FriendsConfigClient', () => {
       ],
     };
 
-    render(<FriendsConfigClient initialConfig={persistedConfig} initialCronDashboard={initialCronDashboard} />);
+    const { container } = render(<FriendsConfigClient initialConfig={persistedConfig} initialCronDashboard={initialCronDashboard} />);
 
-    expect(screen.getByRole('button', { name: /validated flight for leg 1/i })).toBeInTheDocument();
+    const validatedButton = screen.getByRole('button', { name: /validated flight for leg 1/i });
+    expect(validatedButton).toBeInTheDocument();
+
+    const validatedLeg = validatedButton.closest('div[class*="rounded-2xl"]');
+    expect(validatedLeg?.className).toContain('border-emerald-400/35');
+    expect(container).not.toHaveTextContent(/Current leg status/i);
+
+    await userEvent.setup().click(validatedButton);
+
+    expect(await screen.findByText(/Current leg status/i)).toBeInTheDocument();
     expect(screen.getByText(/Schedule match confirmed/i)).toBeInTheDocument();
     expect(screen.getByText(/Source: FlightAware/i)).toBeInTheDocument();
   });
