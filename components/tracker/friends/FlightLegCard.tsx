@@ -35,7 +35,6 @@ export function FlightLegCard({ friendId, leg, legIndex, totalLegs }: FlightLegC
   const toSuggestions = activeAirportField === toFieldKey ? airportSuggestions : [];
   const hasOpenSuggestions = fromSuggestions.length > 0 || toSuggestions.length > 0;
   const validationResult = flightValidationResults[leg.id];
-  const isLegValidating = validationResult?.status === 'loading';
 
   function formatValidationTimestamp(value: number | null): string | null {
     if (value == null || !Number.isFinite(value)) {
@@ -94,11 +93,10 @@ export function FlightLegCard({ friendId, leg, legIndex, totalLegs }: FlightLegC
             onClick={() => {
               void validateFlightLeg(friendId, leg.id);
             }}
-            disabled={isLegValidating}
-            className="inline-flex items-center gap-1 rounded-full border border-sky-400/30 bg-sky-500/10 px-3 py-1.5 text-xs font-medium text-sky-100 transition hover:bg-sky-500/20 disabled:cursor-not-allowed disabled:opacity-60"
+            className="inline-flex items-center gap-1 rounded-full border border-sky-400/30 bg-sky-500/10 px-3 py-1.5 text-xs font-medium text-sky-100 transition hover:bg-sky-500/20"
           >
-            <RefreshCw className={`h-3.5 w-3.5 ${isLegValidating ? 'animate-spin' : ''}`} />
-            {isLegValidating ? 'Checking…' : 'Validate flight'}
+            <RefreshCw className="h-3.5 w-3.5" />
+            Validate flight
           </button>
           <button
             type="button"
@@ -227,29 +225,25 @@ export function FlightLegCard({ friendId, leg, legIndex, totalLegs }: FlightLegC
         </div>
       ) : null}
 
-      {validationResult && validationResult.status !== 'idle' ? (
+      {validationResult && validationResult.status !== 'idle' && validationResult.status !== 'loading' ? (
         <div className={`mt-3 rounded-2xl border px-3 py-2 text-xs ${validationResult.status === 'matched'
           ? 'border-emerald-400/30 bg-emerald-500/10 text-emerald-100'
-          : validationResult.status === 'loading'
-            ? 'border-sky-400/30 bg-sky-500/10 text-sky-100'
-            : validationResult.status === 'warning'
-              ? 'border-amber-400/35 bg-amber-500/10 text-amber-100'
-              : validationResult.status === 'skipped'
-                ? 'border-slate-400/25 bg-slate-900/70 text-slate-200'
-                : 'border-rose-400/35 bg-rose-500/10 text-rose-100'}`}
+          : validationResult.status === 'warning'
+            ? 'border-amber-400/35 bg-amber-500/10 text-amber-100'
+            : validationResult.status === 'skipped'
+              ? 'border-slate-400/25 bg-slate-900/70 text-slate-200'
+              : 'border-rose-400/35 bg-rose-500/10 text-rose-100'}`}
         >
           <p className="font-semibold">
             {validationResult.status === 'matched'
               ? 'Schedule match confirmed'
               : validationResult.status === 'warning'
                 ? 'Provider match needs review'
-                : validationResult.status === 'loading'
-                  ? 'Provider validation in progress'
-                  : validationResult.status === 'skipped'
-                    ? 'Validation skipped'
-                    : validationResult.status === 'not-found'
-                      ? 'No live match found'
-                      : 'Validation error'}
+                : validationResult.status === 'skipped'
+                  ? 'Validation skipped'
+                  : validationResult.status === 'not-found'
+                    ? 'No live match found'
+                    : 'Validation error'}
           </p>
           <p className="mt-1">{validationResult.message}</p>
           <div className="mt-2 flex flex-wrap gap-2">

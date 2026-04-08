@@ -42,6 +42,28 @@ export interface FlightProviderValidationResult {
   lastCheckedAt: number | null;
 }
 
+export interface FlightValidationModalCandidate {
+  providerLabel: string;
+  matchedIcao24: string | null;
+  matchedFlightNumber: string | null;
+  matchedDepartureTime: number | null;
+  matchedArrivalTime: number | null;
+  matchedDepartureAirport: string | null;
+  matchedArrivalAirport: string | null;
+  departureDeltaMinutes: number | null;
+  matchedRoute: string | null;
+  message: string;
+}
+
+export interface FlightValidationModalState {
+  friendId: string;
+  legId: string;
+  identifier: string;
+  status: 'loading' | 'loaded' | 'error';
+  candidates: FlightValidationModalCandidate[];
+  message: string;
+}
+
 function getCronDashboardChantalIdentifiers(dashboard: TrackerCronDashboard): string[] {
   return Array.isArray(dashboard.config.chantalIdentifiers) ? dashboard.config.chantalIdentifiers : [];
 }
@@ -262,8 +284,8 @@ export interface FriendsConfigContextValue {
   latestCronRun: TrackerCronDashboard['history'][number] | null;
   validationIssues: FriendsConfigValidationIssue[];
   hasValidationErrors: boolean;
-  isValidatingFlights: boolean;
   flightValidationResults: Record<string, FlightProviderValidationResult>;
+  validationModal: FlightValidationModalState | null;
   // Actions
   updateTrip: (tripId: string, updater: (trip: FriendsTrackerTripConfig) => FriendsTrackerTripConfig) => void;
   updateSelectedTrip: (updater: (trip: FriendsTrackerTripConfig) => FriendsTrackerTripConfig) => void;
@@ -274,8 +296,9 @@ export interface FriendsConfigContextValue {
   addTrip: () => void;
   handleCronToggle: (nextValue: boolean) => Promise<void>;
   handleRunCronNow: () => Promise<void>;
-  handleValidateSelectedTripFlights: () => Promise<void>;
   validateFlightLeg: (friendId: string, legId: string) => Promise<void>;
+  closeValidationModal: () => void;
+  applyValidationCandidate: (candidate: FlightValidationModalCandidate) => void;
   handleExport: () => void;
   handleImport: (event: ChangeEvent<HTMLInputElement>) => Promise<void>;
   handlePublishCurrentTrip: (nextTripId: string) => Promise<void>;
@@ -323,8 +346,8 @@ export function FriendsConfigProvider({
   const [isSaving, setIsSaving] = useState(false);
   const [isSavingCronToggle, setIsSavingCronToggle] = useState(false);
   const [isRunningCron, setIsRunningCron] = useState(false);
-  const [isValidatingFlights, setIsValidatingFlights] = useState(false);
   const [flightValidationResults, setFlightValidationResults] = useState<Record<string, FlightProviderValidationResult>>({});
+  const [validationModal, setValidationModal] = useState<FlightValidationModalState | null>(null);
   const [notice, setNotice] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [jsonNotice, setJsonNotice] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [hasHydrated, setHasHydrated] = useState(false);
@@ -619,24 +642,66 @@ export function FriendsConfigProvider({
     }));
   }
 
-  async function runFlightLegValidation(
-    friendId: string,
-    legId: string,
-    options?: { includeOnDemandProviders?: boolean },
-  ): Promise<FlightProviderValidationResult | null> {
+  function closeValidationModal() {
+    setValidationModal(null);
+  }
+
+  function applyValidationCandidate(candidate: FlightValidationModalCandidate) {
+    const modal = validationModal;
+    if (!modal) {
+      return;
+    }
+
+    const { friendId, legId, identifier } = modal;
+    const now = Date.now();
+
+    if (candidate.matchedIcao24 && /^[0-9A-F]{6}$/.test(candidate.matchedIcao24)) {
+      updateFriend(friendId, (currentFriend) => ({
+        ...currentFriend,
+        flights: currentFriend.flights.map((currentLeg) => currentLeg.id === legId
+          ? {
+            ...currentLeg,
+            resolvedIcao24: candidate.matchedIcao24,
+            lastResolvedAt: now,
+          }
+          : currentLeg),
+      }));
+    }
+
+    const hasTimingWarning = candidate.departureDeltaMinutes != null && Math.abs(candidate.departureDeltaMinutes) > LIVE_VALIDATION_WARNING_MINUTES;
+    const status = hasTimingWarning ? 'warning' : 'matched';
+
+    setFlightValidationResult(legId, {
+      legId,
+      friendId,
+      status,
+      message: `${candidate.providerLabel} matched ${candidate.matchedFlightNumber ?? identifier}. ${candidate.message}`,
+      providerLabel: candidate.providerLabel,
+      matchedIcao24: candidate.matchedIcao24,
+      matchedFlightNumber: candidate.matchedFlightNumber,
+      matchedDepartureTime: candidate.matchedDepartureTime,
+      matchedArrivalTime: candidate.matchedArrivalTime,
+      departureDeltaMinutes: candidate.departureDeltaMinutes,
+      matchedRoute: candidate.matchedRoute,
+      lastCheckedAt: now,
+    });
+
+    setValidationModal(null);
+  }
+
+  async function validateFlightLeg(friendId: string, legId: string) {
     const activeTrip = selectedTrip;
     const friend = activeTrip?.friends.find((entry) => entry.id === friendId);
     const leg = friend?.flights.find((entry) => entry.id === legId);
 
     if (!friend || !leg) {
-      return null;
+      return;
     }
 
     const identifier = normalizeFriendFlightIdentifier(leg.resolvedIcao24 || leg.flightNumber);
-    const now = Date.now();
 
     if (!identifier) {
-      const result: FlightProviderValidationResult = {
+      setFlightValidationResult(legId, {
         legId,
         friendId,
         status: 'skipped',
@@ -648,25 +713,18 @@ export function FriendsConfigProvider({
         matchedArrivalTime: null,
         departureDeltaMinutes: null,
         matchedRoute: null,
-        lastCheckedAt: now,
-      };
-      setFlightValidationResult(legId, result);
-      return result;
+        lastCheckedAt: Date.now(),
+      });
+      return;
     }
 
-    setFlightValidationResult(legId, {
-      legId,
+    setValidationModal({
       friendId,
+      legId,
+      identifier,
       status: 'loading',
+      candidates: [],
       message: `Checking ${identifier} against scheduled and live providers…`,
-      providerLabel: null,
-      matchedIcao24: null,
-      matchedFlightNumber: null,
-      matchedDepartureTime: null,
-      matchedArrivalTime: null,
-      departureDeltaMinutes: null,
-      matchedRoute: null,
-      lastCheckedAt: now,
     });
 
     try {
@@ -679,51 +737,61 @@ export function FriendsConfigProvider({
           departureTime: leg.departureTime,
           from: leg.from,
           to: leg.to,
-          includeOnDemandProviders: options?.includeOnDemandProviders === true,
+          includeOnDemandProviders: true,
         }),
       });
-      const payload = await response.json() as Partial<FlightProviderValidationResult> & { error?: string };
+
+      const payload = await response.json() as {
+        status?: string;
+        message?: string;
+        error?: string;
+        candidates?: FlightValidationModalCandidate[];
+      };
 
       if (!response.ok && !payload.status) {
         throw new Error(payload.error || 'Unable to validate the configured flight right now.');
       }
 
-      const result: FlightProviderValidationResult = {
-        legId,
+      const candidates = Array.isArray(payload.candidates) ? payload.candidates : [];
+      const overallStatus = payload.status ?? 'not-found';
+      const isError = overallStatus === 'error';
+
+      setValidationModal({
         friendId,
-        status: payload.status ?? 'not-found',
+        legId,
+        identifier,
+        status: isError ? 'error' : 'loaded',
+        candidates,
         message: payload.message ?? `No scheduled or live provider match was found for ${identifier}.`,
-        providerLabel: payload.providerLabel ?? null,
-        matchedIcao24: payload.matchedIcao24 ?? null,
-        matchedFlightNumber: payload.matchedFlightNumber ?? null,
-        matchedDepartureTime: payload.matchedDepartureTime ?? null,
-        matchedArrivalTime: payload.matchedArrivalTime ?? null,
-        departureDeltaMinutes: payload.departureDeltaMinutes ?? null,
-        matchedRoute: payload.matchedRoute ?? null,
-        lastCheckedAt: payload.lastCheckedAt ?? Date.now(),
-      };
+      });
 
-      if (result.matchedIcao24 && /^[0-9A-F]{6}$/.test(result.matchedIcao24) && result.status === 'matched') {
-        updateFriend(friendId, (currentFriend) => ({
-          ...currentFriend,
-          flights: currentFriend.flights.map((currentLeg) => currentLeg.id === legId
-            ? {
-              ...currentLeg,
-              resolvedIcao24: result.matchedIcao24,
-              lastResolvedAt: Date.now(),
-            }
-            : currentLeg),
-        }));
+      if (candidates.length === 0) {
+        setFlightValidationResult(legId, {
+          legId,
+          friendId,
+          status: (overallStatus as FlightProviderValidationResult['status']) ?? 'not-found',
+          message: payload.message ?? `No scheduled or live provider match was found for ${identifier}.`,
+          providerLabel: null,
+          matchedIcao24: null,
+          matchedFlightNumber: null,
+          matchedDepartureTime: null,
+          matchedArrivalTime: null,
+          departureDeltaMinutes: null,
+          matchedRoute: null,
+          lastCheckedAt: Date.now(),
+        });
       }
-
-      setFlightValidationResult(legId, result);
-      return result;
     } catch (error) {
-      const result: FlightProviderValidationResult = {
+      const errorMessage = error instanceof Error ? error.message : 'Unable to validate this flight right now.';
+      setValidationModal((current) => current
+        ? { ...current, status: 'error', message: errorMessage }
+        : null);
+
+      setFlightValidationResult(legId, {
         legId,
         friendId,
         status: 'error',
-        message: error instanceof Error ? error.message : 'Unable to validate this flight right now.',
+        message: errorMessage,
         providerLabel: null,
         matchedIcao24: null,
         matchedFlightNumber: null,
@@ -732,52 +800,7 @@ export function FriendsConfigProvider({
         departureDeltaMinutes: null,
         matchedRoute: null,
         lastCheckedAt: Date.now(),
-      };
-      setFlightValidationResult(legId, result);
-      return result;
-    }
-  }
-
-  async function validateFlightLeg(friendId: string, legId: string) {
-    await runFlightLegValidation(friendId, legId, { includeOnDemandProviders: true });
-  }
-
-  async function handleValidateSelectedTripFlights() {
-    if (!selectedTrip || isValidatingFlights) {
-      return;
-    }
-
-    const validatableLegs = selectedTrip.friends.flatMap((friend) => friend.flights.map((leg) => ({ friend, leg })))
-      .filter(({ leg }) => hasLegContent(leg));
-
-    if (validatableLegs.length === 0) {
-      setNotice({ type: 'error', text: 'Add at least one flight before running live validation.' });
-      return;
-    }
-
-    setIsValidatingFlights(true);
-    setNotice(null);
-
-    const results: FlightProviderValidationResult[] = [];
-    try {
-      for (const { friend, leg } of validatableLegs) {
-        const result = await runFlightLegValidation(friend.id, leg.id, { includeOnDemandProviders: false });
-        if (result) {
-          results.push(result);
-        }
-      }
-
-      const matchedCount = results.filter((result) => result.status === 'matched').length;
-      const warningCount = results.filter((result) => result.status === 'warning').length;
-      const notFoundCount = results.filter((result) => result.status === 'not-found').length;
-      const errorCount = results.filter((result) => result.status === 'error').length;
-
-      setNotice({
-        type: errorCount > 0 ? 'error' : 'success',
-        text: `Live validation finished: ${matchedCount} matched, ${warningCount} warning${warningCount === 1 ? '' : 's'}, ${notFoundCount} not found, ${errorCount} error${errorCount === 1 ? '' : 's'}.`,
       });
-    } finally {
-      setIsValidatingFlights(false);
     }
   }
 
@@ -1082,7 +1105,6 @@ export function FriendsConfigProvider({
     isSaving,
     isSavingCronToggle,
     isRunningCron,
-    isValidatingFlights,
     notice,
     setNotice,
     jsonNotice,
@@ -1106,6 +1128,7 @@ export function FriendsConfigProvider({
     validationIssues,
     hasValidationErrors,
     flightValidationResults,
+    validationModal,
     updateTrip,
     updateSelectedTrip,
     updateSelectedTripFriends,
@@ -1115,8 +1138,9 @@ export function FriendsConfigProvider({
     addTrip,
     handleCronToggle,
     handleRunCronNow,
-    handleValidateSelectedTripFlights,
     validateFlightLeg,
+    closeValidationModal,
+    applyValidationCandidate,
     handleExport,
     handleImport,
     handlePublishCurrentTrip,
@@ -1133,7 +1157,6 @@ export function FriendsConfigProvider({
     isSaving,
     isSavingCronToggle,
     isRunningCron,
-    isValidatingFlights,
     notice,
     jsonNotice,
     hasHydrated,
@@ -1152,6 +1175,7 @@ export function FriendsConfigProvider({
     validationIssues,
     hasValidationErrors,
     flightValidationResults,
+    validationModal,
   ]);
 
   return (

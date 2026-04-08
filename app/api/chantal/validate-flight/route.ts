@@ -222,7 +222,39 @@ export async function POST(request: NextRequest) {
       // Keep provider-only results when the tracker search is unavailable.
     }
 
-    if (candidates.length === 0) {
+    const scoringContext = {
+      departureTimeMs: Number.isFinite(departureTimeMs) ? departureTimeMs : null,
+      from,
+      to,
+    };
+
+    const rankedCandidates = [...candidates].sort((left, right) =>
+      scoreCandidate(right, scoringContext) - scoreCandidate(left, scoringContext),
+    );
+
+    const candidatesPayload = rankedCandidates.map((candidate) => {
+      const delta = candidate.matchedDepartureTime != null && Number.isFinite(departureTimeMs)
+        ? Math.round((candidate.matchedDepartureTime - departureTimeMs) / (1000 * 60))
+        : null;
+      const route = candidate.matchedDepartureAirport || candidate.matchedArrivalAirport
+        ? `${candidate.matchedDepartureAirport ?? '???'} → ${candidate.matchedArrivalAirport ?? '???'}`
+        : null;
+
+      return {
+        providerLabel: candidate.providerLabel,
+        matchedIcao24: candidate.matchedIcao24,
+        matchedFlightNumber: candidate.matchedFlightNumber,
+        matchedDepartureTime: candidate.matchedDepartureTime,
+        matchedArrivalTime: candidate.matchedArrivalTime,
+        matchedDepartureAirport: candidate.matchedDepartureAirport,
+        matchedArrivalAirport: candidate.matchedArrivalAirport,
+        departureDeltaMinutes: delta,
+        matchedRoute: route,
+        message: candidate.message,
+      };
+    });
+
+    if (rankedCandidates.length === 0) {
       const reports = [
         flightAwareLookup.report,
         aviationstackLookup.report,
@@ -245,22 +277,11 @@ export async function POST(request: NextRequest) {
         departureDeltaMinutes: null,
         matchedRoute: null,
         lastCheckedAt: Date.now(),
+        candidates: [],
       });
     }
 
-    const bestCandidate = [...candidates].sort((left, right) => {
-      const leftScore = scoreCandidate(left, {
-        departureTimeMs: Number.isFinite(departureTimeMs) ? departureTimeMs : null,
-        from,
-        to,
-      });
-      const rightScore = scoreCandidate(right, {
-        departureTimeMs: Number.isFinite(departureTimeMs) ? departureTimeMs : null,
-        from,
-        to,
-      });
-      return rightScore - leftScore;
-    })[0]!;
+    const bestCandidate = rankedCandidates[0]!;
 
     const departureDeltaMinutes = bestCandidate.matchedDepartureTime != null && Number.isFinite(departureTimeMs)
       ? Math.round((bestCandidate.matchedDepartureTime - departureTimeMs) / (1000 * 60))
@@ -295,6 +316,7 @@ export async function POST(request: NextRequest) {
       departureDeltaMinutes,
       matchedRoute,
       lastCheckedAt: Date.now(),
+      candidates: candidatesPayload,
     });
   } catch (error) {
     return NextResponse.json({
