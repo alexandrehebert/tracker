@@ -30,6 +30,20 @@ button:disabled {
   cursor: not-allowed;
 }
 
+input[type='date'],
+input[type='datetime-local'],
+input[type='time'] {
+  color-scheme: dark;
+}
+
+input[type='date']::-webkit-calendar-picker-indicator,
+input[type='datetime-local']::-webkit-calendar-picker-indicator,
+input[type='time']::-webkit-calendar-picker-indicator {
+  cursor: pointer;
+  opacity: 0.9;
+  filter: invert(1) brightness(1.15);
+}
+
 /* Animation Keyframes */
 @keyframes fadeInUp {
   from {

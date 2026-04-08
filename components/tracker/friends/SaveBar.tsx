@@ -8,11 +8,12 @@ import { formatDateTime } from '~/lib/utils/dateTimeLocal';
 function shouldCountLegForValidation(leg: {
   flightNumber?: string | null;
   departureTime?: string | null;
+  arrivalTime?: string | null;
   from?: string | null;
   to?: string | null;
   resolvedIcao24?: string | null;
 }): boolean {
-  return [leg.flightNumber, leg.departureTime, leg.from, leg.to, leg.resolvedIcao24]
+  return [leg.flightNumber, leg.departureTime, leg.arrivalTime, leg.from, leg.to, leg.resolvedIcao24]
     .some((value) => typeof value === 'string' && value.trim().length > 0);
 }
 

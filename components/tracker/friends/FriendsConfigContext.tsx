@@ -288,7 +288,7 @@ function buildPersistedFlightValidationResults(
 }
 
 function hasLegContent(leg: FriendTravelConfig['flights'][number]): boolean {
-  const values = [leg.flightNumber, leg.departureTime, leg.from, leg.to, leg.note, leg.resolvedIcao24];
+  const values = [leg.flightNumber, leg.departureTime, leg.arrivalTime, leg.from, leg.to, leg.note, leg.resolvedIcao24];
   return values.some((value) => typeof value === 'string' && value.trim().length > 0);
 }
 

@@ -9,7 +9,7 @@ import { createDraftLeg } from '~/lib/utils/friendsConfigUtils';
 import { resizeImageToDataUrl } from '~/lib/utils/imageUtils';
 import { getFriendInitials } from '~/lib/utils/friendInitials';
 import { getAirportFieldKey } from '~/lib/utils/airportUtils';
-import { resolveAutoFriendAccentColor, resolveFriendAccentColor, type FriendTravelConfig } from '~/lib/friendsTracker';
+import { buildAirportChain, resolveAutoFriendAccentColor, resolveFriendAccentColor, type FriendTravelConfig } from '~/lib/friendsTracker';
 import { colorToHex } from '../flight/colors';
 
 interface FriendCardProps {
@@ -18,7 +18,7 @@ interface FriendCardProps {
 }
 
 export function FriendCard({ friend, friendIndex }: FriendCardProps) {
-  const { locale, updateFriend, updateSelectedTripFriends } = useFriendsConfig();
+  const { selectedTrip, updateFriend, updateSelectedTripFriends } = useFriendsConfig();
   const colorInputRef = useRef<HTMLInputElement | null>(null);
   const friendLabel = friend.name || `Friend ${friendIndex + 1}`;
   const accentColor = colorToHex(resolveFriendAccentColor(friend, friendIndex));
@@ -26,29 +26,32 @@ export function FriendCard({ friend, friendIndex }: FriendCardProps) {
   const hasCustomAccentColor = typeof friend.colorOverride === 'string' && friend.colorOverride.trim().length > 0;
   const currentAirportFieldKey = getAirportFieldKey(friend.id, friend.id, 'current');
 
-  const itineraryPreview = friend.flights
-    .filter((leg) => {
-      const values = [leg.flightNumber, leg.departureTime, leg.from, leg.to];
-      return values.some((value) => typeof value === 'string' && value.trim().length > 0);
+  const previewLegs = friend.flights.filter((leg) => {
+    const values = [leg.flightNumber, leg.departureTime, leg.arrivalTime, leg.from, leg.to];
+    return values.some((value) => typeof value === 'string' && value.trim().length > 0);
+  });
+  const destinationCodes = (selectedTrip?.destinationAirport ?? '')
+    .split(',')
+    .map((code) => code.trim().toUpperCase())
+    .filter(Boolean);
+  const destinationArrivalIndex = destinationCodes.length > 0
+    ? previewLegs.findIndex((leg) => {
+      const arrivalCode = leg.to?.trim().toUpperCase() ?? '';
+      return arrivalCode.length > 0 && destinationCodes.includes(arrivalCode);
     })
-    .map((leg) => {
-      const departureText = typeof leg.departureTime === 'string' ? leg.departureTime.trim() : '';
-      const parsedDeparture = departureText ? Date.parse(departureText) : Number.NaN;
-      const routeText = `${leg.from?.trim() || '???'} -> ${leg.to?.trim() || '???'}`;
-      const flightText = leg.flightNumber?.trim() || 'No flight #';
-      const timeText = Number.isNaN(parsedDeparture)
-        ? 'Invalid date'
-        : new Date(parsedDeparture).toLocaleString(locale, {
-          month: 'short',
-          day: '2-digit',
-          hour: '2-digit',
-          minute: '2-digit',
-          hour12: false,
-          timeZone: 'UTC',
-        });
-
-      return `${flightText} · ${routeText} · ${timeText} UTC`;
-    });
+    : -1;
+  const outboundLegs = destinationArrivalIndex >= 0 ? previewLegs.slice(0, destinationArrivalIndex + 1) : previewLegs;
+  const returnLegs = destinationArrivalIndex >= 0 ? previewLegs.slice(destinationArrivalIndex + 1) : [];
+  const itineraryPreview = [
+    {
+      label: destinationCodes.length > 0 ? 'To destination' : 'Route',
+      route: buildAirportChain(outboundLegs).join(' → '),
+    },
+    {
+      label: 'Return',
+      route: buildAirportChain(returnLegs).join(' → '),
+    },
+  ].filter((segment) => segment.route.length > 0);
 
   return (
     <section className="rounded-3xl border border-white/10 bg-slate-950/55 p-5 backdrop-blur-sm">
@@ -186,32 +189,34 @@ export function FriendCard({ friend, friendIndex }: FriendCardProps) {
               <p className="mt-1.5 text-xs text-slate-500">Click the avatar to upload a photo. Use the dot below it to pick or reset the map accent color.</p>
             </div>
 
-            <div className="max-w-xs">
-              <label className="mb-2 block text-xs font-medium uppercase tracking-[0.2em] text-slate-400">
-                Current airport
-              </label>
-              <AirportAutocomplete
-                fieldKey={currentAirportFieldKey}
-                value={friend.currentAirport ?? ''}
-                placeholder="JFK"
-                aria-label={`Current airport for ${friendLabel}`}
-                listboxLabel={`Current airport suggestions for ${friendLabel}`}
-                legId={friend.id}
-                onChange={(currentAirport) => {
-                  updateFriend(friend.id, (currentFriend) => ({
-                    ...currentFriend,
-                    currentAirport,
-                  }));
-                }}
-                onSelectAirport={(code) => {
-                  updateFriend(friend.id, (currentFriend) => ({
-                    ...currentFriend,
-                    currentAirport: code,
-                  }));
-                }}
-              />
-              <p className="mt-1.5 text-xs text-slate-500">Optional: pin a non-traveler to an airport on `/chantal` even if they have no flights.</p>
-            </div>
+            {friend.flights.length === 0 ? (
+              <div className="max-w-xs">
+                <label className="mb-2 block text-xs font-medium uppercase tracking-[0.2em] text-slate-400">
+                  Current airport
+                </label>
+                <AirportAutocomplete
+                  fieldKey={currentAirportFieldKey}
+                  value={friend.currentAirport ?? ''}
+                  placeholder="JFK"
+                  aria-label={`Current airport for ${friendLabel}`}
+                  listboxLabel={`Current airport suggestions for ${friendLabel}`}
+                  legId={friend.id}
+                  onChange={(currentAirport) => {
+                    updateFriend(friend.id, (currentFriend) => ({
+                      ...currentFriend,
+                      currentAirport,
+                    }));
+                  }}
+                  onSelectAirport={(code) => {
+                    updateFriend(friend.id, (currentFriend) => ({
+                      ...currentFriend,
+                      currentAirport: code,
+                    }));
+                  }}
+                />
+                <p className="mt-1.5 text-xs text-slate-500">Optional: pin a non-traveler to an airport on `/chantal` even if they have no flights.</p>
+              </div>
+            ) : null}
           </div>
         </div>
 
@@ -228,16 +233,18 @@ export function FriendCard({ friend, friendIndex }: FriendCardProps) {
       <div className="mt-4 space-y-3">
         {itineraryPreview.length > 0 ? (
           <div className="rounded-2xl border border-cyan-400/20 bg-cyan-500/5 p-3">
-            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-cyan-200">Itinerary preview</p>
-            <div className="mt-2 flex flex-wrap gap-2">
-              {itineraryPreview.map((preview, index) => (
-                <span
-                  key={`${friend.id}-preview-${index}`}
-                  className="rounded-full border border-white/15 bg-slate-900/80 px-2.5 py-1 text-xs text-slate-100"
-                >
-                  {preview}
-                </span>
-              ))}
+            <div className="flex flex-col gap-2 md:flex-row md:items-center md:gap-3">
+              <p className="shrink-0 text-[11px] font-semibold uppercase tracking-[0.18em] text-cyan-200">Itinerary preview</p>
+              <div className="flex flex-wrap gap-2">
+                {itineraryPreview.map((segment) => (
+                  <span
+                    key={`${friend.id}-preview-${segment.label}`}
+                    className="rounded-full border border-white/15 bg-slate-900/80 px-2.5 py-1 text-xs text-slate-100"
+                  >
+                    <span className="font-semibold text-cyan-100">{segment.label}:</span> {segment.route}
+                  </span>
+                ))}
+              </div>
             </div>
           </div>
         ) : null}

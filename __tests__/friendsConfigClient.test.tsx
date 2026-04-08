@@ -301,6 +301,12 @@ describe('FriendsConfigClient', () => {
     });
   });
 
+  it('hides the current airport field when a friend already has flight legs', () => {
+    render(<FriendsConfigClient initialConfig={initialConfig} initialCronDashboard={initialCronDashboard} />);
+
+    expect(screen.queryByLabelText(/current airport for alice/i)).not.toBeInTheDocument();
+  });
+
   it('lets you save a non-traveler friend with just a current airport and no flights', async () => {
     const user = userEvent.setup();
     const fetchMock = vi.spyOn(window, 'fetch');
@@ -1198,6 +1204,137 @@ describe('FriendsConfigClient', () => {
 
     expect(await screen.findByText('Live `/chantal` trip updated and saved immediately.')).toBeInTheDocument();
     expect(await screen.findByRole('button', { name: /current on \/chantal/i })).toBeInTheDocument();
+  });
+
+  it('shows condensed outbound and return itinerary preview chips', () => {
+    const routePreviewConfig: FriendsTrackerConfig = {
+      ...initialConfig,
+      trips: [
+        {
+          ...initialConfig.trips![0]!,
+          destinationAirport: 'SIN',
+          friends: [
+            {
+              ...initialConfig.trips![0]!.friends[0]!,
+              flights: [
+                {
+                  id: 'leg-outbound-1',
+                  flightNumber: 'AF010',
+                  departureTime: '2026-04-14T09:30:00.000Z',
+                  from: 'CDG',
+                  to: 'JFK',
+                },
+                {
+                  id: 'leg-outbound-2',
+                  flightNumber: 'SQ025',
+                  departureTime: '2026-04-15T09:30:00.000Z',
+                  from: 'JFK',
+                  to: 'SIN',
+                },
+                {
+                  id: 'leg-return-1',
+                  flightNumber: 'SQ026',
+                  departureTime: '2026-04-20T09:30:00.000Z',
+                  from: 'SIN',
+                  to: 'JFK',
+                },
+                {
+                  id: 'leg-return-2',
+                  flightNumber: 'AF011',
+                  departureTime: '2026-04-21T09:30:00.000Z',
+                  from: 'JFK',
+                  to: 'CDG',
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+
+    render(
+      <FriendsConfigClient
+        initialConfig={routePreviewConfig}
+        initialCronDashboard={initialCronDashboard}
+      />,
+    );
+
+    expect(screen.getByText((_, element) => element?.textContent === 'To destination: CDG → JFK → SIN')).toBeInTheDocument();
+    expect(screen.getByText((_, element) => element?.textContent === 'Return: SIN → JFK → CDG')).toBeInTheDocument();
+  });
+
+  it('provides a visible date picker button for each departure field', async () => {
+    const inputPrototype = HTMLInputElement.prototype as HTMLInputElement & { showPicker?: () => void };
+    const originalShowPicker = inputPrototype.showPicker;
+    const showPicker = vi.fn();
+    const user = userEvent.setup();
+    inputPrototype.showPicker = showPicker;
+
+    try {
+      render(
+        <FriendsConfigClient
+          initialConfig={initialConfig}
+          initialCronDashboard={initialCronDashboard}
+        />, 
+      );
+
+      await user.click(screen.getByRole('button', { name: /open date picker for leg 1/i }));
+      expect(showPicker).toHaveBeenCalledTimes(1);
+    } finally {
+      if (originalShowPicker) {
+        inputPrototype.showPicker = originalShowPicker;
+      } else {
+        delete inputPrototype.showPicker;
+      }
+    }
+  });
+
+  it('prepopulates the optional arrival field from saved validation data', async () => {
+    const persistedConfig: FriendsTrackerConfig = {
+      ...initialConfig,
+      trips: [
+        {
+          ...initialConfig.trips![0]!,
+          friends: [
+            {
+              ...initialConfig.trips![0]!.friends[0]!,
+              flights: [
+                {
+                  ...initialConfig.trips![0]!.friends[0]!.flights[0]!,
+                  arrivalTime: null,
+                  to: 'LIS',
+                  validatedFlight: {
+                    status: 'matched',
+                    providerLabel: 'FlightAware',
+                    message: 'Applied and saved.',
+                    matchedIcao24: 'A1B2C3',
+                    matchedFlightNumber: 'AF456',
+                    matchedDepartureTime: '2026-04-14T11:45:00.000Z',
+                    matchedArrivalTime: '2026-04-14T13:05:00.000Z',
+                    matchedDepartureAirport: 'JFK',
+                    matchedArrivalAirport: 'LIS',
+                    matchedRoute: 'JFK → LIS',
+                    departureDeltaMinutes: 135,
+                    lastCheckedAt: 1_775_520_843_900,
+                  },
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+
+    render(
+      <FriendsConfigClient
+        initialConfig={persistedConfig}
+        initialCronDashboard={initialCronDashboard}
+        initialAirportTimezones={{ JFK: 'UTC', LIS: 'UTC' }}
+      />,
+    );
+
+    const arrivalInput = await screen.findByLabelText(/estimated arrival for leg 1/i) as HTMLInputElement;
+    expect(arrivalInput.value).toBe('2026-04-14T13:05');
   });
 
   it('renders the departure field in the persisted departure timezone', async () => {

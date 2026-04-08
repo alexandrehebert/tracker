@@ -1,6 +1,7 @@
 'use client';
 
-import { ArrowDown, ArrowUp, CheckCircle2, PlaneTakeoff, RefreshCw, Trash2 } from 'lucide-react';
+import { ArrowDown, ArrowUp, CalendarDays, CheckCircle2, PlaneTakeoff, RefreshCw, Trash2 } from 'lucide-react';
+import { useRef } from 'react';
 import { useFriendsConfig } from './FriendsConfigContext';
 import { AirportAutocomplete } from './AirportAutocomplete';
 import { getAirportFieldKey, normalizeAirportCode } from '~/lib/utils/airportUtils';
@@ -28,12 +29,15 @@ export function FlightLegCard({ friendId, leg, legIndex, totalLegs }: FlightLegC
   } = useFriendsConfig();
 
   const departureTimezone = leg.departureTimezone ?? airportTimezones[normalizeAirportCode(leg.from)] ?? null;
+  const arrivalTimezone = airportTimezones[normalizeAirportCode(leg.to)] ?? null;
   const fromFieldKey = getAirportFieldKey(friendId, leg.id, 'from');
   const toFieldKey = getAirportFieldKey(friendId, leg.id, 'to');
   const fromSuggestions = activeAirportField === fromFieldKey ? airportSuggestions : [];
   const toSuggestions = activeAirportField === toFieldKey ? airportSuggestions : [];
   const hasOpenSuggestions = fromSuggestions.length > 0 || toSuggestions.length > 0;
   const validationResult = flightValidationResults[leg.id];
+  const departureInputRef = useRef<HTMLInputElement | null>(null);
+  const arrivalInputRef = useRef<HTMLInputElement | null>(null);
   const hasAppliedValidation = leg.validatedFlight?.status === 'matched' || leg.validatedFlight?.status === 'warning';
   const isValidationLoading = validationResult?.status === 'loading';
   const showInlineValidationBanner = Boolean(
@@ -64,6 +68,22 @@ export function FlightLegCard({ friendId, leg, legIndex, totalLegs }: FlightLegC
       ...friend,
       flights: friend.flights.map((fl) => fl.id === leg.id ? updater(fl) : fl),
     }));
+  }
+
+  function openPicker(inputRef: { current: HTMLInputElement | null }) {
+    const input = inputRef.current;
+    if (!input) {
+      return;
+    }
+
+    input.focus();
+
+    if (typeof input.showPicker === 'function') {
+      input.showPicker();
+      return;
+    }
+
+    input.click();
   }
 
   return (
@@ -134,8 +154,8 @@ export function FlightLegCard({ friendId, leg, legIndex, totalLegs }: FlightLegC
         </div>
       </div>
 
-      <div className="grid gap-3 md:grid-cols-2 xl:grid-cols-5">
-        <div className="xl:col-span-1">
+      <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-6">
+        <div className="lg:col-span-2">
           <label className="mb-2 block text-xs font-medium uppercase tracking-[0.2em] text-slate-400">Flight number</label>
           <input
             aria-label={`Flight number for leg ${legIndex + 1}`}
@@ -148,10 +168,11 @@ export function FlightLegCard({ friendId, leg, legIndex, totalLegs }: FlightLegC
             className="w-full rounded-2xl border border-white/10 bg-slate-950/90 px-3 py-2 text-sm text-slate-100 outline-none transition focus:border-cyan-400/60 focus:ring-2 focus:ring-cyan-500/20"
           />
         </div>
-        <div className="xl:col-span-1">
+        <div className="lg:col-span-2">
           <label className="mb-2 block text-xs font-medium uppercase tracking-[0.2em] text-slate-400">Estimated departure</label>
           <div className="relative">
             <input
+              ref={departureInputRef}
               type="datetime-local"
               aria-label={`Estimated departure for leg ${legIndex + 1}`}
               value={hasHydrated ? toDateTimeLocalValue(leg.departureTime, departureTimezone) : ''}
@@ -159,9 +180,20 @@ export function FlightLegCard({ friendId, leg, legIndex, totalLegs }: FlightLegC
                 const departureTime = fromDateTimeLocalValue(event.target.value, departureTimezone);
                 updateLeg((l) => ({ ...l, departureTime, validatedFlight: null }));
               }}
-              className="w-full rounded-2xl border border-white/10 bg-slate-950/90 px-3 py-2 text-sm text-slate-100 outline-none transition focus:border-cyan-400/60 focus:ring-2 focus:ring-cyan-500/20"
+              className="w-full rounded-2xl border border-white/10 bg-slate-950/90 px-3 py-2 pr-11 text-sm text-slate-100 outline-none transition focus:border-cyan-400/60 focus:ring-2 focus:ring-cyan-500/20"
               aria-busy={!hasHydrated}
             />
+            {hasHydrated ? (
+              <button
+                type="button"
+                aria-label={`Open date picker for leg ${legIndex + 1}`}
+                title="Open date picker"
+                onClick={() => openPicker(departureInputRef)}
+                className="absolute right-2 top-1/2 inline-flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-full text-slate-300 transition hover:bg-slate-900/80 hover:text-cyan-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/30"
+              >
+                <CalendarDays className="h-4 w-4" />
+              </button>
+            ) : null}
             {!hasHydrated ? (
               <div
                 aria-hidden="true"
@@ -177,7 +209,60 @@ export function FlightLegCard({ friendId, leg, legIndex, totalLegs }: FlightLegC
                 : 'Enter the local time at the departure airport for accurate display and cron timing.'}
           </p>
         </div>
-        <div className="relative">
+        <div className="lg:col-span-2">
+          <label className="mb-2 block text-xs font-medium uppercase tracking-[0.2em] text-slate-400">Estimated arrival (optional)</label>
+          <div className="relative">
+            <input
+              ref={arrivalInputRef}
+              type="datetime-local"
+              aria-label={`Estimated arrival for leg ${legIndex + 1}`}
+              value={hasHydrated ? toDateTimeLocalValue(leg.arrivalTime ?? leg.validatedFlight?.matchedArrivalTime ?? '', arrivalTimezone) : ''}
+              onChange={(event) => {
+                const arrivalTime = fromDateTimeLocalValue(event.target.value, arrivalTimezone);
+                updateLeg((l) => ({ ...l, arrivalTime: arrivalTime || null, validatedFlight: null }));
+              }}
+              className="w-full rounded-2xl border border-white/10 bg-slate-950/90 px-3 py-2 pr-11 text-sm text-slate-100 outline-none transition focus:border-cyan-400/60 focus:ring-2 focus:ring-cyan-500/20"
+              aria-busy={!hasHydrated}
+            />
+            {hasHydrated ? (
+              <button
+                type="button"
+                aria-label={`Open arrival date picker for leg ${legIndex + 1}`}
+                title="Open arrival date picker"
+                onClick={() => openPicker(arrivalInputRef)}
+                className="absolute right-2 top-1/2 inline-flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-full text-slate-300 transition hover:bg-slate-900/80 hover:text-cyan-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/30"
+              >
+                <CalendarDays className="h-4 w-4" />
+              </button>
+            ) : null}
+            {!hasHydrated ? (
+              <div
+                aria-hidden="true"
+                className="pointer-events-none absolute inset-0 animate-pulse rounded-2xl border border-white/10 bg-slate-900/70"
+              />
+            ) : null}
+          </div>
+          <p className="mt-1.5 text-xs text-slate-500">
+            {arrivalTimezone
+              ? `Optional: uses ${arrivalTimezone} for ${normalizeAirportCode(leg.to)}.`
+              : leg.to
+                ? `Optional: timezone for ${normalizeAirportCode(leg.to)} is unavailable, so this field falls back to your local time.`
+                : 'Optional: enter the local arrival time when you know it, or leave it blank.'}
+          </p>
+        </div>
+        <div className="lg:col-span-2">
+          <label className="mb-2 block text-xs font-medium uppercase tracking-[0.2em] text-slate-400">Note</label>
+          <input
+            value={leg.note ?? ''}
+            onChange={(event) => {
+              const note = event.target.value;
+              updateLeg((l) => ({ ...l, note }));
+            }}
+            placeholder="Connection in AMS"
+            className="w-full rounded-2xl border border-white/10 bg-slate-950/90 px-3 py-2 text-sm text-slate-100 outline-none transition focus:border-cyan-400/60 focus:ring-2 focus:ring-cyan-500/20"
+          />
+        </div>
+        <div className="relative lg:col-span-2">
           <label className="mb-2 block text-xs font-medium uppercase tracking-[0.2em] text-slate-400">From</label>
           <AirportAutocomplete
             fieldKey={fromFieldKey}
@@ -195,7 +280,7 @@ export function FlightLegCard({ friendId, leg, legIndex, totalLegs }: FlightLegC
             }}
           />
         </div>
-        <div className="relative">
+        <div className="relative lg:col-span-2">
           <label className="mb-2 block text-xs font-medium uppercase tracking-[0.2em] text-slate-400">To</label>
           <AirportAutocomplete
             fieldKey={toFieldKey}
@@ -210,18 +295,6 @@ export function FlightLegCard({ friendId, leg, legIndex, totalLegs }: FlightLegC
             onSelectAirport={(code) => {
               updateLeg((l) => ({ ...l, to: code, validatedFlight: null }));
             }}
-          />
-        </div>
-        <div>
-          <label className="mb-2 block text-xs font-medium uppercase tracking-[0.2em] text-slate-400">Note</label>
-          <input
-            value={leg.note ?? ''}
-            onChange={(event) => {
-              const note = event.target.value;
-              updateLeg((l) => ({ ...l, note }));
-            }}
-            placeholder="Connection in AMS"
-            className="w-full rounded-2xl border border-white/10 bg-slate-950/90 px-3 py-2 text-sm text-slate-100 outline-none transition focus:border-cyan-400/60 focus:ring-2 focus:ring-cyan-500/20"
           />
         </div>
       </div>
