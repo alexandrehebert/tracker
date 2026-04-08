@@ -105,6 +105,39 @@ describe('provider observability', () => {
     });
   });
 
+  it('surfaces cache hits and misses in recent logs', () => {
+    const logs: ProviderRequestLogEntry[] = [
+      {
+        id: 'cache-hit',
+        provider: 'flightaware',
+        caller: 'config',
+        operation: 'lookup-flight',
+        status: 'cached',
+        durationMs: 3,
+        createdAt: '2026-04-08T10:00:00.000Z',
+        request: { identifier: 'AF123' },
+        response: { matched: true },
+      },
+      {
+        id: 'cache-miss',
+        provider: 'flightaware',
+        caller: 'config',
+        operation: 'lookup-flight',
+        status: 'success',
+        durationMs: 155,
+        createdAt: '2026-04-08T10:05:00.000Z',
+        request: { method: 'GET', url: 'https://example.com/flights/AF123' },
+        response: { status: 200, matched: true },
+        cache: { status: 'miss', layer: 'remote' },
+      },
+    ];
+
+    const dashboard = summarizeProviderRequestLogs(logs);
+
+    expect(dashboard.recentLogs[0]?.cache).toEqual({ status: 'miss', layer: 'remote' });
+    expect(dashboard.recentLogs[1]?.cache).toEqual({ status: 'hit', layer: null });
+  });
+
   it('propagates the current caller context across async work', async () => {
     const context = await withProviderRequestContext(
       {

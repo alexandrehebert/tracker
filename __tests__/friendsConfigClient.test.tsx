@@ -1284,7 +1284,7 @@ describe('FriendsConfigClient', () => {
       if (originalShowPicker) {
         inputPrototype.showPicker = originalShowPicker;
       } else {
-        delete inputPrototype.showPicker;
+        Reflect.deleteProperty(inputPrototype, 'showPicker');
       }
     }
   });

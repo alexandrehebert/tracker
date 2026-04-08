@@ -10,6 +10,12 @@ const SENSITIVE_KEY_PATTERN = /authorization|token|secret|password|cookie|api[-_
 
 type ProviderRequestLogStatus = 'success' | 'cached' | 'no-data' | 'skipped' | 'error';
 export type ProviderRequestCaller = 'cron' | 'on-demand' | 'config' | 'details' | 'debug' | 'system';
+export type ProviderRequestCacheStatus = 'hit' | 'miss';
+export type ProviderRequestCacheInfo = {
+  status: ProviderRequestCacheStatus;
+  layer?: string | null;
+  key?: string | null;
+};
 
 export type ProviderRequestContext = {
   caller: ProviderRequestCaller;
@@ -28,6 +34,7 @@ export type ProviderRequestLogEntry = {
   createdAt: string;
   request: Record<string, unknown> | null;
   response: Record<string, unknown> | null;
+  cache?: ProviderRequestCacheInfo | null;
   metadata?: Record<string, unknown> | null;
   error?: {
     message: string;
@@ -238,15 +245,68 @@ function normalizeProviderRequestLogStatus(status: ProviderRequestLogStatus, err
   return shouldTreatErrorAsSkipped(error) ? 'skipped' : status;
 }
 
+function normalizeProviderRequestCacheInfo(
+  cache: unknown,
+  status: ProviderRequestLogStatus,
+  request: unknown,
+): ProviderRequestCacheInfo | null {
+  const requestRecord = typeof request === 'object' && request !== null && !Array.isArray(request)
+    ? request as Record<string, unknown>
+    : null;
+
+  if (cache == null) {
+    if (status === 'cached') {
+      return { status: 'hit', layer: null };
+    }
+
+    if (
+      requestRecord
+      && (typeof requestRecord.url === 'string' || typeof requestRecord.pathname === 'string' || typeof requestRecord.method === 'string')
+      && status !== 'skipped'
+    ) {
+      return { status: 'miss', layer: 'remote' };
+    }
+
+    return null;
+  }
+
+  if (typeof cache !== 'object' || Array.isArray(cache)) {
+    return status === 'cached' ? { status: 'hit', layer: null } : null;
+  }
+
+  const candidate = cache as Record<string, unknown>;
+  const candidateStatus = typeof candidate.status === 'string' ? candidate.status.toLowerCase() : '';
+  const normalizedCacheStatus: ProviderRequestCacheStatus | null = candidateStatus === 'hit' || candidateStatus === 'miss'
+    ? candidateStatus
+    : status === 'cached'
+      ? 'hit'
+      : null;
+
+  if (!normalizedCacheStatus) {
+    return null;
+  }
+
+  const normalizedLayer = typeof candidate.layer === 'string'
+    ? truncateText(candidate.layer, 80)
+    : normalizedCacheStatus === 'miss'
+      ? 'remote'
+      : null;
+  const normalizedKey = typeof candidate.key === 'string' ? truncateText(candidate.key, 160) : null;
+
+  return {
+    status: normalizedCacheStatus,
+    layer: normalizedLayer,
+    ...(normalizedKey ? { key: normalizedKey } : {}),
+  };
+}
+
 function normalizeProviderRequestLogEntry(entry: ProviderRequestLogEntry): ProviderRequestLogEntry {
   const normalizedStatus = normalizeProviderRequestLogStatus(entry.status, entry.error);
-  if (normalizedStatus === entry.status) {
-    return entry;
-  }
 
   return {
     ...entry,
     status: normalizedStatus,
+    cache: normalizeProviderRequestCacheInfo(entry.cache ?? null, normalizedStatus, entry.request),
   };
 }
 
@@ -337,6 +397,7 @@ export async function recordProviderRequestLog(params: {
   durationMs?: number | null;
   request?: unknown;
   response?: unknown;
+  cache?: ProviderRequestCacheInfo | null;
   metadata?: Record<string, unknown> | null;
   source?: string | null;
   caller?: ProviderRequestCaller | string;
@@ -350,18 +411,20 @@ export async function recordProviderRequestLog(params: {
   const context = getProviderRequestContext();
   const now = new Date();
   const serializedError = serializeError(params.error);
+  const normalizedStatus = normalizeProviderRequestLogStatus(params.status, serializedError);
   const entry: ProviderRequestLogDocument = {
     provider: params.provider,
     caller: params.caller ?? context?.caller ?? 'system',
     source: params.source ?? context?.source ?? null,
     operation: params.operation,
-    status: normalizeProviderRequestLogStatus(params.status, serializedError),
+    status: normalizedStatus,
     durationMs: typeof params.durationMs === 'number' && Number.isFinite(params.durationMs)
       ? Math.max(0, Math.round(params.durationMs))
       : null,
     createdAt: now,
     request: toRecord(params.request),
     response: toRecord(params.response),
+    cache: normalizeProviderRequestCacheInfo(params.cache ?? null, normalizedStatus, params.request),
     metadata: toRecord({
       ...(context?.metadata ?? {}),
       ...(params.metadata ?? {}),
@@ -391,6 +454,7 @@ function toLogEntry(document: ProviderRequestLogDocument & { _id?: unknown }): P
     createdAt: document.createdAt instanceof Date ? document.createdAt.toISOString() : new Date(document.createdAt).toISOString(),
     request: document.request ?? null,
     response: document.response ?? null,
+    cache: normalizeProviderRequestCacheInfo(document.cache ?? null, status, document.request),
     metadata: document.metadata ?? null,
     error,
   };

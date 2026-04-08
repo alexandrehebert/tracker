@@ -674,6 +674,24 @@ async function writeToCache(identifier: string, payload: FlightAwareFlightEnrich
   });
 }
 
+async function recordFlightAwareCacheLog(
+  identifier: string,
+  payload: FlightAwareFlightEnrichment | null,
+  layer: 'memory' | 'mongo',
+): Promise<void> {
+  await recordProviderRequestLog({
+    provider: 'flightaware',
+    operation: 'lookup-flight',
+    status: 'cached',
+    durationMs: 0,
+    request: { identifier },
+    response: payload
+      ? { matched: true, match: summarizeFlightAwareMatch(payload) }
+      : { matched: false },
+    cache: { status: 'hit', layer, key: identifier },
+  });
+}
+
 export async function lookupFlightAwareFlightWithReport(
   identifier: string,
   options?: { referenceTimeMs?: number | null },
@@ -715,6 +733,7 @@ export async function lookupFlightAwareFlightWithReport(
   const memEntry = inMemoryFallbackCache.get(normalizedIdentifier);
   if (memEntry && Date.now() < memEntry.expiresAt) {
     const cachedPayload = memEntry.payload;
+    await recordFlightAwareCacheLog(normalizedIdentifier, cachedPayload, 'memory');
     return {
       match: cachedPayload,
       report: cachedPayload
@@ -738,6 +757,7 @@ export async function lookupFlightAwareFlightWithReport(
     const ttlMs = getCacheTtlMs();
     const mongoPayload = await readLatestProviderHistory<FlightAwareFlightEnrichment>('flightaware', normalizedIdentifier, ttlMs);
     if (mongoPayload !== null) {
+      await recordFlightAwareCacheLog(normalizedIdentifier, mongoPayload, 'mongo');
       return {
         match: mongoPayload,
         report: mongoPayload

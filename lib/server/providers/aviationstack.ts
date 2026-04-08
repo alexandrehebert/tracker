@@ -486,6 +486,24 @@ async function writeToCache(identifier: string, payload: AviationstackFlightEnri
   });
 }
 
+async function recordAviationstackCacheLog(
+  identifier: string,
+  payload: AviationstackFlightEnrichment | null,
+  layer: 'memory' | 'mongo',
+): Promise<void> {
+  await recordProviderRequestLog({
+    provider: 'aviationstack',
+    operation: 'lookup-flight',
+    status: 'cached',
+    durationMs: 0,
+    request: { identifier },
+    response: payload
+      ? { matched: true, match: summarizeAviationstackMatch(payload) }
+      : { matched: false },
+    cache: { status: 'hit', layer, key: identifier },
+  });
+}
+
 export async function lookupAviationstackFlightWithReport(identifier: string): Promise<AviationstackLookupResult> {
   const normalizedIdentifier = normalizeIdentifier(identifier);
   if (!normalizedIdentifier) {
@@ -536,6 +554,7 @@ export async function lookupAviationstackFlightWithReport(identifier: string): P
   const memEntry = inMemoryFallbackCache.get(normalizedIdentifier);
   if (memEntry && Date.now() < memEntry.expiresAt) {
     const cachedPayload = memEntry.payload;
+    await recordAviationstackCacheLog(normalizedIdentifier, cachedPayload, 'memory');
     return {
       match: cachedPayload,
       report: cachedPayload
@@ -559,6 +578,7 @@ export async function lookupAviationstackFlightWithReport(identifier: string): P
     const ttlMs = getCacheTtlMs();
     const mongoPayload = await readLatestProviderHistory<AviationstackFlightEnrichment>('aviationstack', normalizedIdentifier, ttlMs);
     if (mongoPayload !== null) {
+      await recordAviationstackCacheLog(normalizedIdentifier, mongoPayload, 'mongo');
       return {
         match: mongoPayload,
         report: mongoPayload

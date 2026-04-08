@@ -76,6 +76,20 @@ function getLogTone(status: ProviderRequestLogEntry['status']): string {
   }
 }
 
+function formatCacheStatus(value: ProviderRequestLogEntry['cache']): string | null {
+  if (!value) {
+    return null;
+  }
+
+  return value.status === 'hit' ? 'Cache hit' : 'Cache miss';
+}
+
+function getCacheTone(status: NonNullable<ProviderRequestLogEntry['cache']>['status']): string {
+  return status === 'hit'
+    ? 'border-violet-400/40 bg-violet-500/10 text-violet-100'
+    : 'border-cyan-400/40 bg-cyan-500/10 text-cyan-100';
+}
+
 function getRuntimeStatusSummary({
   providerLabel,
   configured,
@@ -390,6 +404,11 @@ export async function TrackerProvidersPageContent({ showIntro = true }: TrackerP
                   <span className={`rounded-full border px-2 py-0.5 text-xs font-semibold uppercase tracking-[0.14em] ${getLogTone(log.status)}`}>
                     {log.status}
                   </span>
+                  {log.cache ? (
+                    <span className={`rounded-full border px-2 py-0.5 text-xs font-semibold uppercase tracking-[0.14em] ${getCacheTone(log.cache.status)}`}>
+                      {formatCacheStatus(log.cache)}
+                    </span>
+                  ) : null}
                   <span className="text-slate-400">{log.operation}</span>
                   <span className="text-slate-500">· {formatDuration(log.durationMs)}</span>
                 </summary>
@@ -402,6 +421,7 @@ export async function TrackerProvidersPageContent({ showIntro = true }: TrackerP
                   <div>
                     <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Response</p>
                     <pre className="mt-2 max-h-80 overflow-auto rounded-2xl border border-white/10 bg-slate-950 p-3 text-xs text-slate-100">{formatJson({
+                      cache: log.cache,
                       response: log.response,
                       metadata: log.metadata,
                       error: log.error,

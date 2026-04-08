@@ -154,8 +154,8 @@ export function FlightLegCard({ friendId, leg, legIndex, totalLegs }: FlightLegC
         </div>
       </div>
 
-      <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-6">
-        <div className="lg:col-span-2">
+      <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
+        <div>
           <label className="mb-2 block text-xs font-medium uppercase tracking-[0.2em] text-slate-400">Flight number</label>
           <input
             aria-label={`Flight number for leg ${legIndex + 1}`}
@@ -168,7 +168,37 @@ export function FlightLegCard({ friendId, leg, legIndex, totalLegs }: FlightLegC
             className="w-full rounded-2xl border border-white/10 bg-slate-950/90 px-3 py-2 text-sm text-slate-100 outline-none transition focus:border-cyan-400/60 focus:ring-2 focus:ring-cyan-500/20"
           />
         </div>
-        <div className="lg:col-span-2">
+        <div className="lg:col-span-3">
+          <label className="mb-2 block text-xs font-medium uppercase tracking-[0.2em] text-slate-400">Note</label>
+          <input
+            value={leg.note ?? ''}
+            onChange={(event) => {
+              const note = event.target.value;
+              updateLeg((l) => ({ ...l, note }));
+            }}
+            placeholder="Connection in AMS"
+            className="w-full rounded-2xl border border-white/10 bg-slate-950/90 px-3 py-2 text-sm text-slate-100 outline-none transition focus:border-cyan-400/60 focus:ring-2 focus:ring-cyan-500/20"
+          />
+        </div>
+        <div className="relative">
+          <label className="mb-2 block text-xs font-medium uppercase tracking-[0.2em] text-slate-400">From</label>
+          <AirportAutocomplete
+            fieldKey={fromFieldKey}
+            value={leg.from ?? ''}
+            placeholder="CDG"
+            aria-label={`From airport for leg ${legIndex + 1}`}
+            listboxLabel={`Departure airport suggestions for leg ${legIndex + 1}`}
+            legId={leg.id}
+            onChange={(from) => {
+              const nextDepartureTimezone = airportTimezones[normalizeAirportCode(from)] ?? null;
+              updateLeg((l) => ({ ...l, from, departureTimezone: nextDepartureTimezone, validatedFlight: null }));
+            }}
+            onSelectAirport={(code, timezone) => {
+              updateLeg((l) => ({ ...l, from: code, departureTimezone: timezone, validatedFlight: null }));
+            }}
+          />
+        </div>
+        <div>
           <label className="mb-2 block text-xs font-medium uppercase tracking-[0.2em] text-slate-400">Estimated departure</label>
           <div className="relative">
             <input
@@ -209,8 +239,25 @@ export function FlightLegCard({ friendId, leg, legIndex, totalLegs }: FlightLegC
                 : 'Enter the local time at the departure airport for accurate display and cron timing.'}
           </p>
         </div>
-        <div className="lg:col-span-2">
-          <label className="mb-2 block text-xs font-medium uppercase tracking-[0.2em] text-slate-400">Estimated arrival (optional)</label>
+        <div className="relative">
+          <label className="mb-2 block text-xs font-medium uppercase tracking-[0.2em] text-slate-400">To</label>
+          <AirportAutocomplete
+            fieldKey={toFieldKey}
+            value={leg.to ?? ''}
+            placeholder="LIS"
+            aria-label={`To airport for leg ${legIndex + 1}`}
+            listboxLabel={`Arrival airport suggestions for leg ${legIndex + 1}`}
+            legId={leg.id}
+            onChange={(to) => {
+              updateLeg((l) => ({ ...l, to, validatedFlight: null }));
+            }}
+            onSelectAirport={(code) => {
+              updateLeg((l) => ({ ...l, to: code, validatedFlight: null }));
+            }}
+          />
+        </div>
+        <div>
+          <label className="mb-2 block text-xs font-medium uppercase tracking-[0.2em] text-slate-400">Estimated arrival</label>
           <div className="relative">
             <input
               ref={arrivalInputRef}
@@ -249,53 +296,6 @@ export function FlightLegCard({ friendId, leg, legIndex, totalLegs }: FlightLegC
                 ? `Optional: timezone for ${normalizeAirportCode(leg.to)} is unavailable, so this field falls back to your local time.`
                 : 'Optional: enter the local arrival time when you know it, or leave it blank.'}
           </p>
-        </div>
-        <div className="lg:col-span-2">
-          <label className="mb-2 block text-xs font-medium uppercase tracking-[0.2em] text-slate-400">Note</label>
-          <input
-            value={leg.note ?? ''}
-            onChange={(event) => {
-              const note = event.target.value;
-              updateLeg((l) => ({ ...l, note }));
-            }}
-            placeholder="Connection in AMS"
-            className="w-full rounded-2xl border border-white/10 bg-slate-950/90 px-3 py-2 text-sm text-slate-100 outline-none transition focus:border-cyan-400/60 focus:ring-2 focus:ring-cyan-500/20"
-          />
-        </div>
-        <div className="relative lg:col-span-2">
-          <label className="mb-2 block text-xs font-medium uppercase tracking-[0.2em] text-slate-400">From</label>
-          <AirportAutocomplete
-            fieldKey={fromFieldKey}
-            value={leg.from ?? ''}
-            placeholder="CDG"
-            aria-label={`From airport for leg ${legIndex + 1}`}
-            listboxLabel={`Departure airport suggestions for leg ${legIndex + 1}`}
-            legId={leg.id}
-            onChange={(from) => {
-              const nextDepartureTimezone = airportTimezones[normalizeAirportCode(from)] ?? null;
-              updateLeg((l) => ({ ...l, from, departureTimezone: nextDepartureTimezone, validatedFlight: null }));
-            }}
-            onSelectAirport={(code, timezone) => {
-              updateLeg((l) => ({ ...l, from: code, departureTimezone: timezone, validatedFlight: null }));
-            }}
-          />
-        </div>
-        <div className="relative lg:col-span-2">
-          <label className="mb-2 block text-xs font-medium uppercase tracking-[0.2em] text-slate-400">To</label>
-          <AirportAutocomplete
-            fieldKey={toFieldKey}
-            value={leg.to ?? ''}
-            placeholder="LIS"
-            aria-label={`To airport for leg ${legIndex + 1}`}
-            listboxLabel={`Arrival airport suggestions for leg ${legIndex + 1}`}
-            legId={leg.id}
-            onChange={(to) => {
-              updateLeg((l) => ({ ...l, to, validatedFlight: null }));
-            }}
-            onSelectAirport={(code) => {
-              updateLeg((l) => ({ ...l, to: code, validatedFlight: null }));
-            }}
-          />
         </div>
       </div>
 
