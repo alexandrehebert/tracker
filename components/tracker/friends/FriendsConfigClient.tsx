@@ -7,6 +7,7 @@ import { TripsSection } from './TripsSection';
 import { SaveBar } from './SaveBar';
 import { FriendCard } from './FriendCard';
 import { TripRemovalModal } from './TripRemovalModal';
+import { FlightValidationModal } from './FlightValidationModal';
 import { createDraftFriend } from '~/lib/utils/friendsConfigUtils';
 import type { FriendsTrackerConfig } from '~/lib/friendsTracker';
 import type { TrackerCronDashboard } from '~/lib/server/trackerCron';
@@ -48,6 +49,7 @@ function FriendsConfigInner() {
       </div>
 
       <TripRemovalModal />
+      <FlightValidationModal />
     </div>
   );
 }

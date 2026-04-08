@@ -41,6 +41,22 @@ export default async function ChantalConfigPage({ params }: ChantalConfigPagePro
           >
             ← Back to Chantal map
           </Link>
+          <Link
+            href="/tracker/cron"
+            aria-haspopup="dialog"
+            scroll={false}
+            className="inline-flex items-center rounded-full border border-violet-400/40 bg-violet-500/10 px-3 py-1.5 text-sm text-violet-100 transition hover:bg-violet-500/20"
+          >
+            Cron
+          </Link>
+          <Link
+            href="/tracker/providers"
+            aria-haspopup="dialog"
+            scroll={false}
+            className="inline-flex items-center rounded-full border border-emerald-400/40 bg-emerald-500/10 px-3 py-1.5 text-sm text-emerald-100 transition hover:bg-emerald-500/20"
+          >
+            Providers
+          </Link>
         </div>
 
         <div className="mt-5">
@@ -48,7 +64,8 @@ export default async function ChantalConfigPage({ params }: ChantalConfigPagePro
           <h1 className="mt-2 text-3xl font-semibold text-white">Crew itinerary setup</h1>
           <p className="mt-2 max-w-3xl text-sm text-slate-300">
             Add each friend, their flight numbers, and any connections. Saving here also syncs the shared tracker cron list,
-            while the cron toggle below now saves its enabled state immediately.
+            while the cron toggle below now saves its enabled state immediately. Use the buttons above to open the cron or
+            provider admin in a right-side drawer without leaving this setup view.
           </p>
         </div>
 

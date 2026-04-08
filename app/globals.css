@@ -30,13 +30,6 @@ button:disabled {
   cursor: not-allowed;
 }
 
-input[type='date'],
-input[type='datetime-local'],
-input[type='month'],
-input[type='time'] {
-  color-scheme: dark;
-}
-
 /* Animation Keyframes */
 @keyframes fadeInUp {
   from {

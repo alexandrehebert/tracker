@@ -95,8 +95,19 @@ function isTrackedFlightRelevantAtTime(flight: TrackedFlight, referenceTimeMs: n
 }
 
 function isMatchedStatusActiveAtTime(status: FriendFlightStatus | undefined, referenceTimeMs: number): boolean {
-  if (status?.status !== 'matched' || !status.flight) {
+  if (status?.status !== 'matched') {
     return false;
+  }
+
+  if (!status.flight) {
+    const scheduledTimeMs = Date.parse(status.leg.departureTime);
+    if (!Number.isFinite(scheduledTimeMs)) {
+      return true;
+    }
+
+    const fallbackStartMs = scheduledTimeMs - (FLIGHT_MATCH_WINDOW_HOURS * 60 * 60 * 1000);
+    const fallbackEndMs = scheduledTimeMs + (AUTO_LOCK_WINDOW_HOURS * 60 * 60 * 1000);
+    return referenceTimeMs >= fallbackStartMs && referenceTimeMs <= fallbackEndMs;
   }
 
   if (!isTrackedFlightRelevantAtTime(status.flight, referenceTimeMs)) {

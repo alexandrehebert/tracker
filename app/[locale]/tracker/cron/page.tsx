@@ -1,8 +1,7 @@
 import { notFound } from 'next/navigation';
-import { TrackerCronAdminClient } from '~/components/tracker/cron/TrackerCronAdminClient';
+import { TrackerCronPageContent } from '~/components/tracker/cron/TrackerCronPageContent';
 import { Link } from '~/i18n/navigation';
 import { isValidLocale } from '~/i18n/routing';
-import { getTrackerCronDashboard } from '~/lib/server/trackerCron';
 
 export const dynamic = 'force-dynamic';
 
@@ -17,8 +16,6 @@ export default async function TrackerCronPage({ params }: TrackerCronPageProps) 
     notFound();
   }
 
-  const dashboard = await getTrackerCronDashboard(100);
-
   return (
     <div className="min-h-[100dvh] bg-slate-950 text-slate-100">
       <div className="mx-auto max-w-6xl px-4 py-8 sm:px-6 lg:px-8">
@@ -30,12 +27,6 @@ export default async function TrackerCronPage({ params }: TrackerCronPageProps) 
             ← Back to tracker
           </Link>
           <Link
-            href="/tracker/debug"
-            className="inline-flex items-center rounded-full border border-sky-400/40 bg-sky-500/10 px-3 py-1.5 text-sm text-sky-100 transition hover:bg-sky-500/20"
-          >
-            OpenSky debug page
-          </Link>
-          <Link
             href="/tracker/providers"
             className="inline-flex items-center rounded-full border border-emerald-400/40 bg-emerald-500/10 px-3 py-1.5 text-sm text-emerald-100 transition hover:bg-emerald-500/20"
           >
@@ -44,16 +35,7 @@ export default async function TrackerCronPage({ params }: TrackerCronPageProps) 
         </div>
 
         <div className="mt-5">
-          <p className="text-xs uppercase tracking-[0.24em] text-sky-300">Tracker admin</p>
-          <h1 className="mt-2 text-3xl font-semibold text-white">Cron flight prefetch</h1>
-          <p className="mt-2 max-w-3xl text-sm text-slate-300">
-            Manage the list of flights that Vercel refreshes every 15 minutes, keep the config in MongoDB,
-            and review the full execution history for each cron run.
-          </p>
-        </div>
-
-        <div className="mt-6">
-          <TrackerCronAdminClient initialDashboard={dashboard} />
+          <TrackerCronPageContent />
         </div>
       </div>
     </div>
