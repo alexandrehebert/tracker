@@ -2,7 +2,6 @@
 
 import { Plus, Users } from 'lucide-react';
 import { FriendsConfigProvider, useFriendsConfig } from './FriendsConfigContext';
-import { CronSection } from './CronSection';
 import { TripsSection } from './TripsSection';
 import { SaveBar } from './SaveBar';
 import { FriendCard } from './FriendCard';
@@ -18,7 +17,6 @@ function FriendsConfigInner() {
 
   return (
     <div className="space-y-6">
-      <CronSection />
       <TripsSection />
       <SaveBar />
 

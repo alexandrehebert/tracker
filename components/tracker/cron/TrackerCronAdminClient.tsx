@@ -166,16 +166,22 @@ function getManualIdentifiers(config: TrackerCronDashboard['config']): string[] 
   return config.identifiers.filter((identifier) => !chantalIdentifiers.has(identifier));
 }
 
+function getChantalCronEnabled(dashboard: TrackerCronDashboard): boolean {
+  return dashboard.chantalCronEnabled ?? getChantalIdentifiers(dashboard.config).length > 0;
+}
+
 export function TrackerCronAdminClient({ initialDashboard }: { initialDashboard: TrackerCronDashboard }) {
   const locale = useLocale();
   const [dashboard, setDashboard] = useState(initialDashboard);
   const [identifiersInput, setIdentifiersInput] = useState(getManualIdentifiers(initialDashboard.config).join('\n'));
   const [enabled, setEnabled] = useState(initialDashboard.config.enabled);
+  const [chantalEnabled, setChantalEnabled] = useState(getChantalCronEnabled(initialDashboard));
   const [manualToken, setManualToken] = useState('');
   const [manualTokenExpirySeconds, setManualTokenExpirySeconds] = useState('1800');
   const [revealedToken, setRevealedToken] = useState<string | null>(null);
   const [isSaving, setIsSaving] = useState(false);
   const [isSavingEnabled, setIsSavingEnabled] = useState(false);
+  const [isSavingChantalEnabled, setIsSavingChantalEnabled] = useState(false);
   const [isRunning, setIsRunning] = useState(false);
   const [activeTokenAction, setActiveTokenAction] = useState<'checking' | 'refreshing' | 'clearing' | 'setting' | 'copying' | null>(null);
   const [notice, setNotice] = useState<{ type: 'success' | 'error' | 'info'; text: string } | null>(null);
@@ -184,6 +190,7 @@ export function TrackerCronAdminClient({ initialDashboard }: { initialDashboard:
   const latestRun = useMemo(() => dashboard.history[0] ?? null, [dashboard.history]);
   const manualIdentifiers = useMemo(() => getManualIdentifiers(dashboard.config), [dashboard.config]);
   const chantalIdentifiers = useMemo(() => getChantalIdentifiers(dashboard.config), [dashboard.config]);
+  const chantalCurrentTripName = dashboard.chantalCurrentTripName ?? null;
   const visibleHistory = useMemo(
     () => dashboard.history.slice(0, visibleHistoryCount),
     [dashboard.history, visibleHistoryCount],
@@ -212,6 +219,7 @@ export function TrackerCronAdminClient({ initialDashboard }: { initialDashboard:
     setDashboard(payload);
     setIdentifiersInput(getManualIdentifiers(payload.config).join('\n'));
     setEnabled(payload.config.enabled);
+    setChantalEnabled(getChantalCronEnabled(payload));
     return payload;
   }
 
@@ -237,12 +245,13 @@ export function TrackerCronAdminClient({ initialDashboard }: { initialDashboard:
 
       setDashboard(payload);
       setEnabled(payload.config.enabled);
-      setNotice({ type: 'success', text: `Cron ${payload.config.enabled ? 'enabled' : 'disabled'} and saved.` });
+      setChantalEnabled(getChantalCronEnabled(payload));
+      setNotice({ type: 'success', text: `Manual tracker cron ${payload.config.enabled ? 'enabled' : 'disabled'} and saved.` });
     } catch (error) {
       setEnabled(previousValue);
       setNotice({
         type: 'error',
-        text: error instanceof Error ? error.message : 'Unable to save the cron enabled state.',
+        text: error instanceof Error ? error.message : 'Unable to save the manual tracker cron state.',
       });
     } finally {
       setIsSavingEnabled(false);
@@ -272,9 +281,10 @@ export function TrackerCronAdminClient({ initialDashboard }: { initialDashboard:
       }
 
       setDashboard(payload);
-      setIdentifiersInput(payload.config.identifiers.join('\n'));
+      setIdentifiersInput(getManualIdentifiers(payload.config).join('\n'));
       setEnabled(payload.config.enabled);
-      setNotice({ type: 'success', text: 'Cron configuration saved to MongoDB.' });
+      setChantalEnabled(getChantalCronEnabled(payload));
+      setNotice({ type: 'success', text: 'Manual tracker cron list saved to MongoDB.' });
     } catch (error) {
       setNotice({
         type: 'error',
@@ -282,6 +292,47 @@ export function TrackerCronAdminClient({ initialDashboard }: { initialDashboard:
       });
     } finally {
       setIsSaving(false);
+    }
+  }
+
+  async function handleChantalEnabledToggle(nextValue: boolean) {
+    const previousValue = chantalEnabled;
+    setChantalEnabled(nextValue);
+    setIsSavingChantalEnabled(true);
+    setNotice(null);
+
+    try {
+      const response = await fetch('/api/tracker/cron/config', {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ chantalEnabled: nextValue }),
+      });
+
+      const payload: unknown = await readApiPayload<TrackerCronDashboard>(response);
+      if (!response.ok || isErrorResponse(payload) || !isTrackerCronDashboard(payload)) {
+        throw new Error(isErrorResponse(payload) ? payload.error : 'Unable to save the Chantal cron state.');
+      }
+
+      setDashboard(payload);
+      setChantalEnabled(getChantalCronEnabled(payload));
+      setEnabled(payload.config.enabled);
+      setIdentifiersInput(getManualIdentifiers(payload.config).join('\n'));
+      setNotice({
+        type: 'success',
+        text: (payload.chantalCronEnabled ?? nextValue)
+          ? 'Chantal cron enabled and kept separate from the manual tracker toggle.'
+          : 'Chantal cron disabled and removed from the cron queue.',
+      });
+    } catch (error) {
+      setChantalEnabled(previousValue);
+      setNotice({
+        type: 'error',
+        text: error instanceof Error ? error.message : 'Unable to save the Chantal cron state.',
+      });
+    } finally {
+      setIsSavingChantalEnabled(false);
     }
   }
 
@@ -515,16 +566,16 @@ export function TrackerCronAdminClient({ initialDashboard }: { initialDashboard:
           <form onSubmit={handleSave} className="rounded-3xl border border-white/10 bg-slate-900/70 p-5 shadow-[0_18px_50px_rgba(2,6,23,0.25)]">
             <div className="flex items-start justify-between gap-4">
               <div>
-                <h2 className="text-lg font-semibold text-white">Cron flight list</h2>
+                <h2 className="text-lg font-semibold text-white">Manual tracker flight list</h2>
                 <p className="mt-1 text-sm text-slate-300">
-                  Enter the manual callsigns or ICAO24 values you want to track. Flights synced from `/chantal` stay separate below and cannot be edited here.
+                  Enter the manual callsigns or ICAO24 values you want to track from `/tracker`. The `/chantal` batch is managed separately below and can stay on even when this manual toggle is off.
                 </p>
               </div>
               <ToggleSwitch
                 checked={enabled}
                 onToggle={handleEnabledToggle}
-                label="Enable or disable the shared tracker cron"
-                disabled={isSaving || isSavingEnabled}
+                label="Enable or disable the manual tracker cron list"
+                disabled={isSaving || isSavingEnabled || isSavingChantalEnabled}
                 pending={isSavingEnabled}
               />
             </div>
@@ -540,20 +591,36 @@ export function TrackerCronAdminClient({ initialDashboard }: { initialDashboard:
               className="mt-2 min-h-56 w-full rounded-2xl border border-white/10 bg-slate-950 px-3 py-3 font-mono text-sm text-slate-100 outline-none transition focus:border-sky-400/60"
             />
 
-            {chantalIdentifiers.length > 0 ? (
-              <div className="mt-4 rounded-2xl border border-cyan-400/30 bg-cyan-500/10 p-4">
-                <div className="text-xs uppercase tracking-[0.2em] text-cyan-100">Managed by /chantal</div>
-                <p className="mt-1 text-sm text-cyan-50">
-                  This batch is synced automatically from the Chantal page. Disable it there if you want these entries removed from the shared cron list.
-                </p>
-                <textarea
-                  readOnly
-                  aria-label="Chantal-managed flight identifiers"
-                  value={chantalIdentifiers.join('\n')}
-                  className="mt-3 min-h-24 w-full rounded-2xl border border-cyan-400/20 bg-slate-950 px-3 py-3 font-mono text-sm text-cyan-50 outline-none"
+            <div className="mt-4 rounded-2xl border border-cyan-400/30 bg-cyan-500/10 p-4">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+                <div>
+                  <div className="text-xs uppercase tracking-[0.2em] text-cyan-100">Managed by /chantal</div>
+                  <p className="mt-1 text-sm text-cyan-50">
+                    Control whether the live Chantal trip is included in the cron queue. This batch keeps running even if the manual tracker cron above is disabled.
+                  </p>
+                  <p className="mt-2 text-xs text-cyan-100/80">
+                    Current live trip: <span className="font-semibold text-white">{chantalCurrentTripName ?? 'No published Chantal trip selected yet'}</span>
+                  </p>
+                </div>
+                <ToggleSwitch
+                  checked={chantalEnabled}
+                  onToggle={handleChantalEnabledToggle}
+                  label="Enable or disable the Chantal cron batch"
+                  disabled={isSaving || isSavingEnabled || isSavingChantalEnabled}
+                  pending={isSavingChantalEnabled}
                 />
               </div>
-            ) : null}
+
+              <textarea
+                readOnly
+                aria-label="Chantal-managed flight identifiers"
+                value={chantalIdentifiers.join('\n')}
+                placeholder={chantalEnabled
+                  ? 'No flight identifiers are currently synced from the published Chantal trip.'
+                  : 'Enable the Chantal cron batch to sync the published trip here.'}
+                className="mt-3 min-h-24 w-full rounded-2xl border border-cyan-400/20 bg-slate-950 px-3 py-3 font-mono text-sm text-cyan-50 outline-none"
+              />
+            </div>
 
             <div className="mt-4 flex flex-wrap gap-3">
               <button

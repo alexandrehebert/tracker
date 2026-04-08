@@ -65,6 +65,8 @@ export interface TrackerCronDashboard {
   config: TrackerCronConfig;
   history: TrackerCronRun[];
   openSkyToken: OpenSkyTokenStatus;
+  chantalCronEnabled?: boolean;
+  chantalCurrentTripName?: string | null;
 }
 
 type TrackerCronConfigDocument = TrackerCronConfig & {
@@ -450,7 +452,11 @@ export async function runTrackerCronJob(options: {
   requestedBy?: string | null;
 } = {}): Promise<TrackerCronRun> {
   const config = await readTrackerCronConfig();
-  const identifiers = normalizeTrackerCronIdentifiers(options.overrideIdentifiers ?? config.identifiers);
+  const defaultIdentifiers = Array.from(new Set([
+    ...(config.enabled ? config.manualIdentifiers : []),
+    ...config.chantalIdentifiers,
+  ]));
+  const identifiers = normalizeTrackerCronIdentifiers(options.overrideIdentifiers ?? defaultIdentifiers);
   const sequence = trackerCronRunSequence++;
   const startedAt = Date.now() + sequence;
   const runId = `tracker-cron:${startedAt}:${Math.random().toString(36).slice(2, 8)}`;
@@ -473,14 +479,14 @@ export async function runTrackerCronJob(options: {
 
   await persistTrackerCronRun(baseRun);
 
-  if (!config.enabled && !options.overrideIdentifiers) {
+  if (!config.enabled && config.chantalIdentifiers.length === 0 && !options.overrideIdentifiers) {
     const finishedAt = Date.now();
     const skippedRun: TrackerCronRun = {
       ...baseRun,
       status: 'skipped',
       finishedAt,
       durationMs: finishedAt - startedAt,
-      error: 'Tracker cron is disabled in the saved configuration.',
+      error: 'The manual tracker cron is disabled and no Chantal-managed flights are enabled.',
     };
     await persistTrackerCronRun(skippedRun);
     return skippedRun;

@@ -409,6 +409,53 @@ describe('tracker cron config and history', () => {
     expect(persisted.friends).toHaveLength(1);
   });
 
+  it('still runs the Chantal batch when the manual tracker cron is disabled', async () => {
+    searchFlightsMock.mockResolvedValueOnce({
+      query: 'AF123',
+      requestedIdentifiers: ['AF123'],
+      matchedIdentifiers: ['AF123'],
+      notFoundIdentifiers: [],
+      fetchedAt: 1_700_000_001_000,
+      flights: [createTrackedFlight('AF123', 'abc123')],
+    });
+
+    const { runTrackerCronJob, writeTrackerCronConfig } = await loadTrackerCronModule();
+    const { writeFriendsTrackerConfig } = await loadFriendsTrackerModule();
+
+    await writeTrackerCronConfig({
+      identifiers: ['BA117'],
+      enabled: false,
+      updatedBy: 'tracker/cron admin page',
+    });
+
+    await writeFriendsTrackerConfig({
+      updatedBy: 'chantal config page',
+      cronEnabled: true,
+      friends: [
+        {
+          id: 'friend-1',
+          name: 'Alice',
+          flights: [
+            {
+              id: 'leg-1',
+              flightNumber: 'AF123',
+              departureTime: '2026-04-14T09:30:00.000Z',
+            },
+          ],
+        },
+      ],
+    });
+
+    const run = await runTrackerCronJob({
+      trigger: 'manual-admin',
+      requestedBy: 'test-suite',
+    });
+
+    expect(run.status).toBe('success');
+    expect(run.identifiers).toEqual(['AF123']);
+    expect(searchFlightsMock).toHaveBeenCalledWith('AF123', { forceRefresh: true });
+  });
+
   it('records each cron execution and its per-flight results in history', async () => {
     searchFlightsMock
       .mockResolvedValueOnce({

@@ -1,4 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
+import { getCurrentTripConfig } from '~/lib/friendsTracker';
+import { readFriendsTrackerConfig, writeFriendsTrackerConfig } from '~/lib/server/friendsTracker';
 import { getTrackerCronDashboard, writeTrackerCronConfig } from '~/lib/server/trackerCron';
 
 export const runtime = 'nodejs';
@@ -15,9 +17,23 @@ function buildJsonResponse(body: unknown, status = 200) {
   });
 }
 
+async function buildDashboardResponse() {
+  const [dashboard, chantalConfig] = await Promise.all([
+    getTrackerCronDashboard(100),
+    readFriendsTrackerConfig(),
+  ]);
+  const currentTrip = getCurrentTripConfig(chantalConfig);
+
+  return {
+    ...dashboard,
+    chantalCronEnabled: chantalConfig.cronEnabled !== false,
+    chantalCurrentTripName: currentTrip?.name ?? null,
+  };
+}
+
 export async function GET() {
   try {
-    const payload = await getTrackerCronDashboard(100);
+    const payload = await buildDashboardResponse();
     return buildJsonResponse(payload);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unable to load tracker cron settings.';
@@ -30,22 +46,33 @@ export async function PUT(request: NextRequest) {
     const body = await request.json().catch(() => null) as {
       identifiers?: string[] | string;
       enabled?: boolean;
+      chantalEnabled?: boolean;
     } | null;
 
     const hasIdentifiers = typeof body?.identifiers === 'string' || Array.isArray(body?.identifiers);
     const hasEnabled = typeof body?.enabled === 'boolean';
+    const hasChantalEnabled = typeof body?.chantalEnabled === 'boolean';
 
-    if (!body || (!hasIdentifiers && !hasEnabled)) {
-      return buildJsonResponse({ error: 'Provide cron identifiers or an enabled flag to save.' }, 400);
+    if (!body || (!hasIdentifiers && !hasEnabled && !hasChantalEnabled)) {
+      return buildJsonResponse({ error: 'Provide cron identifiers, the manual cron state, or the Chantal cron state to save.' }, 400);
     }
 
-    await writeTrackerCronConfig({
-      identifiers: hasIdentifiers ? body.identifiers : undefined,
-      enabled: hasEnabled ? body.enabled : undefined,
-      updatedBy: 'tracker/cron admin page',
-    });
+    if (hasIdentifiers || hasEnabled) {
+      await writeTrackerCronConfig({
+        identifiers: hasIdentifiers ? body.identifiers : undefined,
+        enabled: hasEnabled ? body.enabled : undefined,
+        updatedBy: 'tracker/cron admin page',
+      });
+    }
 
-    const payload = await getTrackerCronDashboard(100);
+    if (hasChantalEnabled) {
+      await writeFriendsTrackerConfig({
+        cronEnabled: body.chantalEnabled,
+        updatedBy: 'tracker/cron admin page',
+      });
+    }
+
+    const payload = await buildDashboardResponse();
     return buildJsonResponse(payload);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unable to save tracker cron settings.';

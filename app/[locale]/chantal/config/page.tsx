@@ -63,9 +63,9 @@ export default async function ChantalConfigPage({ params }: ChantalConfigPagePro
           <p className="text-xs uppercase tracking-[0.24em] text-sky-300">Friends config</p>
           <h1 className="mt-2 text-3xl font-semibold text-white">Crew itinerary setup</h1>
           <p className="mt-2 max-w-3xl text-sm text-slate-300">
-            Add each friend, their flight numbers, and any connections. Saving here also syncs the shared tracker cron list,
-            while the cron toggle below now saves its enabled state immediately. Use the buttons above to open the cron or
-            provider admin in a right-side drawer without leaving this setup view.
+            Add each friend, their flight numbers, and any connections. Saving here updates the live `/chantal` trip and its
+            synced batch, while the dedicated cron controls now live on the cron page. Use the buttons above to open the cron
+            or provider admin in a right-side drawer without leaving this setup view.
           </p>
         </div>
 
