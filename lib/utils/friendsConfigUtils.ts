@@ -51,12 +51,10 @@ export function createDraftFriend(): FriendTravelConfig {
     ...friend,
     id: friendId,
     name: '',
+    currentAirport: null,
     color: resolveAutoFriendAccentColor({ id: friendId, name: '' }),
     colorOverride: null,
-    flights: [{
-      ...createEmptyFriendFlightLeg(),
-      id: createClientId('leg'),
-    }],
+    flights: [],
   };
 }
 

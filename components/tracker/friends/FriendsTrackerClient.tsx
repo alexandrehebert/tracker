@@ -461,11 +461,12 @@ function hasLikelyReachedArrivalAirport(
 }
 
 function resolveStaticFriendMarkerAirportCode(
-  status: FriendFlightStatus,
+  friend: FriendTravelConfig,
   friendStatuses: FriendFlightStatus[],
   airportMarkerByCode: Map<string, FlightMapAirportMarker>,
   now = Date.now(),
 ): string | null {
+  const configuredAirportCode = normalizeAirportCode(friend.currentAirport);
   const mostRecentPastStatus = friendStatuses
     .map((entry) => ({
       status: entry,
@@ -480,12 +481,14 @@ function resolveStaticFriendMarkerAirportCode(
     const arrivalCode = normalizeAirportCode(mostRecentPastStatus.leg.to);
 
     return hasLikelyReachedArrivalAirport(mostRecentPastStatus, now, airportMarkerByCode)
-      ? (arrivalCode ?? departureCode)
-      : (departureCode ?? arrivalCode);
+      ? (arrivalCode ?? departureCode ?? configuredAirportCode)
+      : (departureCode ?? arrivalCode ?? configuredAirportCode);
   }
 
-  return normalizeAirportCode(status.leg.from)
-    ?? normalizeAirportCode(status.leg.to);
+  const nextPlannedStatus = pickPreferredMapStatus(friendStatuses, now);
+  return configuredAirportCode
+    ?? normalizeAirportCode(nextPlannedStatus?.leg.from)
+    ?? normalizeAirportCode(nextPlannedStatus?.leg.to);
 }
 
 function FriendTimelineCard({
@@ -586,6 +589,7 @@ function FriendTimelineCard({
 
   const destinationAirports = parseDestinationAirportCodes(destinationAirport);
   const hasConfiguredDestinationAirports = destinationAirports.length > 0;
+  const configuredCurrentAirport = normalizeAirportCode(friend.currentAirport);
   const hasArrivedAtDestination = hasConfiguredDestinationAirports
     && airports.length > 0
     && destinationAirports.includes(airports[airports.length - 1] ?? '')
@@ -646,7 +650,9 @@ function FriendTimelineCard({
           <div className="truncate text-sm font-semibold text-white">{friend.name}</div>
           <div className="text-[11px] text-slate-400">
             {currentTripLegs.length} leg{currentTripLegs.length === 1 ? '' : 's'}
-            {hasConfiguredDestinationAirports ? (
+            {configuredCurrentAirport ? (
+              <span className="ml-1 text-slate-500">· at {configuredCurrentAirport}</span>
+            ) : hasConfiguredDestinationAirports ? (
               <span className="ml-1 text-slate-500">
                 · {tripProgressLabel}
               </span>
@@ -811,7 +817,11 @@ function FriendTimelineCard({
         </div>
       ) : (
         <div className="mt-2 text-xs text-slate-500 italic">
-          {airports.length === 1 ? `Origin: ${airports[0]}` : 'No airport data configured for this trip.'}
+          {airports.length === 1
+            ? `Origin: ${airports[0]}`
+            : configuredCurrentAirport
+              ? `Current airport: ${configuredCurrentAirport}`
+              : 'No airport data configured for this trip.'}
         </div>
       )}
     </article>
@@ -1113,6 +1123,7 @@ function FriendsTrackerDashboard({
       airportMarkers.map((marker) => [marker.code.toUpperCase().trim(), marker] as const),
     );
     const statusesByFriendId = new Map<string, FriendFlightStatus[]>();
+    const mapStatusByFriendId = new Map<string, FriendFlightStatus>();
 
     for (const status of statuses) {
       const existingStatuses = statusesByFriendId.get(status.friend.id);
@@ -1123,14 +1134,19 @@ function FriendsTrackerDashboard({
       }
     }
 
-    return mapStatuses.flatMap((status, index) => {
-      if (status.flight) {
+    for (const status of mapStatuses) {
+      mapStatusByFriendId.set(status.friend.id, status);
+    }
+
+    return config.friends.flatMap((friend, index) => {
+      const mapStatus = mapStatusByFriendId.get(friend.id) ?? null;
+      if (mapStatus?.flight) {
         return [];
       }
 
       const airportCode = resolveStaticFriendMarkerAirportCode(
-        status,
-        statusesByFriendId.get(status.friend.id) ?? [status],
+        friend,
+        statusesByFriendId.get(friend.id) ?? [],
         airportMarkerByCode,
         referenceTimeMs,
       );
@@ -1144,16 +1160,16 @@ function FriendsTrackerDashboard({
       }
 
       return [{
-        id: status.friend.id,
-        name: status.friend.name || status.label,
-        avatarUrl: status.friend.avatarUrl ?? null,
-        color: friendColorMap.get(status.friend.id) ?? getFlightMapColor(friendColorIndexMap.get(status.friend.id) ?? index, false),
+        id: friend.id,
+        name: friend.name || `Friend ${index + 1}`,
+        avatarUrl: friend.avatarUrl ?? null,
+        color: friendColorMap.get(friend.id) ?? getFlightMapColor(friendColorIndexMap.get(friend.id) ?? index, false),
         latitude: airportMarker.latitude,
         longitude: airportMarker.longitude,
-        isStale: isStatusStaleForLiveMap(status, liveTimeMs, isWaybackActive),
+        isStale: mapStatus ? isStatusStaleForLiveMap(mapStatus, liveTimeMs, isWaybackActive) : false,
       } satisfies FriendAvatarMarker];
     });
-  }, [airportMarkers, friendColorIndexMap, isWaybackActive, liveTimeMs, mapStatuses, referenceTimeMs, statuses]);
+  }, [airportMarkers, config.friends, friendColorIndexMap, friendColorMap, isWaybackActive, liveTimeMs, mapStatuses, referenceTimeMs, statuses]);
 
   const friendAccentColors = useMemo(() => {
     return new Map(
@@ -1426,7 +1442,9 @@ function FriendsTrackerDashboard({
 
       {!identifiers.length ? (
         <div className="rounded-2xl border border-dashed border-white/10 bg-slate-950/35 p-4 text-sm text-slate-400">
-          No friend itineraries are configured yet. Add the crew details on the config page first.
+          {config.friends.length > 0
+            ? 'No flight identifiers are configured for this crew yet. Friends with a current airport still stay pinned on the map.'
+            : 'No friend itineraries are configured yet. Add the crew details on the config page first.'}
         </div>
       ) : null}
 

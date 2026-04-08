@@ -456,23 +456,49 @@ describe('tracker cron config and history', () => {
     expect(searchFlightsMock).toHaveBeenCalledWith('AF123', { forceRefresh: true });
   });
 
+  it('batches cron OpenSky refreshes so multiple identifiers are queried more gently', async () => {
+    const originalBatchSize = process.env.TRACKER_CRON_OPENSKY_BATCH_SIZE;
+    process.env.TRACKER_CRON_OPENSKY_BATCH_SIZE = '2';
+
+    searchFlightsMock.mockResolvedValueOnce({
+      query: 'AF123,BA117',
+      requestedIdentifiers: ['AF123', 'BA117'],
+      matchedIdentifiers: ['AF123'],
+      notFoundIdentifiers: ['BA117'],
+      fetchedAt: 1_700_000_001_000,
+      flights: [createTrackedFlight('AF123', 'abc123')],
+    });
+
+    try {
+      const { runTrackerCronJob, writeTrackerCronConfig } = await loadTrackerCronModule();
+      await writeTrackerCronConfig({ identifiers: ['AF123', 'BA117'], updatedBy: 'admin-ui' });
+
+      const run = await runTrackerCronJob({ trigger: 'manual-admin', requestedBy: 'dashboard' });
+
+      expect(searchFlightsMock).toHaveBeenCalledTimes(1);
+      expect(searchFlightsMock).toHaveBeenCalledWith('AF123,BA117', { forceRefresh: true });
+      expect(run.results).toEqual(expect.arrayContaining([
+        expect.objectContaining({ identifier: 'AF123', status: 'matched', flightCount: 1 }),
+        expect.objectContaining({ identifier: 'BA117', status: 'not-found', flightCount: 0 }),
+      ]));
+    } finally {
+      if (originalBatchSize === undefined) {
+        delete process.env.TRACKER_CRON_OPENSKY_BATCH_SIZE;
+      } else {
+        process.env.TRACKER_CRON_OPENSKY_BATCH_SIZE = originalBatchSize;
+      }
+    }
+  });
+
   it('records each cron execution and its per-flight results in history', async () => {
     searchFlightsMock
       .mockResolvedValueOnce({
-        query: 'AF123',
-        requestedIdentifiers: ['AF123'],
+        query: 'AF123,BA117',
+        requestedIdentifiers: ['AF123', 'BA117'],
         matchedIdentifiers: ['AF123'],
-        notFoundIdentifiers: [],
+        notFoundIdentifiers: ['BA117'],
         fetchedAt: 1_700_000_001_000,
         flights: [createTrackedFlight('AF123', 'abc123')],
-      })
-      .mockResolvedValueOnce({
-        query: 'BA117',
-        requestedIdentifiers: ['BA117'],
-        matchedIdentifiers: [],
-        notFoundIdentifiers: ['BA117'],
-        fetchedAt: 1_700_000_002_000,
-        flights: [],
       })
       .mockResolvedValueOnce({
         query: 'AF123',
@@ -490,8 +516,8 @@ describe('tracker cron config and history', () => {
     const firstRun = await runTrackerCronJob({ trigger: 'manual-admin', requestedBy: 'dashboard' });
     const secondRun = await runTrackerCronJob({ trigger: 'vercel-cron', overrideIdentifiers: ['AF123'] });
 
-    expect(searchFlightsMock).toHaveBeenNthCalledWith(1, 'AF123', { forceRefresh: true });
-    expect(searchFlightsMock).toHaveBeenNthCalledWith(2, 'BA117', { forceRefresh: true });
+    expect(searchFlightsMock).toHaveBeenNthCalledWith(1, 'AF123,BA117', { forceRefresh: true });
+    expect(searchFlightsMock).toHaveBeenNthCalledWith(2, 'AF123', { forceRefresh: true });
     expect(firstRun.status).toBe('partial');
     expect(firstRun.summary.totalIdentifiers).toBe(2);
     expect(firstRun.summary.matchedIdentifiers).toBe(1);

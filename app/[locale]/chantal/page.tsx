@@ -19,20 +19,27 @@ function normalizeAirportCode(value: string | null | undefined): string {
 }
 
 async function resolveChantalAirportMarkers(config: FriendsTrackerConfig): Promise<FlightMapAirportMarker[]> {
-  const requestedAirports = new Map<string, { departure: boolean; arrival: boolean }>();
+  const requestedAirports = new Map<string, { departure: boolean; arrival: boolean; pinned: boolean }>();
 
   for (const friend of config.friends) {
+    const currentAirportCode = normalizeAirportCode(friend.currentAirport);
+    if (currentAirportCode) {
+      const usage = requestedAirports.get(currentAirportCode) ?? { departure: false, arrival: false, pinned: false };
+      usage.pinned = true;
+      requestedAirports.set(currentAirportCode, usage);
+    }
+
     for (const leg of friend.flights) {
       const departureCode = normalizeAirportCode(leg.from);
       if (departureCode) {
-        const usage = requestedAirports.get(departureCode) ?? { departure: false, arrival: false };
+        const usage = requestedAirports.get(departureCode) ?? { departure: false, arrival: false, pinned: false };
         usage.departure = true;
         requestedAirports.set(departureCode, usage);
       }
 
       const arrivalCode = normalizeAirportCode(leg.to);
       if (arrivalCode) {
-        const usage = requestedAirports.get(arrivalCode) ?? { departure: false, arrival: false };
+        const usage = requestedAirports.get(arrivalCode) ?? { departure: false, arrival: false, pinned: false };
         usage.arrival = true;
         requestedAirports.set(arrivalCode, usage);
       }
@@ -56,7 +63,13 @@ async function resolveChantalAirportMarkers(config: FriendsTrackerConfig): Promi
         label,
         latitude: airport.latitude,
         longitude: airport.longitude,
-        usage: usage.departure && usage.arrival ? 'both' : usage.departure ? 'departure' : 'arrival',
+        usage: usage.departure && usage.arrival
+          ? 'both'
+          : usage.departure
+            ? 'departure'
+            : usage.arrival
+              ? 'arrival'
+              : 'both',
       } satisfies FlightMapAirportMarker;
     }),
   );

@@ -278,6 +278,61 @@ describe('searchFlights', () => {
     expect(result.notFoundIdentifiers).toEqual(['ETH575']);
   });
 
+  it('retries a rate-limited OpenSky states lookup once using the documented retry header', async () => {
+    process.env.OPENSKY_CLIENT_ID = 'client-from-env';
+    process.env.OPENSKY_CLIENT_SECRET = 'secret-from-env';
+
+    let statesRequestCount = 0;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input.toString();
+
+      if (url.includes('/protocol/openid-connect/token')) {
+        return new Response(JSON.stringify({ access_token: 'token-123', expires_in: 1800 }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      if (url.includes('/states/all')) {
+        statesRequestCount += 1;
+
+        if (statesRequestCount === 1) {
+          return new Response(JSON.stringify({ error: 'Too Many Requests' }), {
+            status: 429,
+            statusText: 'Too Many Requests',
+            headers: {
+              'Content-Type': 'application/json',
+              'X-Rate-Limit-Retry-After-Seconds': '0',
+            },
+          });
+        }
+
+        return new Response(JSON.stringify({ time: 1_700_000_700, states: [] }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      if (url.includes('/flights/all')) {
+        return new Response(JSON.stringify([]), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      throw new Error(`Unhandled fetch URL in test: ${url}`);
+    });
+
+    vi.stubGlobal('fetch', fetchMock);
+
+    const searchFlights = await loadSearchFlights();
+    const result = await searchFlights('AF123');
+
+    expect(result.flights).toEqual([]);
+    expect(result.notFoundIdentifiers).toEqual(['AF123']);
+    expect(statesRequestCount).toBe(2);
+  });
+
   it('reuses cached flight search results for up to the configured ttl', async () => {
     process.env.OPENSKY_CLIENT_ID = 'client-from-env';
     process.env.OPENSKY_CLIENT_SECRET = 'secret-from-env';

@@ -369,6 +369,48 @@ describe('FriendsTrackerClient', () => {
     });
   });
 
+  it('pins a non-traveler friend to the configured current airport even without any flights', async () => {
+    render(
+      <FriendsTrackerClient
+        map={map}
+        initialConfig={{
+          ...initialConfig,
+          friends: [
+            {
+              id: 'friend-quiet',
+              name: 'Maya',
+              currentAirport: 'JFK',
+              flights: [],
+            },
+          ],
+        }}
+        airportMarkers={[
+          { id: 'jfk', code: 'JFK', label: 'New York JFK', latitude: 40.6413, longitude: -73.7781, usage: 'both' },
+        ]}
+      />,
+    );
+
+    expect(await screen.findByText(/maya/i)).toBeInTheDocument();
+
+    await waitFor(() => {
+      const staticFriendMarkers = latestFlightMapProps?.staticFriendMarkers as Array<{
+        id: string;
+        latitude: number;
+        longitude: number;
+      }> | undefined;
+
+      expect(staticFriendMarkers).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            id: 'friend-quiet',
+            latitude: 40.6413,
+            longitude: -73.7781,
+          }),
+        ]),
+      );
+    });
+  });
+
   it('keeps fallback friend markers aligned with the selected wayback moment', async () => {
     const nowMs = Date.now();
 

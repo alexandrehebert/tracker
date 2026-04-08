@@ -4,9 +4,11 @@ import { Camera, Plus, Trash2, X } from 'lucide-react';
 import { useRef } from 'react';
 import { useFriendsConfig } from './FriendsConfigContext';
 import { FlightLegCard } from './FlightLegCard';
+import { AirportAutocomplete } from './AirportAutocomplete';
 import { createDraftLeg } from '~/lib/utils/friendsConfigUtils';
 import { resizeImageToDataUrl } from '~/lib/utils/imageUtils';
 import { getFriendInitials } from '~/lib/utils/friendInitials';
+import { getAirportFieldKey } from '~/lib/utils/airportUtils';
 import { resolveAutoFriendAccentColor, resolveFriendAccentColor, type FriendTravelConfig } from '~/lib/friendsTracker';
 import { colorToHex } from '../flight/colors';
 
@@ -22,6 +24,7 @@ export function FriendCard({ friend, friendIndex }: FriendCardProps) {
   const accentColor = colorToHex(resolveFriendAccentColor(friend, friendIndex));
   const autoAccentColor = colorToHex(resolveAutoFriendAccentColor(friend, friendIndex));
   const hasCustomAccentColor = typeof friend.colorOverride === 'string' && friend.colorOverride.trim().length > 0;
+  const currentAirportFieldKey = getAirportFieldKey(friend.id, friend.id, 'current');
 
   const itineraryPreview = friend.flights
     .filter((leg) => {
@@ -163,23 +166,52 @@ export function FriendCard({ friend, friendIndex }: FriendCardProps) {
             </div>
           </div>
 
-          <div className="flex-1">
-            <label className="mb-2 block text-xs font-medium uppercase tracking-[0.2em] text-slate-400">
-              Friend name
-            </label>
-            <input
-              value={friend.name}
-              onChange={(event) => {
-                const name = event.target.value;
-                updateFriend(friend.id, (currentFriend) => ({
-                  ...currentFriend,
-                  name,
-                }));
-              }}
-              placeholder={`Friend ${friendIndex + 1}`}
-              className="w-full rounded-2xl border border-white/10 bg-slate-950/90 px-3 py-2 text-sm text-slate-100 outline-none transition focus:border-cyan-400/60 focus:ring-2 focus:ring-cyan-500/20"
-            />
-            <p className="mt-1.5 text-xs text-slate-500">Click the avatar to upload a photo. Use the dot below it to pick or reset the map accent color.</p>
+          <div className="flex-1 space-y-3">
+            <div>
+              <label className="mb-2 block text-xs font-medium uppercase tracking-[0.2em] text-slate-400">
+                Friend name
+              </label>
+              <input
+                value={friend.name}
+                onChange={(event) => {
+                  const name = event.target.value;
+                  updateFriend(friend.id, (currentFriend) => ({
+                    ...currentFriend,
+                    name,
+                  }));
+                }}
+                placeholder={`Friend ${friendIndex + 1}`}
+                className="w-full rounded-2xl border border-white/10 bg-slate-950/90 px-3 py-2 text-sm text-slate-100 outline-none transition focus:border-cyan-400/60 focus:ring-2 focus:ring-cyan-500/20"
+              />
+              <p className="mt-1.5 text-xs text-slate-500">Click the avatar to upload a photo. Use the dot below it to pick or reset the map accent color.</p>
+            </div>
+
+            <div className="max-w-xs">
+              <label className="mb-2 block text-xs font-medium uppercase tracking-[0.2em] text-slate-400">
+                Current airport
+              </label>
+              <AirportAutocomplete
+                fieldKey={currentAirportFieldKey}
+                value={friend.currentAirport ?? ''}
+                placeholder="JFK"
+                aria-label={`Current airport for ${friendLabel}`}
+                listboxLabel={`Current airport suggestions for ${friendLabel}`}
+                legId={friend.id}
+                onChange={(currentAirport) => {
+                  updateFriend(friend.id, (currentFriend) => ({
+                    ...currentFriend,
+                    currentAirport,
+                  }));
+                }}
+                onSelectAirport={(code) => {
+                  updateFriend(friend.id, (currentFriend) => ({
+                    ...currentFriend,
+                    currentAirport: code,
+                  }));
+                }}
+              />
+              <p className="mt-1.5 text-xs text-slate-500">Optional: pin a non-traveler to an airport on `/chantal` even if they have no flights.</p>
+            </div>
           </div>
         </div>
 
@@ -210,6 +242,12 @@ export function FriendCard({ friend, friendIndex }: FriendCardProps) {
           </div>
         ) : null}
 
+        {friend.flights.length === 0 ? (
+          <div className="rounded-2xl border border-dashed border-white/10 bg-slate-950/35 px-3 py-3 text-sm text-slate-400">
+            No flights for this friend yet. Set a current airport to keep them on `/chantal`, or add an optional leg below.
+          </div>
+        ) : null}
+
         {friend.flights.map((leg, legIndex) => (
           <FlightLegCard
             key={leg.id}
@@ -231,7 +269,7 @@ export function FriendCard({ friend, friendIndex }: FriendCardProps) {
           className="inline-flex items-center gap-2 rounded-full border border-dashed border-sky-400/40 bg-sky-500/10 px-3 py-2 text-sm font-medium text-sky-100 transition hover:bg-sky-500/20"
         >
           <Plus className="h-4 w-4" />
-          Add connection / next leg
+          Add flight / connection
         </button>
       </div>
     </section>

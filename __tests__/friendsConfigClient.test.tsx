@@ -301,6 +301,50 @@ describe('FriendsConfigClient', () => {
     });
   });
 
+  it('lets you save a non-traveler friend with just a current airport and no flights', async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.spyOn(window, 'fetch');
+
+    render(<FriendsConfigClient initialConfig={initialConfig} initialCronDashboard={initialCronDashboard} />);
+
+    await user.click(screen.getByRole('button', { name: /add friend/i }));
+
+    const newFriendCard = screen.getByPlaceholderText('Friend 2').closest('section');
+    expect(newFriendCard).not.toBeNull();
+
+    const newFriendQueries = within(newFriendCard as HTMLElement);
+    await user.type(newFriendQueries.getByPlaceholderText('Friend 2'), 'Maya');
+    await user.clear(newFriendQueries.getByLabelText(/current airport for maya/i));
+    await user.type(newFriendQueries.getByLabelText(/current airport for maya/i), 'jfk');
+
+    const listbox = await screen.findByRole('listbox', { name: /current airport suggestions for maya/i });
+    await user.click(within(listbox).getByRole('option', { name: /jfk — john f\. kennedy international airport/i }));
+
+    expect(newFriendQueries.queryByText(/leg 1/i)).not.toBeInTheDocument();
+    expect(newFriendQueries.getByLabelText(/current airport for maya/i)).toHaveValue('JFK');
+
+    await user.click(screen.getByRole('button', { name: /save config/i }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith('/api/chantal/config', expect.objectContaining({
+        method: 'PUT',
+        body: expect.stringContaining('"currentAirport":"JFK"'),
+      }));
+    });
+
+    const saveRequest = fetchMock.mock.calls.find(([url, init]) => (
+      url === '/api/chantal/config'
+      && init?.method === 'PUT'
+      && typeof init.body === 'string'
+      && init.body.includes('"Maya"')
+    ));
+
+    expect(saveRequest).toBeDefined();
+    expect(typeof saveRequest?.[1]?.body).toBe('string');
+    expect(saveRequest?.[1]?.body as string).toContain('"currentAirport":"JFK"');
+    expect(saveRequest?.[1]?.body as string).toContain('"flights":[]');
+  });
+
   it('suggests airports for leg from and to fields and stores the selected code', async () => {
     const user = userEvent.setup();
 
@@ -1070,8 +1114,11 @@ describe('FriendsConfigClient', () => {
 
     expect(saveButton).toBeDisabled();
     expect(saveBar).not.toBeNull();
+    if (!saveBar) {
+      throw new Error('Expected the save bar section to be rendered.');
+    }
     expect(saveBar).toHaveClass('border-white/10');
-    expect(Boolean(saveBar?.compareDocumentPosition(groupTripsHeading) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
+    expect(Boolean(saveBar.compareDocumentPosition(groupTripsHeading) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
 
     await user.clear(screen.getByDisplayValue('Lisbon'));
     await user.type(screen.getByPlaceholderText('Weekend in Lisbon'), 'Lisbon crew');

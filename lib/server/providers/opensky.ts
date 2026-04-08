@@ -4,7 +4,7 @@ import { geoNaturalEarth1 } from 'd3-geo';
 import type { AirportDetails, FlightMapPoint, TrackedFlightRoute } from '~/components/tracker/flight/types';
 import { guessNearestAirportDetails } from '~/lib/server/airports';
 import { getProviderDisabledReason, getProviderDisabledReasonAsync, isProviderEnabled } from './index';
-import { recordProviderRequestLog } from './observability';
+import { getProviderRequestContext, recordProviderRequestLog } from './observability';
 
 const DEFAULT_DB_NAME = 'tracker';
 const OPENSKY_TOKEN_COLLECTION_NAME = 'opensky_token_cache';
@@ -85,6 +85,7 @@ let tokenFetchPromise: Promise<CachedOpenSkyToken> | null = null;
 let mongoClientPromise: Promise<MongoClient> | null = null;
 let openSkyTokenIndexesReady: Promise<void> | null = null;
 let mongoWarningLogged = false;
+const openSkyRateLimitState = new Map<OpenSkyRateLimitBucket, OpenSkyRateLimitSnapshot>();
 
 type OpenSkyDiagnosticsCarrier = Error & {
   cause?: unknown;
@@ -102,6 +103,17 @@ type OpenSkyRequestInit = RequestInit & {
   dispatcher?: Agent;
 };
 
+type OpenSkyRateLimitBucket = 'auth' | 'states' | 'tracks' | 'flights' | 'other';
+
+type OpenSkyRateLimitSnapshot = {
+  bucket: OpenSkyRateLimitBucket;
+  retryAfterUntil: number;
+  retryAfterSeconds: number;
+  remaining: number | null;
+  updatedAt: number;
+  target: string;
+};
+
 const DEFAULT_OPENSKY_REQUEST_TIMEOUT_MS = process.env.VERCEL ? 25_000 : 15_000;
 const parsedOpenSkyRequestTimeoutMs = Number.parseInt(process.env.OPENSKY_REQUEST_TIMEOUT_MS?.trim() ?? '', 10);
 const OPENSKY_REQUEST_TIMEOUT_MS = Number.isFinite(parsedOpenSkyRequestTimeoutMs) && parsedOpenSkyRequestTimeoutMs > 0
@@ -114,6 +126,16 @@ const OPENSKY_CONNECT_TIMEOUT_MS = Number.isFinite(parsedOpenSkyConnectTimeoutMs
   : DEFAULT_OPENSKY_CONNECT_TIMEOUT_MS;
 const OPENSKY_RETRY_DELAY_MS = 250;
 const OPENSKY_RETRY_ATTEMPTS = 2;
+const DEFAULT_OPENSKY_RATE_LIMIT_RETRY_AFTER_SECONDS = 15;
+const OPENSKY_RATE_LIMIT_DELAY_BUFFER_MS = 250;
+const MAX_OPENSKY_RATE_LIMIT_WAIT_MS_BY_CALLER = {
+  cron: 20_000,
+  'on-demand': 4_000,
+  details: 4_000,
+  config: 2_000,
+  debug: 2_000,
+  system: 10_000,
+} as const;
 const OPENSKY_RETRYABLE_ERROR_CODES = new Set([
   '23',
   'ABORT_ERR',
@@ -505,6 +527,155 @@ function wait(ms: number): Promise<void> {
   });
 }
 
+function resolveOpenSkyRateLimitBucket(stage: 'auth' | 'request', target: string): OpenSkyRateLimitBucket {
+  if (stage === 'auth') {
+    return 'auth';
+  }
+
+  const normalizedTarget = (() => {
+    try {
+      return new URL(target).pathname.toLowerCase();
+    } catch {
+      return target.toLowerCase();
+    }
+  })();
+
+  if (normalizedTarget.includes('/states/')) {
+    return 'states';
+  }
+
+  if (normalizedTarget.includes('/tracks/')) {
+    return 'tracks';
+  }
+
+  if (normalizedTarget.includes('/flights/')) {
+    return 'flights';
+  }
+
+  return 'other';
+}
+
+function parseOpenSkyHeaderNumber(value: string | null): number | null {
+  const parsed = Number.parseInt(value?.trim() ?? '', 10);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function parseOpenSkyRetryAfterSeconds(value: string | null): number | null {
+  const normalized = value?.trim();
+  if (!normalized) {
+    return null;
+  }
+
+  const numeric = Number.parseFloat(normalized);
+  if (Number.isFinite(numeric) && numeric >= 0) {
+    return Math.ceil(numeric);
+  }
+
+  const parsedDate = Date.parse(normalized);
+  if (!Number.isNaN(parsedDate)) {
+    return Math.max(0, Math.ceil((parsedDate - Date.now()) / 1000));
+  }
+
+  return null;
+}
+
+function readOpenSkyRateLimitHeaders(response: Response): {
+  remaining: number | null;
+  retryAfterHeader: string | null;
+  retryAfterSeconds: number | null;
+} {
+  const retryAfterHeader = response.headers.get('x-rate-limit-retry-after-seconds')
+    ?? response.headers.get('retry-after');
+
+  return {
+    remaining: parseOpenSkyHeaderNumber(response.headers.get('x-rate-limit-remaining')),
+    retryAfterHeader,
+    retryAfterSeconds: parseOpenSkyRetryAfterSeconds(retryAfterHeader),
+  };
+}
+
+function getOpenSkyRateLimitMaxWaitMs(): number {
+  const caller = getProviderRequestContext()?.caller ?? 'on-demand';
+  return MAX_OPENSKY_RATE_LIMIT_WAIT_MS_BY_CALLER[caller] ?? MAX_OPENSKY_RATE_LIMIT_WAIT_MS_BY_CALLER['on-demand'];
+}
+
+function rememberOpenSkyRateLimit(
+  stage: 'auth' | 'request',
+  target: string,
+  response: Response,
+): OpenSkyRateLimitSnapshot {
+  const bucket = resolveOpenSkyRateLimitBucket(stage, target);
+  const headers = readOpenSkyRateLimitHeaders(response);
+  const retryAfterSeconds = headers.retryAfterSeconds
+    ?? (response.status === 429 ? DEFAULT_OPENSKY_RATE_LIMIT_RETRY_AFTER_SECONDS : 0);
+
+  const snapshot: OpenSkyRateLimitSnapshot = {
+    bucket,
+    retryAfterUntil: Date.now() + (retryAfterSeconds * 1000) + OPENSKY_RATE_LIMIT_DELAY_BUFFER_MS,
+    retryAfterSeconds,
+    remaining: headers.remaining,
+    updatedAt: Date.now(),
+    target,
+  };
+
+  if (response.status === 429 || retryAfterSeconds > 0) {
+    openSkyRateLimitState.set(bucket, snapshot);
+  } else if (response.ok) {
+    openSkyRateLimitState.delete(bucket);
+  }
+
+  return snapshot;
+}
+
+function createOpenSkyRateLimitError(
+  stage: 'auth' | 'request',
+  target: string,
+  snapshot: OpenSkyRateLimitSnapshot,
+  extraDiagnostics: Record<string, unknown> = {},
+): Error {
+  const retryAfterSeconds = Math.max(1, Math.ceil((snapshot.retryAfterUntil - Date.now()) / 1000));
+  const label = snapshot.bucket === 'other'
+    ? 'OpenSky requests'
+    : `OpenSky ${snapshot.bucket} requests`;
+
+  return createOpenSkyError(
+    `${label} are temporarily rate-limited. Retry after about ${retryAfterSeconds}s.`,
+    compactRecord({
+      stage,
+      url: target,
+      rateLimited: true,
+      rateLimitBucket: snapshot.bucket,
+      rateLimitRetryAfterSeconds: retryAfterSeconds,
+      rateLimitRemaining: snapshot.remaining,
+      caller: getProviderRequestContext()?.caller,
+      ...extraDiagnostics,
+    }),
+  );
+}
+
+async function respectOpenSkyRateLimitWindow(stage: 'auth' | 'request', target: string): Promise<void> {
+  const bucket = resolveOpenSkyRateLimitBucket(stage, target);
+  const snapshot = openSkyRateLimitState.get(bucket);
+
+  if (!snapshot) {
+    return;
+  }
+
+  const remainingMs = snapshot.retryAfterUntil - Date.now();
+  if (remainingMs <= 0) {
+    openSkyRateLimitState.delete(bucket);
+    return;
+  }
+
+  if (remainingMs <= getOpenSkyRateLimitMaxWaitMs()) {
+    await wait(remainingMs);
+    openSkyRateLimitState.delete(bucket);
+    return;
+  }
+
+  throw createOpenSkyRateLimitError(stage, target, snapshot, { phase: 'preflight' });
+}
+
 async function fetchWithOpenSkyTransportRetry(
   input: URL | string,
   init: RequestInit,
@@ -517,13 +688,31 @@ async function fetchWithOpenSkyTransportRetry(
     attempt += 1;
 
     try {
+      await respectOpenSkyRateLimitWindow(stage, target);
+
       const requestInit: OpenSkyRequestInit = {
         ...init,
         dispatcher: openSkyDispatcher,
         signal: getOpenSkyRequestSignal(init.signal),
       };
 
-      return await fetch(input, requestInit);
+      const response = await fetch(input, requestInit);
+      if (response.status === 429) {
+        const snapshot = rememberOpenSkyRateLimit(stage, target, response);
+        const remainingMs = Math.max(0, snapshot.retryAfterUntil - Date.now());
+        const shouldRetry = attempt < OPENSKY_RETRY_ATTEMPTS && remainingMs <= getOpenSkyRateLimitMaxWaitMs();
+
+        if (shouldRetry) {
+          if (remainingMs > 0) {
+            await wait(remainingMs);
+          }
+          continue;
+        }
+      } else if (response.ok) {
+        openSkyRateLimitState.delete(resolveOpenSkyRateLimitBucket(stage, target));
+      }
+
+      return response;
     } catch (error) {
       const shouldRetry = attempt < OPENSKY_RETRY_ATTEMPTS && shouldRetryOpenSkyTransportError(error);
       if (shouldRetry) {
@@ -907,9 +1096,12 @@ async function getAccessToken(forceRefresh = false): Promise<string> {
         if (!response.ok) {
           bodyPreview = await readResponsePreview(response.clone());
           const statusSummary = [response.status, response.statusText].filter(Boolean).join(' ');
-          const message = bodyPreview
-            ? `OpenSky auth failed with status ${statusSummary}: ${bodyPreview}`
-            : `OpenSky auth failed with status ${statusSummary}`;
+          const rateLimitHeaders = readOpenSkyRateLimitHeaders(response);
+          const message = response.status === 429
+            ? `OpenSky auth is temporarily rate-limited. Retry after about ${rateLimitHeaders.retryAfterSeconds ?? DEFAULT_OPENSKY_RATE_LIMIT_RETRY_AFTER_SECONDS}s.`
+            : bodyPreview
+              ? `OpenSky auth failed with status ${statusSummary}: ${bodyPreview}`
+              : `OpenSky auth failed with status ${statusSummary}`;
 
           throw createOpenSkyError(message, compactRecord({
             stage: 'auth',
@@ -917,6 +1109,9 @@ async function getAccessToken(forceRefresh = false): Promise<string> {
             status: response.status,
             statusText: response.statusText,
             bodyPreview,
+            rateLimited: response.status === 429,
+            rateLimitRemaining: rateLimitHeaders.remaining,
+            rateLimitRetryAfterSeconds: rateLimitHeaders.retryAfterSeconds,
           }));
         }
 
@@ -1046,6 +1241,8 @@ export async function fetchOpenSky<T>(pathname: string, searchParams?: Record<st
       responseStatusText = response.statusText;
     }
 
+    const rateLimitHeaders = readOpenSkyRateLimitHeaders(response);
+
     if (response.status === 404) {
       await recordProviderRequestLog({
         provider: 'opensky',
@@ -1057,7 +1254,11 @@ export async function fetchOpenSky<T>(pathname: string, searchParams?: Record<st
           status: response.status,
           statusText: response.statusText,
         },
-        metadata: { refreshedAfter401 },
+        metadata: {
+          refreshedAfter401,
+          rateLimitRemaining: rateLimitHeaders.remaining,
+          rateLimitRetryAfterSeconds: rateLimitHeaders.retryAfterSeconds,
+        },
       });
       return null as T;
     }
@@ -1065,9 +1266,11 @@ export async function fetchOpenSky<T>(pathname: string, searchParams?: Record<st
     if (!response.ok) {
       bodyPreview = await readResponsePreview(response.clone());
       const statusSummary = [response.status, response.statusText].filter(Boolean).join(' ');
-      const message = bodyPreview
-        ? `OpenSky request failed for ${pathname} with status ${statusSummary}: ${bodyPreview}`
-        : `OpenSky request failed for ${pathname} with status ${statusSummary}`;
+      const message = response.status === 429
+        ? `OpenSky request for ${pathname} was rate-limited. Retry after about ${rateLimitHeaders.retryAfterSeconds ?? DEFAULT_OPENSKY_RATE_LIMIT_RETRY_AFTER_SECONDS}s.`
+        : bodyPreview
+          ? `OpenSky request failed for ${pathname} with status ${statusSummary}: ${bodyPreview}`
+          : `OpenSky request failed for ${pathname} with status ${statusSummary}`;
 
       throw createOpenSkyError(message, compactRecord({
         stage: 'request',
@@ -1077,6 +1280,9 @@ export async function fetchOpenSky<T>(pathname: string, searchParams?: Record<st
         statusText: response.statusText,
         bodyPreview,
         searchParams,
+        rateLimited: response.status === 429,
+        rateLimitRemaining: rateLimitHeaders.remaining,
+        rateLimitRetryAfterSeconds: rateLimitHeaders.retryAfterSeconds,
       }));
     }
 
@@ -1096,7 +1302,11 @@ export async function fetchOpenSky<T>(pathname: string, searchParams?: Record<st
         statusText: response.statusText,
         payload,
       },
-      metadata: { refreshedAfter401 },
+      metadata: {
+        refreshedAfter401,
+        rateLimitRemaining: rateLimitHeaders.remaining,
+        rateLimitRetryAfterSeconds: rateLimitHeaders.retryAfterSeconds,
+      },
     });
 
     return payload;

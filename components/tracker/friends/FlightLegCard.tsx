@@ -4,7 +4,6 @@ import { ArrowDown, ArrowUp, CheckCircle2, PlaneTakeoff, RefreshCw, Trash2 } fro
 import { useFriendsConfig } from './FriendsConfigContext';
 import { AirportAutocomplete } from './AirportAutocomplete';
 import { getAirportFieldKey, normalizeAirportCode } from '~/lib/utils/airportUtils';
-import { createDraftLeg } from '~/lib/utils/friendsConfigUtils';
 import { fromDateTimeLocalValue, toDateTimeLocalValue } from '~/lib/utils/dateTimeLocal';
 import type { FriendFlightLeg } from '~/lib/friendsTracker';
 
@@ -124,9 +123,7 @@ export function FlightLegCard({ friendId, leg, legIndex, totalLegs }: FlightLegC
             onClick={() => {
               updateFriend(friendId, (friend) => ({
                 ...friend,
-                flights: friend.flights.length > 1
-                  ? friend.flights.filter((fl) => fl.id !== leg.id)
-                  : [createDraftLeg()],
+                flights: friend.flights.filter((fl) => fl.id !== leg.id),
               }));
             }}
             className="inline-flex items-center gap-1 rounded-full border border-white/10 bg-slate-900/80 px-3 py-1.5 text-xs font-medium text-slate-200 transition hover:border-white/20 hover:bg-slate-900"

@@ -37,7 +37,7 @@ function FriendsConfigInner() {
 
       {friends.length === 0 ? (
         <div className="rounded-3xl border border-dashed border-white/10 bg-slate-950/35 p-8 text-center text-sm text-slate-400">
-          No friends yet for {selectedTrip?.name ?? 'this trip'}. Create the first itinerary card to start populating the `/chantal` map.
+          No friends yet for {selectedTrip?.name ?? 'this trip'}. Add the first crew card to start populating the `/chantal` map.
         </div>
       ) : null}
 

@@ -11,6 +11,16 @@ const parsedTrackerCronStaleRunMs = Number.parseInt(process.env.TRACKER_CRON_STA
 const TRACKER_CRON_STALE_RUN_MS = Number.isFinite(parsedTrackerCronStaleRunMs) && parsedTrackerCronStaleRunMs > 0
   ? parsedTrackerCronStaleRunMs
   : DEFAULT_TRACKER_CRON_STALE_RUN_MS;
+const DEFAULT_TRACKER_CRON_OPENSKY_BATCH_SIZE = 4;
+const parsedTrackerCronOpenSkyBatchSize = Number.parseInt(process.env.TRACKER_CRON_OPENSKY_BATCH_SIZE?.trim() ?? '', 10);
+const TRACKER_CRON_OPENSKY_BATCH_SIZE = Number.isFinite(parsedTrackerCronOpenSkyBatchSize) && parsedTrackerCronOpenSkyBatchSize > 0
+  ? parsedTrackerCronOpenSkyBatchSize
+  : DEFAULT_TRACKER_CRON_OPENSKY_BATCH_SIZE;
+const DEFAULT_TRACKER_CRON_OPENSKY_BATCH_DELAY_MS = 1_500;
+const parsedTrackerCronOpenSkyBatchDelayMs = Number.parseInt(process.env.TRACKER_CRON_OPENSKY_BATCH_DELAY_MS?.trim() ?? '', 10);
+const TRACKER_CRON_OPENSKY_BATCH_DELAY_MS = Number.isFinite(parsedTrackerCronOpenSkyBatchDelayMs) && parsedTrackerCronOpenSkyBatchDelayMs >= 0
+  ? parsedTrackerCronOpenSkyBatchDelayMs
+  : DEFAULT_TRACKER_CRON_OPENSKY_BATCH_DELAY_MS;
 export const TRACKER_CRON_SCHEDULE = '*/15 * * * *';
 
 export type TrackerCronTrigger = 'vercel-cron' | 'manual-admin' | 'manual-api';
@@ -125,7 +135,59 @@ export function normalizeTrackerCronIdentifiers(input: string | string[] | null 
 
   return Array.from(new Set(rawValues.map(normalizeTrackerCronIdentifier).filter(Boolean)));
 }
+function wait(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
 
+function chunkTrackerCronIdentifiers(values: string[]): string[][] {
+  const chunkSize = Math.max(1, TRACKER_CRON_OPENSKY_BATCH_SIZE);
+  const chunks: string[][] = [];
+
+  for (let index = 0; index < values.length; index += chunkSize) {
+    chunks.push(values.slice(index, index + chunkSize));
+  }
+
+  return chunks;
+}
+
+function buildTrackerCronFlightResult(
+  identifier: string,
+  payload: Awaited<ReturnType<typeof searchFlights>>,
+): TrackerCronFlightResult {
+  const normalizedIdentifier = normalizeTrackerCronIdentifier(identifier);
+  const matchedFlights = payload.flights.filter((flight) => {
+    const candidateValues = [
+      ...(flight.matchedBy ?? []),
+      flight.callsign,
+      flight.icao24,
+    ]
+      .map((value) => normalizeTrackerCronIdentifier(value))
+      .filter(Boolean);
+
+    return candidateValues.includes(normalizedIdentifier);
+  });
+
+  const matchedIdentifiers = (payload.matchedIdentifiers ?? [])
+    .map((value) => normalizeTrackerCronIdentifier(value))
+    .filter((value) => value === normalizedIdentifier);
+  const notFoundIdentifiers = (payload.notFoundIdentifiers ?? [])
+    .map((value) => normalizeTrackerCronIdentifier(value))
+    .filter((value) => value === normalizedIdentifier);
+  const matched = matchedIdentifiers.length > 0 || matchedFlights.length > 0;
+
+  return {
+    identifier: normalizedIdentifier,
+    status: matched ? 'matched' : 'not-found',
+    fetchedAt: typeof payload.fetchedAt === 'number' ? payload.fetchedAt : null,
+    matchedIdentifiers: matched ? (matchedIdentifiers.length > 0 ? matchedIdentifiers : [normalizedIdentifier]) : [],
+    notFoundIdentifiers,
+    flightCount: matchedFlights.length,
+    cachedIcao24s: matchedFlights.map((flight) => flight.icao24),
+    error: null,
+  };
+}
 function normalizeTrackerCronConfig(config: Partial<TrackerCronConfig> | null | undefined): TrackerCronConfig {
   const mergedIdentifiers = normalizeTrackerCronIdentifiers(config?.identifiers ?? []);
   const chantalIdentifiers = normalizeTrackerCronIdentifiers(config?.chantalIdentifiers ?? []);
@@ -542,40 +604,44 @@ export async function runTrackerCronJob(options: {
     await persistProgress();
   }
 
-  for (const identifier of identifiers) {
-    try {
-      const payload = await withCronProviderContext(identifier, () => searchFlights(identifier, { forceRefresh: true }));
-      const normalizedIdentifier = normalizeTrackerCronIdentifier(identifier);
-      const matchedIdentifiers = (payload.matchedIdentifiers ?? []).map((value) => normalizeTrackerCronIdentifier(value)).filter(Boolean);
-      const matched = matchedIdentifiers.includes(normalizedIdentifier) || payload.flights.length > 0;
+  const identifierBatches = chunkTrackerCronIdentifiers(identifiers);
 
-      results.push({
-        identifier: normalizedIdentifier,
-        status: matched ? 'matched' : 'not-found',
-        fetchedAt: typeof payload.fetchedAt === 'number' ? payload.fetchedAt : null,
-        matchedIdentifiers,
-        notFoundIdentifiers: (payload.notFoundIdentifiers ?? []).map((value) => normalizeTrackerCronIdentifier(value)).filter(Boolean),
-        flightCount: payload.flights.length,
-        cachedIcao24s: payload.flights.map((flight) => flight.icao24),
-        error: null,
-      });
+  for (let batchIndex = 0; batchIndex < identifierBatches.length; batchIndex += 1) {
+    const batch = identifierBatches[batchIndex]!;
+    const batchQuery = batch.join(',');
+
+    try {
+      const payload = await withCronProviderContext(
+        batch.length === 1 ? batch[0] ?? null : batchQuery,
+        () => searchFlights(batchQuery, { forceRefresh: true }),
+      );
+
+      for (const identifier of batch) {
+        results.push(buildTrackerCronFlightResult(identifier, payload));
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Tracker cron fetch failed unexpectedly.';
       runError = runError ?? message;
 
-      results.push({
-        identifier: normalizeTrackerCronIdentifier(identifier),
-        status: 'error',
-        fetchedAt: null,
-        matchedIdentifiers: [],
-        notFoundIdentifiers: [],
-        flightCount: 0,
-        cachedIcao24s: [],
-        error: message,
-      });
+      for (const identifier of batch) {
+        results.push({
+          identifier: normalizeTrackerCronIdentifier(identifier),
+          status: 'error',
+          fetchedAt: null,
+          matchedIdentifiers: [],
+          notFoundIdentifiers: [],
+          flightCount: 0,
+          cachedIcao24s: [],
+          error: message,
+        });
+      }
     }
 
     await persistProgress();
+
+    if (batchIndex < identifierBatches.length - 1 && TRACKER_CRON_OPENSKY_BATCH_DELAY_MS > 0) {
+      await wait(TRACKER_CRON_OPENSKY_BATCH_DELAY_MS);
+    }
   }
 
   const finishedAt = Date.now();

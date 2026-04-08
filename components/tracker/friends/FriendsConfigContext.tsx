@@ -575,10 +575,14 @@ export function FriendsConfigProvider({
       return;
     }
 
-    const [friendId, legId, field] = activeAirportField.split(':') as [string, string, 'from' | 'to'];
+    const [friendId, legId, field] = activeAirportField.split(':') as [string, string, 'from' | 'to' | 'current'];
     const activeFriend = selectedTrip.friends.find((friend) => friend.id === friendId);
     const activeLeg = activeFriend?.flights.find((leg) => leg.id === legId);
-    const query = field === 'from' ? activeLeg?.from ?? '' : activeLeg?.to ?? '';
+    const query = field === 'from'
+      ? activeLeg?.from ?? ''
+      : field === 'to'
+        ? activeLeg?.to ?? ''
+        : activeFriend?.currentAirport ?? '';
 
     if (query.trim().length < 2) {
       setAirportSuggestions([]);

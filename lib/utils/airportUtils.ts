@@ -4,7 +4,7 @@ export function normalizeAirportCode(value: string | null | undefined): string {
   return typeof value === 'string' ? value.trim().toUpperCase() : '';
 }
 
-export function getAirportFieldKey(friendId: string, legId: string, field: 'from' | 'to'): string {
+export function getAirportFieldKey(friendId: string, legId: string, field: 'from' | 'to' | 'current'): string {
   return `${friendId}:${legId}:${field}`;
 }
 

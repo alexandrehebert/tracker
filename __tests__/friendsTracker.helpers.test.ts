@@ -199,6 +199,23 @@ describe('friends tracker helpers', () => {
     expect(config.friends[0]?.flights[0]?.resolvedIcao24).toBe('3C675A');
   });
 
+  it('preserves a non-traveler friend airport when the config has no flights', () => {
+    const config = normalizeFriendsTrackerConfig({
+      friends: [
+        {
+          id: 'friend-quiet',
+          name: 'Maya',
+          currentAirport: '  jfk  ',
+          flights: [],
+        },
+      ],
+    } as Partial<FriendsTrackerConfig>);
+
+    expect(config.friends).toHaveLength(1);
+    expect(config.friends[0]?.currentAirport).toBe('jfk');
+    expect(config.friends[0]?.flights).toEqual([]);
+  });
+
   it('preserves explicit friend colors and generates stable, distinct defaults when missing', () => {
     const config = normalizeFriendsTrackerConfig({
       friends: [

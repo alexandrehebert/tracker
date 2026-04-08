@@ -41,6 +41,7 @@ export interface FriendTravelConfig {
   avatarUrl?: string | null;
   color?: string | null;
   colorOverride?: string | null;
+  currentAirport?: string | null;
   flights: FriendFlightLeg[];
 }
 
@@ -496,7 +497,8 @@ export function createEmptyFriendConfig(): FriendTravelConfig {
     avatarUrl: null,
     color: null,
     colorOverride: null,
-    flights: [createEmptyFriendFlightLeg()],
+    currentAirport: null,
+    flights: [],
   };
 }
 
@@ -665,8 +667,8 @@ function mergeDemoFriend(
 
     return {
       ...freshLeg,
-      departureTime: existingLeg.departureTime || freshLeg.departureTime,
-      arrivalTime: existingLeg.arrivalTime ?? freshLeg.arrivalTime,
+      departureTime: freshLeg.departureTime,
+      arrivalTime: freshLeg.arrivalTime ?? existingLeg.arrivalTime,
       from: existingLeg.from ?? freshLeg.from,
       to: existingLeg.to ?? freshLeg.to,
       note: existingLeg.note ?? freshLeg.note,
@@ -687,6 +689,7 @@ function mergeDemoFriend(
     avatarUrl: existingFriend.avatarUrl ?? freshFriend.avatarUrl,
     color: normalizeConfiguredFriendColor(existingFriend.color) ?? freshFriend.color,
     colorOverride: normalizeConfiguredFriendColor(existingFriend.colorOverride) ?? freshFriend.colorOverride ?? null,
+    currentAirport: normalizeOptionalText(existingFriend.currentAirport) ?? freshFriend.currentAirport ?? null,
     flights: [...mergedFlights, ...extraFlights],
   };
 }
@@ -768,7 +771,7 @@ export function normalizeFriendConfig(
 ): FriendTravelConfig {
   const flights = Array.isArray(input?.flights)
     ? input.flights.map((leg, legIndex) => normalizeFriendFlightLeg(leg, friendIndex, legIndex))
-    : [normalizeFriendFlightLeg(null, friendIndex, 0)];
+    : [];
   const id = typeof input?.id === 'string' && input.id.trim() ? input.id.trim() : getFallbackId('friend', friendIndex);
   const name = typeof input?.name === 'string' && input.name.trim() ? input.name.trim() : `Friend ${friendIndex + 1}`;
 
@@ -778,6 +781,7 @@ export function normalizeFriendConfig(
     avatarUrl: typeof input?.avatarUrl === 'string' && input.avatarUrl ? input.avatarUrl : null,
     color: normalizeConfiguredFriendColor(input?.color),
     colorOverride: normalizeConfiguredFriendColor(input?.colorOverride),
+    currentAirport: normalizeOptionalText(input?.currentAirport),
     flights,
   };
 }
