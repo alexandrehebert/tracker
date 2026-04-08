@@ -491,20 +491,6 @@ export async function lookupAviationstackFlightWithReport(identifier: string): P
     };
   }
 
-  if (!isAviationstackConfigured()) {
-    const disabledReason = await getProviderDisabledReasonAsync('aviationstack');
-
-    return {
-      match: null,
-      report: createAviationstackReport(
-        'skipped',
-        disabledReason ?? 'Aviationstack lookup skipped because `AVIATION_STACK_API_KEY` is not configured.',
-        false,
-        { identifier: normalizedIdentifier, disabledByFlag: Boolean(disabledReason) },
-      ),
-    };
-  }
-
   const dbDisabledReason = await getProviderDisabledReasonAsync('aviationstack');
   if (dbDisabledReason) {
     return {
@@ -514,6 +500,18 @@ export async function lookupAviationstackFlightWithReport(identifier: string): P
         dbDisabledReason,
         false,
         { identifier: normalizedIdentifier, disabledByFlag: true },
+      ),
+    };
+  }
+
+  if (!isAviationstackConfigured()) {
+    return {
+      match: null,
+      report: createAviationstackReport(
+        'skipped',
+        'Aviationstack lookup skipped because `AVIATION_STACK_API_KEY` is not configured.',
+        false,
+        { identifier: normalizedIdentifier, disabledByFlag: false },
       ),
     };
   }

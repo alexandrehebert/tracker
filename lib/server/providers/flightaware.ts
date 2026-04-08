@@ -668,20 +668,6 @@ export async function lookupFlightAwareFlightWithReport(
     };
   }
 
-  if (!isFlightAwareConfigured()) {
-    const disabledReason = await getProviderDisabledReasonAsync('flightaware');
-
-    return {
-      match: null,
-      report: createFlightAwareReport(
-        'skipped',
-        disabledReason ?? 'FlightAware lookup skipped because `FLIGHT_AWARE_API_KEY` (or legacy `FLIGHTAWARE_API_KEY`) is not configured.',
-        false,
-        { identifier: normalizedIdentifier, disabledByFlag: Boolean(disabledReason) },
-      ),
-    };
-  }
-
   const dbDisabledReason = await getProviderDisabledReasonAsync('flightaware');
   if (dbDisabledReason) {
     return {
@@ -691,6 +677,18 @@ export async function lookupFlightAwareFlightWithReport(
         dbDisabledReason,
         false,
         { identifier: normalizedIdentifier, disabledByFlag: true },
+      ),
+    };
+  }
+
+  if (!isFlightAwareConfigured()) {
+    return {
+      match: null,
+      report: createFlightAwareReport(
+        'skipped',
+        'FlightAware lookup skipped because `FLIGHT_AWARE_API_KEY` (or legacy `FLIGHTAWARE_API_KEY`) is not configured.',
+        false,
+        { identifier: normalizedIdentifier, disabledByFlag: false },
       ),
     };
   }

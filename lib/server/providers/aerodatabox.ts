@@ -619,20 +619,6 @@ export async function lookupAeroDataBoxFlightWithReport(
     };
   }
 
-  if (!isAeroDataBoxConfigured()) {
-    const disabledReason = await getProviderDisabledReasonAsync('aerodatabox');
-
-    return {
-      match: null,
-      report: createAeroDataBoxReport(
-        'skipped',
-        disabledReason ?? 'AeroDataBox lookup skipped because `AERODATABOX_RAPIDAPI_KEY` (or `RAPIDAPI_AERODATABOX_API_KEY`) is not configured.',
-        false,
-        { identifier: normalizedIdentifier, disabledByFlag: Boolean(disabledReason) },
-      ),
-    };
-  }
-
   const dbDisabledReason = await getProviderDisabledReasonAsync('aerodatabox');
   if (dbDisabledReason) {
     return {
@@ -642,6 +628,18 @@ export async function lookupAeroDataBoxFlightWithReport(
         dbDisabledReason,
         false,
         { identifier: normalizedIdentifier, disabledByFlag: true },
+      ),
+    };
+  }
+
+  if (!isAeroDataBoxConfigured()) {
+    return {
+      match: null,
+      report: createAeroDataBoxReport(
+        'skipped',
+        'AeroDataBox lookup skipped because `AERODATABOX_RAPIDAPI_KEY` (or `RAPIDAPI_AERODATABOX_API_KEY`) is not configured.',
+        false,
+        { identifier: normalizedIdentifier, disabledByFlag: false },
       ),
     };
   }
