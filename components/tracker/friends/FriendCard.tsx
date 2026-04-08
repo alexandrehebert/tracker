@@ -21,7 +21,7 @@ export function FriendCard({ friend, friendIndex }: FriendCardProps) {
   const friendLabel = friend.name || `Friend ${friendIndex + 1}`;
   const accentColor = colorToHex(resolveFriendAccentColor(friend, friendIndex));
   const autoAccentColor = colorToHex(resolveAutoFriendAccentColor(friend, friendIndex));
-  const hasCustomAccentColor = accentColor.toLowerCase() !== autoAccentColor.toLowerCase();
+  const hasCustomAccentColor = typeof friend.colorOverride === 'string' && friend.colorOverride.trim().length > 0;
 
   const itineraryPreview = friend.flights
     .filter((leg) => {
@@ -118,7 +118,7 @@ export function FriendCard({ friend, friendIndex }: FriendCardProps) {
                   const color = event.target.value;
                   updateFriend(friend.id, (currentFriend) => ({
                     ...currentFriend,
-                    color,
+                    colorOverride: color.toLowerCase() === autoAccentColor.toLowerCase() ? null : color,
                   }));
                 }}
                 className="sr-only"
@@ -152,7 +152,7 @@ export function FriendCard({ friend, friendIndex }: FriendCardProps) {
                   onClick={() => {
                     updateFriend(friend.id, (currentFriend) => ({
                       ...currentFriend,
-                      color: null,
+                      colorOverride: null,
                     }));
                   }}
                   className="inline-flex h-4.5 w-4.5 items-center justify-center rounded-full border border-white/15 bg-slate-900/80 text-slate-200 transition hover:border-cyan-400/40 hover:text-white"

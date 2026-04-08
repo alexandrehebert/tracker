@@ -3,6 +3,7 @@ import {
   createEmptyFriendFlightLeg,
   createEmptyTripConfig,
   normalizeFriendsTrackerConfig,
+  resolveAutoFriendAccentColor,
   type FriendFlightLeg,
   type FriendTravelConfig,
   type FriendsTrackerConfig,
@@ -44,10 +45,14 @@ export function buildSaveableConfigSnapshot(config: FriendsTrackerConfig, demoRe
 
 export function createDraftFriend(): FriendTravelConfig {
   const friend = createEmptyFriendConfig();
+  const friendId = createClientId('friend');
+
   return {
     ...friend,
-    id: createClientId('friend'),
+    id: friendId,
     name: '',
+    color: resolveAutoFriendAccentColor({ id: friendId, name: '' }),
+    colorOverride: null,
     flights: [{
       ...createEmptyFriendFlightLeg(),
       id: createClientId('leg'),

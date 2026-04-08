@@ -40,6 +40,7 @@ export interface FriendTravelConfig {
   name: string;
   avatarUrl?: string | null;
   color?: string | null;
+  colorOverride?: string | null;
   flights: FriendFlightLeg[];
 }
 
@@ -213,12 +214,15 @@ function assignAutoFriendColors(friends: FriendTravelConfig[]): FriendTravelConf
   const usedColors = new Set<string>();
 
   return friends.map((friend, friendIndex) => {
-    const configuredColor = normalizeConfiguredFriendColor(friend.color);
-    if (configuredColor) {
-      usedColors.add(configuredColor);
+    const storedAutoColor = normalizeConfiguredFriendColor(friend.color);
+    const normalizedOverrideColor = normalizeConfiguredFriendColor(friend.colorOverride);
+
+    if (storedAutoColor) {
+      usedColors.add(storedAutoColor);
       return {
         ...friend,
-        color: configuredColor,
+        color: storedAutoColor,
+        colorOverride: normalizedOverrideColor,
       };
     }
 
@@ -241,14 +245,20 @@ function assignAutoFriendColors(friends: FriendTravelConfig[]): FriendTravelConf
     return {
       ...friend,
       color: resolvedColor,
+      colorOverride: normalizedOverrideColor,
     };
   });
 }
 
 export function resolveAutoFriendAccentColor(
-  friend: Pick<Partial<FriendTravelConfig>, 'id' | 'name'> | null | undefined,
+  friend: Pick<Partial<FriendTravelConfig>, 'id' | 'name' | 'color'> | null | undefined,
   fallbackIndex = 0,
 ): string {
+  const storedAutoColor = normalizeConfiguredFriendColor(friend?.color);
+  if (storedAutoColor) {
+    return storedAutoColor;
+  }
+
   const seed = [friend?.id, friend?.name]
     .filter((value): value is string => typeof value === 'string' && Boolean(value.trim()))
     .map((value) => value.trim().toLowerCase())
@@ -259,12 +269,12 @@ export function resolveAutoFriendAccentColor(
 }
 
 export function resolveFriendAccentColor(
-  friend: Pick<Partial<FriendTravelConfig>, 'id' | 'name' | 'color'> | null | undefined,
+  friend: Pick<Partial<FriendTravelConfig>, 'id' | 'name' | 'color' | 'colorOverride'> | null | undefined,
   fallbackIndex = 0,
 ): string {
-  const configuredColor = normalizeConfiguredFriendColor(friend?.color);
-  if (configuredColor) {
-    return configuredColor;
+  const overrideColor = normalizeConfiguredFriendColor(friend?.colorOverride);
+  if (overrideColor) {
+    return overrideColor;
   }
 
   return resolveAutoFriendAccentColor(friend, fallbackIndex);
@@ -485,6 +495,7 @@ export function createEmptyFriendConfig(): FriendTravelConfig {
     name: '',
     avatarUrl: null,
     color: null,
+    colorOverride: null,
     flights: [createEmptyFriendFlightLeg()],
   };
 }
@@ -675,6 +686,7 @@ function mergeDemoFriend(
     name: existingFriend.name || freshFriend.name,
     avatarUrl: existingFriend.avatarUrl ?? freshFriend.avatarUrl,
     color: normalizeConfiguredFriendColor(existingFriend.color) ?? freshFriend.color,
+    colorOverride: normalizeConfiguredFriendColor(existingFriend.colorOverride) ?? freshFriend.colorOverride ?? null,
     flights: [...mergedFlights, ...extraFlights],
   };
 }
@@ -765,6 +777,7 @@ export function normalizeFriendConfig(
     name,
     avatarUrl: typeof input?.avatarUrl === 'string' && input.avatarUrl ? input.avatarUrl : null,
     color: normalizeConfiguredFriendColor(input?.color),
+    colorOverride: normalizeConfiguredFriendColor(input?.colorOverride),
     flights,
   };
 }
