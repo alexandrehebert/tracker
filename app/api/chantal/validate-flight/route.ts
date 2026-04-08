@@ -282,8 +282,12 @@ export async function POST(request: NextRequest) {
       const route = candidate.matchedDepartureAirport || candidate.matchedArrivalAirport
         ? `${candidate.matchedDepartureAirport ?? '???'} → ${candidate.matchedArrivalAirport ?? '???'}`
         : null;
+      const routeMismatch = (from && candidate.matchedDepartureAirport && from !== candidate.matchedDepartureAirport)
+        || (to && candidate.matchedArrivalAirport && to !== candidate.matchedArrivalAirport);
+      const timingWarning = delta != null && Math.abs(delta) > 180;
 
       return {
+        status: routeMismatch || timingWarning ? 'warning' : 'matched',
         providerLabel: candidate.providerLabel,
         matchedIcao24: candidate.matchedIcao24,
         matchedFlightNumber: candidate.matchedFlightNumber,

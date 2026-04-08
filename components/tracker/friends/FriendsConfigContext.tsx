@@ -46,6 +46,7 @@ export interface FlightProviderValidationResult {
 }
 
 export interface FlightValidationModalCandidate {
+  status: 'matched' | 'warning';
   providerLabel: string;
   matchedIcao24: string | null;
   matchedFlightNumber: string | null;
@@ -848,8 +849,7 @@ export function FriendsConfigProvider({
 
     const { friendId, legId, identifier } = modal;
     const now = Date.now();
-    const hasTimingWarning = candidate.departureDeltaMinutes != null && Math.abs(candidate.departureDeltaMinutes) > LIVE_VALIDATION_WARNING_MINUTES;
-    const status = hasTimingWarning ? 'warning' : 'matched';
+    const status = candidate.status === 'warning' ? 'warning' : 'matched';
     const message = `${candidate.providerLabel} matched ${candidate.matchedFlightNumber ?? identifier}. ${candidate.message}`;
 
     applyMatchedFlightToLeg(friendId, legId, {
@@ -1054,6 +1054,7 @@ export function FriendsConfigProvider({
         ? candidates
         : (overallStatus === 'matched' || overallStatus === 'warning') && inlineResult.providerLabel
           ? [{
+              status: overallStatus === 'warning' ? 'warning' : 'matched',
               providerLabel: inlineResult.providerLabel,
               matchedIcao24: inlineResult.matchedIcao24,
               matchedFlightNumber: inlineResult.matchedFlightNumber,

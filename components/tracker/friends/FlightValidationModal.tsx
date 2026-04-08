@@ -61,9 +61,8 @@ const VALIDATION_PROVIDER_OPTIONS: Array<{
 function CandidateCard({ candidate, locale, onApply }: CandidateCardProps) {
   const hasDelta = candidate.departureDeltaMinutes != null;
   const isLargeTimeDelta = hasDelta && Math.abs(candidate.departureDeltaMinutes ?? 0) > TIMING_WARNING_THRESHOLD_MINUTES;
-  const hasRouteMismatch = false; // route info shown as-is; caller already scored
 
-  const statusColor = isLargeTimeDelta || hasRouteMismatch
+  const statusColor = candidate.status === 'warning' || isLargeTimeDelta
     ? 'border-amber-400/30 bg-amber-500/5'
     : 'border-emerald-400/25 bg-emerald-500/5';
 

@@ -647,6 +647,149 @@ describe('FriendsConfigClient', () => {
     expect(await screen.findByText(/Arrival:/i)).toBeInTheDocument();
   });
 
+  it('updates the leg departure time and preserves warning status after reload', async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.mocked(window.fetch);
+    const matchedDepartureMs = Date.parse('2026-04-15T10:45:00.000Z');
+    const matchedArrivalMs = Date.parse('2026-04-15T13:05:00.000Z');
+    let savedConfigBody: Record<string, unknown> | null = null;
+
+    fetchMock.mockImplementation(async (input, init) => {
+      const url = typeof input === 'string'
+        ? input
+        : input instanceof URL
+          ? input.toString()
+          : input.url;
+
+      if (url.includes('/api/airports')) {
+        return new Response(JSON.stringify({
+          ...airportDirectoryResponse,
+          timezones: buildAirportFixtureTimezoneLookup(airportDirectoryResponse.airports),
+        }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      if (url.includes('/api/chantal/validate-flight')) {
+        return new Response(JSON.stringify({
+          status: 'warning',
+          message: 'FlightAware matched the flight but on the following day.',
+          providerLabel: 'FlightAware',
+          matchedIcao24: 'A1B2C3',
+          matchedFlightNumber: 'AF456',
+          matchedDepartureTime: matchedDepartureMs,
+          matchedArrivalTime: matchedArrivalMs,
+          matchedDepartureAirport: 'JFK',
+          matchedArrivalAirport: 'LIS',
+          departureDeltaMinutes: 1515,
+          matchedRoute: 'JFK → LIS',
+          lastCheckedAt: Date.now(),
+          candidates: [
+            {
+              status: 'warning',
+              providerLabel: 'FlightAware',
+              matchedIcao24: 'A1B2C3',
+              matchedFlightNumber: 'AF456',
+              matchedDepartureTime: matchedDepartureMs,
+              matchedArrivalTime: matchedArrivalMs,
+              matchedDepartureAirport: 'JFK',
+              matchedArrivalAirport: 'LIS',
+              departureDeltaMinutes: 1515,
+              matchedRoute: 'JFK → LIS',
+              message: 'This schedule is on the next service day.',
+            },
+          ],
+        }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      if (url.includes('/api/chantal/config') && init?.method === 'PUT') {
+        savedConfigBody = JSON.parse(typeof init.body === 'string' ? init.body : '{}') as Record<string, unknown>;
+        return new Response(JSON.stringify(savedConfigBody), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      return new Response(JSON.stringify(initialConfig), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    });
+
+    const singleLegConfig: FriendsTrackerConfig = {
+      ...initialConfig,
+      trips: [
+        {
+          ...initialConfig.trips![0]!,
+          friends: [
+            {
+              ...initialConfig.trips![0]!.friends[0]!,
+              flights: [initialConfig.trips![0]!.friends[0]!.flights[0]!],
+            },
+          ],
+        },
+      ],
+    };
+
+    const { rerender } = render(
+      <FriendsConfigClient
+        initialConfig={singleLegConfig}
+        initialCronDashboard={initialCronDashboard}
+        initialAirportTimezones={{ CDG: 'UTC', AMS: 'UTC', JFK: 'UTC', LIS: 'UTC' }}
+      />,
+    );
+
+    const aliceCard = screen.getByDisplayValue('Alice').closest('section');
+    expect(aliceCard).not.toBeNull();
+
+    const aliceQueries = within(aliceCard as HTMLElement);
+    await user.click(aliceQueries.getByRole('button', { name: /validate flight for leg 1/i }));
+    await user.click(await screen.findByRole('button', { name: /run validation/i }));
+    await user.click(await screen.findByRole('button', { name: /apply/i }));
+
+    await waitFor(() => {
+      expect(aliceQueries.getByLabelText(/flight number for leg 1/i)).toHaveValue('AF456');
+      expect(aliceQueries.getByLabelText(/estimated departure for leg 1/i)).toHaveValue('2026-04-15T06:45');
+    });
+
+    expect(await screen.findByText(/Provider match needs review/i)).toBeInTheDocument();
+
+    const saveButton = screen.getByRole('button', { name: /save config/i });
+    await waitFor(() => {
+      expect(saveButton).toBeEnabled();
+    });
+    await user.click(saveButton);
+
+    await waitFor(() => {
+      const savedTrips = savedConfigBody?.trips;
+      expect(Array.isArray(savedTrips)).toBe(true);
+      const savedLeg = (savedTrips as Array<{ friends: Array<{ flights: Array<Record<string, unknown>> }> }>)[0]?.friends[0]?.flights[0];
+      expect(savedLeg).toMatchObject({
+        flightNumber: 'AF456',
+        departureTime: '2026-04-15T10:45:00.000Z',
+        resolvedIcao24: 'A1B2C3',
+        validatedFlight: expect.objectContaining({
+          status: 'warning',
+          matchedDepartureTime: '2026-04-15T10:45:00.000Z',
+        }),
+      });
+    });
+
+    rerender(
+      <FriendsConfigClient
+        initialConfig={savedConfigBody as unknown as FriendsTrackerConfig}
+        initialCronDashboard={initialCronDashboard}
+        initialAirportTimezones={{ CDG: 'UTC', AMS: 'UTC', JFK: 'UTC', LIS: 'UTC' }}
+      />,
+    );
+
+    expect(await screen.findByText(/Provider match needs review/i)).toBeInTheDocument();
+  });
+
   it('applies the selected validation match onto the leg and save payload', async () => {
     const user = userEvent.setup();
     const fetchMock = vi.mocked(window.fetch);
@@ -685,6 +828,7 @@ describe('FriendsConfigClient', () => {
           lastCheckedAt: Date.now(),
           candidates: [
             {
+              status: 'matched',
               providerLabel: 'FlightAware',
               matchedIcao24: 'A1B2C3',
               matchedFlightNumber: 'AF456',
@@ -756,7 +900,8 @@ describe('FriendsConfigClient', () => {
     });
   });
 
-  it('restores the applied validation banner and green button state after refresh', async () => {
+  it('restores the applied validation modal summary and green leg state after refresh', async () => {
+    const user = userEvent.setup();
     const persistedConfig: FriendsTrackerConfig = {
       ...initialConfig,
       trips: [
@@ -798,7 +943,15 @@ describe('FriendsConfigClient', () => {
 
     render(<FriendsConfigClient initialConfig={persistedConfig} initialCronDashboard={initialCronDashboard} />);
 
-    expect(screen.getByRole('button', { name: /validated flight for leg 1/i })).toBeInTheDocument();
+    const validatedButton = screen.getByRole('button', { name: /validated flight for leg 1/i });
+    expect(validatedButton).toBeInTheDocument();
+
+    const validatedLeg = validatedButton.closest('div[class*="rounded-2xl"]');
+    expect(validatedLeg?.className).toContain('border-emerald-400/35');
+
+    await user.click(validatedButton);
+
+    expect(await screen.findByText(/Current leg status/i)).toBeInTheDocument();
     expect(screen.getByText(/Schedule match confirmed/i)).toBeInTheDocument();
     expect(screen.getByText(/Source: FlightAware/i)).toBeInTheDocument();
   });
