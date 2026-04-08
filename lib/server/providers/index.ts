@@ -108,6 +108,19 @@ export function getEnabledProviders(): ProviderName[] {
   return [...ALL_PROVIDERS].filter(isProviderEnabled);
 }
 
+export async function getEnabledProvidersAsync(): Promise<ProviderName[]> {
+  const enabledChecks = await Promise.all(
+    [...ALL_PROVIDERS].map(async (provider) => ({
+      provider,
+      enabled: await isProviderEnabledAsync(provider),
+    })),
+  );
+
+  return enabledChecks
+    .filter((entry) => entry.enabled)
+    .map((entry) => entry.provider);
+}
+
 export function getProviderLabel(name: ProviderName): string {
   return PROVIDER_LABELS[name];
 }

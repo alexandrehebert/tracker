@@ -64,4 +64,22 @@ describe('provider configuration helpers', () => {
     expect(result.report.status).toBe('no-data');
     expect(result.report.reason).not.toContain('not configured');
   });
+
+  it('includes FlightAware in the enabled provider list when the admin override forces it on', async () => {
+    process.env.FLIGHT_AWARE_API_KEY = 'test-flightaware-key';
+    process.env.FLIGHTAWARE_DISABLED = 'true';
+
+    vi.resetModules();
+    vi.doMock('~/lib/server/providers/overrides', () => ({
+      getCachedProviderOverrides: async () => ({
+        opensky: null,
+        flightaware: 'enabled',
+        aviationstack: null,
+        aerodatabox: null,
+      }),
+    }));
+
+    const { getEnabledProvidersAsync: getEnabledProvidersWithOverride } = await import('~/lib/server/providers');
+    await expect(getEnabledProvidersWithOverride()).resolves.toContain('flightaware');
+  });
 });

@@ -4,7 +4,7 @@ import { Link } from '~/i18n/navigation';
 import { isValidLocale } from '~/i18n/routing';
 import { readFriendsTrackerConfigWithAirportTimezones } from '~/lib/server/friendsTracker';
 import { getTrackerCronDashboard } from '~/lib/server/trackerCron';
-import { getEnabledProviders } from '~/lib/server/providers';
+import { getEnabledProvidersAsync } from '~/lib/server/providers';
 
 export const dynamic = 'force-dynamic';
 
@@ -20,7 +20,7 @@ export default async function ChantalConfigPage({ params }: ChantalConfigPagePro
   }
 
   const demoReferenceTime = Date.now();
-  const enabledValidationProviders = getEnabledProviders();
+  const enabledValidationProviders = await getEnabledProvidersAsync();
   const isFlightAwareValidationEnabled = enabledValidationProviders.length > 0;
   const flightAwareValidationNotice = isFlightAwareValidationEnabled
     ? null
