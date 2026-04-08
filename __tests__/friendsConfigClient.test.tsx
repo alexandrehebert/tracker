@@ -254,6 +254,25 @@ describe('FriendsConfigClient', () => {
     expect(flightNumberInputs.map((input) => input.value)).toEqual(['KL641', 'AF123']);
   });
 
+  it('opens Flightradar24 from the flight number field shortcut', async () => {
+    const user = userEvent.setup();
+    const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null);
+
+    render(<FriendsConfigClient initialConfig={initialConfig} initialCronDashboard={initialCronDashboard} />);
+
+    const aliceCard = screen.getByDisplayValue('Alice').closest('section');
+    expect(aliceCard).not.toBeNull();
+
+    const aliceQueries = within(aliceCard as HTMLElement);
+    await user.click(aliceQueries.getByRole('button', { name: /open af123 on flightradar24/i }));
+
+    expect(openSpy).toHaveBeenCalledWith(
+      'https://www.flightradar24.com/AF123',
+      '_blank',
+      'noopener,noreferrer',
+    );
+  });
+
   it('uses an avatar accent dot picker with a reset-to-auto action', async () => {
     render(<FriendsConfigClient initialConfig={initialConfig} initialCronDashboard={initialCronDashboard} />);
 

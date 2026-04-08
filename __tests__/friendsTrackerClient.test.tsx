@@ -99,6 +99,225 @@ describe('FriendsTrackerClient', () => {
     vi.unstubAllGlobals();
   });
 
+  it('opens the matching Flightradar24 page when a map flight bubble or route is selected', async () => {
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null);
+
+    vi.spyOn(window, 'fetch').mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          query: 'AF123',
+          requestedIdentifiers: ['AF123'],
+          matchedIdentifiers: ['AF123'],
+          notFoundIdentifiers: [],
+          fetchedAt: Date.now(),
+          flights: [
+            {
+              icao24: 'abc123',
+              callsign: 'AF123',
+              flightNumber: 'AF123',
+              originCountry: 'France',
+              matchedBy: ['AF123'],
+              lastContact: nowSeconds - 30,
+              current: {
+                time: nowSeconds - 30,
+                latitude: 48.9,
+                longitude: 2.4,
+                x: 420,
+                y: 220,
+                altitude: 10300,
+                heading: 280,
+                onGround: false,
+              },
+              originPoint: {
+                time: nowSeconds - 3600,
+                latitude: 49.0097,
+                longitude: 2.5479,
+                x: 410,
+                y: 225,
+                altitude: 0,
+                heading: 280,
+                onGround: true,
+              },
+              track: [],
+              rawTrack: [],
+              onGround: false,
+              velocity: 240,
+              heading: 280,
+              verticalRate: 0,
+              geoAltitude: 10300,
+              baroAltitude: 10350,
+              squawk: '2201',
+              category: 1,
+              route: {
+                departureAirport: 'CDG',
+                arrivalAirport: 'LIS',
+                firstSeen: nowSeconds - 3600,
+                lastSeen: null,
+              },
+              dataSource: 'opensky',
+              sourceDetails: [],
+            },
+          ],
+        }),
+        {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        },
+      ),
+    );
+
+    render(
+      <FriendsTrackerClient
+        map={map}
+        initialConfig={{
+          ...initialConfig,
+          destinationAirport: 'LIS',
+          friends: [
+            {
+              ...initialConfig.friends[0]!,
+              flights: [
+                {
+                  id: 'leg-1',
+                  flightNumber: 'AF123',
+                  departureTime: new Date(Date.now() - 45 * 60 * 1000).toISOString(),
+                  from: 'CDG',
+                  to: 'LIS',
+                },
+              ],
+            },
+          ],
+        }}
+        airportMarkers={[
+          { id: 'cdg', code: 'CDG', label: 'Paris CDG', latitude: 49.0097, longitude: 2.5479, usage: 'both' },
+          { id: 'lis', code: 'LIS', label: 'Lisbon', latitude: 38.7742, longitude: -9.1342, usage: 'both' },
+        ]}
+      />,
+    );
+
+    expect(await screen.findByText(/chantal crew tracker/i)).toBeInTheDocument();
+
+    await waitFor(() => {
+      expect(typeof latestFlightMapProps?.onSelectFlight).toBe('function');
+      const flights = latestFlightMapProps?.flights as Array<{ icao24: string }> | undefined;
+      expect(flights?.map((flight) => flight.icao24)).toContain('abc123');
+    });
+
+    (latestFlightMapProps?.onSelectFlight as ((icao24: string) => void))('abc123');
+
+    expect(openSpy).toHaveBeenCalledWith(
+      'https://www.flightradar24.com/AF123',
+      '_blank',
+      'noopener,noreferrer',
+    );
+  });
+
+  it('opens Flightradar24 from the timeline plane icon', async () => {
+    const user = userEvent.setup();
+    const nowSeconds = Math.floor(Date.now() / 1000);
+    const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null);
+
+    vi.spyOn(window, 'fetch').mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          query: 'AF123',
+          requestedIdentifiers: ['AF123'],
+          matchedIdentifiers: ['AF123'],
+          notFoundIdentifiers: [],
+          fetchedAt: Date.now(),
+          flights: [
+            {
+              icao24: 'abc123',
+              callsign: 'AF123',
+              flightNumber: 'AF123',
+              originCountry: 'France',
+              matchedBy: ['AF123'],
+              lastContact: nowSeconds - 30,
+              current: {
+                time: nowSeconds - 30,
+                latitude: 48.9,
+                longitude: -20.4,
+                x: 0,
+                y: 0,
+                altitude: 10650,
+                heading: 290,
+                onGround: false,
+              },
+              originPoint: {
+                time: nowSeconds - 3600,
+                latitude: 51.47,
+                longitude: -0.45,
+                x: 0,
+                y: 0,
+                altitude: 0,
+                heading: 290,
+                onGround: true,
+              },
+              track: [],
+              rawTrack: [],
+              onGround: false,
+              velocity: 247,
+              heading: 290,
+              verticalRate: 0,
+              geoAltitude: 10650,
+              baroAltitude: 10690,
+              squawk: '2201',
+              category: 1,
+              route: {
+                departureAirport: 'LHR',
+                arrivalAirport: 'JFK',
+                firstSeen: nowSeconds - 5400,
+                lastSeen: null,
+              },
+              dataSource: 'opensky',
+              sourceDetails: [],
+            },
+          ],
+        }),
+        {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        },
+      ),
+    );
+
+    render(
+      <FriendsTrackerClient
+        map={map}
+        initialConfig={{
+          ...initialConfig,
+          destinationAirport: 'JFK',
+          friends: [
+            {
+              ...initialConfig.friends[0]!,
+              flights: [
+                {
+                  id: 'leg-1',
+                  flightNumber: 'AF123',
+                  departureTime: new Date(Date.now() - 45 * 60 * 1000).toISOString(),
+                  from: 'LHR',
+                  to: 'JFK',
+                },
+              ],
+            },
+          ],
+        }}
+        airportMarkers={[
+          { id: 'lhr', code: 'LHR', label: 'London Heathrow', latitude: 51.47, longitude: -0.4543, usage: 'both' },
+          { id: 'jfk', code: 'JFK', label: 'New York JFK', latitude: 40.6413, longitude: -73.7781, usage: 'both' },
+        ]}
+      />,
+    );
+
+    await user.click(await screen.findByRole('button', { name: /open af123 on flightradar24/i }));
+
+    expect(openSpy).toHaveBeenCalledWith(
+      'https://www.flightradar24.com/AF123',
+      '_blank',
+      'noopener,noreferrer',
+    );
+  });
+
   it('passes only one actual map location per friend when a later leg is the live one', async () => {
     const nowSeconds = Math.floor(Date.now() / 1000);
 

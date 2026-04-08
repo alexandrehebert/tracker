@@ -1,11 +1,12 @@
 'use client';
 
-import { ArrowDown, ArrowUp, CalendarDays, CheckCircle2, PlaneTakeoff, RefreshCw, Trash2 } from 'lucide-react';
+import { ArrowDown, ArrowUp, CalendarDays, CheckCircle2, ExternalLink, PlaneTakeoff, RefreshCw, Trash2 } from 'lucide-react';
 import { useRef } from 'react';
 import { useFriendsConfig } from './FriendsConfigContext';
 import { AirportAutocomplete } from './AirportAutocomplete';
 import { getAirportFieldKey, normalizeAirportCode } from '~/lib/utils/airportUtils';
 import { fromDateTimeLocalValue, toDateTimeLocalValue } from '~/lib/utils/dateTimeLocal';
+import { normalizeFlightRadarFlightNumber, openFlightRadarUrl } from '~/lib/utils/flightRadar';
 import type { FriendFlightLeg } from '~/lib/friendsTracker';
 
 interface FlightLegCardProps {
@@ -40,6 +41,7 @@ export function FlightLegCard({ friendId, leg, legIndex, totalLegs }: FlightLegC
   const arrivalInputRef = useRef<HTMLInputElement | null>(null);
   const hasAppliedValidation = leg.validatedFlight?.status === 'matched' || leg.validatedFlight?.status === 'warning';
   const isValidationLoading = validationResult?.status === 'loading';
+  const normalizedFlightNumber = normalizeFlightRadarFlightNumber(leg.flightNumber);
   const showInlineValidationBanner = Boolean(
     validationResult
       && validationResult.status !== 'idle'
@@ -157,16 +159,29 @@ export function FlightLegCard({ friendId, leg, legIndex, totalLegs }: FlightLegC
       <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
         <div>
           <label className="mb-2 block text-xs font-medium uppercase tracking-[0.2em] text-slate-400">Flight number</label>
-          <input
-            aria-label={`Flight number for leg ${legIndex + 1}`}
-            value={leg.flightNumber}
-            onChange={(event) => {
-              const flightNumber = event.target.value;
-              updateLeg((l) => ({ ...l, flightNumber, validatedFlight: null }));
-            }}
-            placeholder="AF123"
-            className="w-full rounded-2xl border border-white/10 bg-slate-950/90 px-3 py-2 text-sm text-slate-100 outline-none transition focus:border-cyan-400/60 focus:ring-2 focus:ring-cyan-500/20"
-          />
+          <div className="relative">
+            <input
+              aria-label={`Flight number for leg ${legIndex + 1}`}
+              value={leg.flightNumber}
+              onChange={(event) => {
+                const flightNumber = event.target.value;
+                updateLeg((l) => ({ ...l, flightNumber, validatedFlight: null }));
+              }}
+              placeholder="AF123"
+              className="w-full rounded-2xl border border-white/10 bg-slate-950/90 px-3 py-2 pr-11 text-sm text-slate-100 outline-none transition focus:border-cyan-400/60 focus:ring-2 focus:ring-cyan-500/20"
+            />
+            {normalizedFlightNumber ? (
+              <button
+                type="button"
+                aria-label={`Open ${normalizedFlightNumber} on Flightradar24`}
+                title={`Open ${normalizedFlightNumber} on Flightradar24`}
+                onClick={() => openFlightRadarUrl(normalizedFlightNumber)}
+                className="absolute right-2 top-1/2 inline-flex h-7 w-7 -translate-y-1/2 items-center justify-center rounded-full text-slate-300 transition hover:bg-slate-900/80 hover:text-cyan-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-500/30"
+              >
+                <ExternalLink className="h-4 w-4" />
+              </button>
+            ) : null}
+          </div>
         </div>
         <div className="lg:col-span-3">
           <label className="mb-2 block text-xs font-medium uppercase tracking-[0.2em] text-slate-400">Note</label>

@@ -32,6 +32,7 @@ import {
 } from '~/lib/friendsTracker';
 import { buildHistoricalFlightView, computeWaybackBounds, getFlightPointTimeMs } from '~/lib/flightHistory';
 import type { WorldMapPayload } from '~/lib/server/worldMap';
+import { buildFlightRadarUrl, normalizeFlightRadarFlightNumber, openFlightRadarUrl } from '~/lib/utils/flightRadar';
 import TrackerShell from '../TrackerShell';
 import TrackerZoomControls from '../TrackerZoomControls';
 import { TrackerLayoutProvider, useTrackerLayout } from '../contexts/TrackerLayoutContext';
@@ -110,7 +111,6 @@ function formatDateTimeMillis(timestampMs: number | null, locale: string): strin
     timeZone: 'UTC',
   }).format(timestampMs);
 }
-
 
 function getFriendInitials(name: string): string {
   const parts = name.trim().split(/\s+/);
@@ -498,6 +498,7 @@ function FriendTimelineCard({
   referenceTimeMs,
   airportMarkers,
   accentColor,
+  onOpenFlightLink,
 }: {
   friend: FriendTravelConfig;
   friendStatuses: FriendFlightStatus[];
@@ -505,6 +506,7 @@ function FriendTimelineCard({
   referenceTimeMs: number;
   airportMarkers: FlightMapAirportMarker[];
   accentColor: string;
+  onOpenFlightLink?: (flightNumber: string | null | undefined) => void;
 }) {
   const currentTripLegs = getCurrentTripLegs(friend, friendStatuses, destinationAirport, referenceTimeMs);
   const airports = buildAirportChain(currentTripLegs);
@@ -586,6 +588,7 @@ function FriendTimelineCard({
   const cursorFlightNumber = cursorLegIndex != null
     ? currentTripLegs[cursorLegIndex]?.flightNumber ?? activeLegFlightNumber
     : activeLegFlightNumber;
+  const cursorFlightRadarUrl = buildFlightRadarUrl(cursorFlightNumber);
 
   const destinationAirports = parseDestinationAirportCodes(destinationAirport);
   const hasConfiguredDestinationAirports = destinationAirports.length > 0;
@@ -778,7 +781,39 @@ function FriendTimelineCard({
               })()}
 
               {/* Cursor (plane icon) — anchored directly on the current timeline position */}
-              {cursorLeft != null && (
+              {cursorLeft != null && (cursorFlightRadarUrl ? (
+                <button
+                  type="button"
+                  aria-label={`Open ${normalizeFlightRadarFlightNumber(cursorFlightNumber) ?? 'flight'} on Flightradar24`}
+                  title={`Open ${normalizeFlightRadarFlightNumber(cursorFlightNumber) ?? 'flight'} on Flightradar24`}
+                  onClick={() => onOpenFlightLink?.(cursorFlightNumber)}
+                  className="absolute z-10 flex h-5 w-5 items-center justify-center rounded-full border border-cyan-300/80 bg-slate-950/90 shadow-[0_0_0_2px_rgba(8,47,73,0.45)] transition-colors hover:border-cyan-100 hover:bg-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/60"
+                  style={{
+                    left: cursorLeft,
+                    top: '7px',
+                    transform: 'translate(-50%, -50%)',
+                    transition: 'left 0.5s ease',
+                  }}
+                >
+                  {cursorIconMode === 'takeoff' ? (
+                    <PlaneTakeoff
+                      className="h-3 w-3 text-cyan-200 drop-shadow-[0_0_4px_rgba(103,232,249,0.75)]"
+                      aria-label={cursorFlightNumber ? `Flight ${cursorFlightNumber} ready for departure` : 'Departure airport'}
+                    />
+                  ) : cursorIconMode === 'landing' ? (
+                    <PlaneLanding
+                      className="h-3 w-3 text-cyan-200 drop-shadow-[0_0_4px_rgba(103,232,249,0.75)]"
+                      aria-label={cursorFlightNumber ? `Flight ${cursorFlightNumber} arrived` : 'Arrival airport'}
+                    />
+                  ) : (
+                    <Plane
+                      className="h-3 w-3 text-cyan-200 drop-shadow-[0_0_4px_rgba(103,232,249,0.75)]"
+                      style={{ transform: `rotate(${cursorRotationDegrees}deg)` }}
+                      aria-label={cursorFlightNumber ? `Flight ${cursorFlightNumber}` : 'Current position'}
+                    />
+                  )}
+                </button>
+              ) : (
                 <div
                   className="pointer-events-none absolute z-10 flex h-5 w-5 items-center justify-center rounded-full border border-cyan-300/80 bg-slate-950/90 shadow-[0_0_0_2px_rgba(8,47,73,0.45)]"
                   style={{
@@ -806,7 +841,7 @@ function FriendTimelineCard({
                     />
                   )}
                 </div>
-              )}
+              ))}
             </div>
           </div>
 
@@ -1127,6 +1162,21 @@ function FriendsTrackerDashboard({
 
     return result;
   }, [flightColorIndexMap, flightColorMap, friendColorIndexMap, friendColorMap, isWaybackActive, liveTimeMs, mapStatuses]);
+
+  const handleOpenFlightLink = useCallback((flightNumber: string | null | undefined) => {
+    openFlightRadarUrl(flightNumber);
+  }, []);
+
+  const handleMapFlightSelect = useCallback((icao24: string) => {
+    const matchingStatus = mapStatuses.find((status) => status.flight?.icao24 === icao24);
+    const matchingFlight = visibleFlights.find((flight) => flight.icao24 === icao24);
+    const flightNumber = matchingStatus?.leg.flightNumber
+      ?? matchingFlight?.flightNumber
+      ?? matchingFlight?.callsign
+      ?? null;
+
+    openFlightRadarUrl(flightNumber);
+  }, [mapStatuses, visibleFlights]);
 
   const staticFriendMarkers = useMemo<FriendAvatarMarker[]>(() => {
     const airportMarkerByCode = new Map(
@@ -1469,6 +1519,7 @@ function FriendsTrackerDashboard({
             referenceTimeMs={referenceTimeMs}
             airportMarkers={airportMarkers}
             accentColor={friendAccentColors.get(friend.id) ?? resolveFriendAccentColor(friend, index)}
+            onOpenFlightLink={handleOpenFlightLink}
           />
         );
       })}
@@ -1523,6 +1574,7 @@ function FriendsTrackerDashboard({
             staticFriendMarkers={staticFriendMarkers}
             airportMarkers={airportMarkers}
             emptyOverlayMessage={null}
+            onSelectFlight={handleMapFlightSelect}
             onInitialZoomEnd={onMapReady}
           />
         </div>
