@@ -685,7 +685,7 @@ export async function lookupFlightAwareFlightWithReport(
     };
   }
 
-  if (!isFlightAwareConfigured()) {
+  if (!hasFlightAwareCredentials()) {
     return {
       match: null,
       report: createFlightAwareReport(

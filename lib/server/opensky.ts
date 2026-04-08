@@ -9,12 +9,12 @@ import type {
 } from '~/components/tracker/flight/types';
 import {
   lookupAviationstackFlightsWithReport,
-  isAviationstackConfigured,
+  hasAviationstackCredentials,
   type AviationstackFlightEnrichment,
 } from './providers/aviationstack';
 import {
   lookupFlightAwareFlightsWithReport,
-  isFlightAwareConfigured,
+  hasFlightAwareCredentials,
   type FlightAwareFlightEnrichment,
 } from './providers/flightaware';
 import {
@@ -2060,7 +2060,7 @@ export async function searchFlights(query: string, options: SearchFlightsOptions
       );
       return mergeWithDemoPayload(cachedResult);
     } catch (error) {
-      if (!isAviationstackConfigured() && !isFlightAwareConfigured()) {
+      if (!hasAviationstackCredentials() && !hasFlightAwareCredentials()) {
         const historicalOnlyResult = await writeFlightSearchCache(
           cacheKey,
           mergeWithDemoPayload({

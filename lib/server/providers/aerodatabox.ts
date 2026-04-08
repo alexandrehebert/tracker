@@ -636,7 +636,7 @@ export async function lookupAeroDataBoxFlightWithReport(
     };
   }
 
-  if (!isAeroDataBoxConfigured()) {
+  if (!hasAeroDataBoxCredentials()) {
     return {
       match: null,
       report: createAeroDataBoxReport(

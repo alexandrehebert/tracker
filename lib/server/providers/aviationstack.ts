@@ -508,7 +508,7 @@ export async function lookupAviationstackFlightWithReport(identifier: string): P
     };
   }
 
-  if (!isAviationstackConfigured()) {
+  if (!hasAviationstackCredentials()) {
     return {
       match: null,
       report: createAviationstackReport(
