@@ -1,5 +1,6 @@
 import { MongoClient, type Collection } from 'mongodb';
 import { ensureOpenSkyAccessToken, getOpenSkyTokenStatus, searchFlights, type OpenSkyTokenStatus } from './opensky';
+import { withProviderRequestContext } from './providers/observability';
 
 const DEFAULT_DB_NAME = 'tracker';
 const TRACKER_CRON_CONFIG_COLLECTION_NAME = 'tracker_cron_config';
@@ -501,6 +502,21 @@ export async function runTrackerCronJob(options: {
   const results: TrackerCronFlightResult[] = [];
   let runError: string | null = null;
 
+  const withCronProviderContext = <T,>(identifier: string | null, callback: () => Promise<T>) => withProviderRequestContext(
+    {
+      caller: 'cron',
+      source: 'tracker-cron',
+      metadata: {
+        identifier,
+        trigger: options.trigger ?? 'manual-api',
+        requestedBy: typeof options.requestedBy === 'string' && options.requestedBy.trim()
+          ? options.requestedBy.trim()
+          : null,
+      },
+    },
+    callback,
+  );
+
   const persistProgress = async () => {
     await persistTrackerCronRun({
       ...baseRun,
@@ -514,7 +530,7 @@ export async function runTrackerCronJob(options: {
   };
 
   try {
-    await ensureOpenSkyAccessToken(false);
+    await withCronProviderContext(null, () => ensureOpenSkyAccessToken(false));
   } catch (error) {
     runError = error instanceof Error ? error.message : 'Unable to prefetch the OpenSky access token.';
     await persistProgress();
@@ -522,7 +538,7 @@ export async function runTrackerCronJob(options: {
 
   for (const identifier of identifiers) {
     try {
-      const payload = await searchFlights(identifier, { forceRefresh: true });
+      const payload = await withCronProviderContext(identifier, () => searchFlights(identifier, { forceRefresh: true }));
       const normalizedIdentifier = normalizeTrackerCronIdentifier(identifier);
       const matchedIdentifiers = (payload.matchedIdentifiers ?? []).map((value) => normalizeTrackerCronIdentifier(value)).filter(Boolean);
       const matched = matchedIdentifiers.includes(normalizedIdentifier) || payload.flights.length > 0;

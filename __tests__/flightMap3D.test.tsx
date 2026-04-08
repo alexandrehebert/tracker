@@ -1013,7 +1013,9 @@ describe('FlightMap3D', () => {
     const friendOverlay = renderedHtmlElements.find((item: { type?: string; members?: Array<unknown> }) => item.type === 'friend-avatar' && (item.members?.length ?? 0) === 2);
     const friendElement = htmlElementAccessor?.(friendOverlay) as HTMLDivElement | undefined;
     const clusterGrid = friendElement?.querySelector('[data-cluster-layout="split-2"]') as HTMLDivElement | null;
-    const visibleInitials = Array.from(clusterGrid?.querySelectorAll('[data-friend-cluster-segment] span') ?? []);
+    const visibleInitials = Array.from(
+      clusterGrid?.querySelectorAll('[data-friend-cluster-segment] span') ?? [],
+    ) as HTMLSpanElement[];
     const clusterSegments = Array.from(clusterGrid?.querySelectorAll('[data-friend-cluster-segment]') ?? []) as HTMLDivElement[];
 
     expect(clusterGrid).not.toBeNull();

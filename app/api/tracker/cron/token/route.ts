@@ -5,6 +5,7 @@ import {
   refreshOpenSkyAccessToken,
   setStoredOpenSkyAccessToken,
 } from '~/lib/server/providers/opensky';
+import { withProviderRequestContext } from '~/lib/server/providers/observability';
 
 export const runtime = 'nodejs';
 export const dynamic = 'force-dynamic';
@@ -44,10 +45,18 @@ export async function POST(request: NextRequest) {
       includeToken?: boolean;
     };
     const includeAccessToken = shouldIncludeAccessToken(request, body.includeToken);
+    const withConfigContext = <T,>(callback: () => Promise<T>) => withProviderRequestContext(
+      {
+        caller: 'config',
+        source: 'tracker-cron-token',
+        metadata: { action: body.action ?? null },
+      },
+      callback,
+    );
 
     switch (body.action) {
       case 'refresh': {
-        await refreshOpenSkyAccessToken();
+        await withConfigContext(() => refreshOpenSkyAccessToken());
         return buildJsonResponse(await getOpenSkyTokenStatus(includeAccessToken));
       }
       case 'set': {
@@ -55,14 +64,15 @@ export async function POST(request: NextRequest) {
           return buildJsonResponse({ error: 'Provide a non-empty OpenSky access token.' }, 400);
         }
 
-        await setStoredOpenSkyAccessToken(
-          body.accessToken,
+        const accessToken = body.accessToken.trim();
+        await withConfigContext(() => setStoredOpenSkyAccessToken(
+          accessToken,
           typeof body.expiresInSeconds === 'number' ? body.expiresInSeconds : 1800,
-        );
+        ));
         return buildJsonResponse(await getOpenSkyTokenStatus(includeAccessToken));
       }
       case 'clear': {
-        await clearStoredOpenSkyAccessToken();
+        await withConfigContext(() => clearStoredOpenSkyAccessToken());
         return buildJsonResponse(await getOpenSkyTokenStatus(includeAccessToken));
       }
       default:

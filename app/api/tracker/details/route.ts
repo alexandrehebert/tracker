@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getFlightSelectionDetails } from '~/lib/server/flightSelectionDetails'
+import { withProviderRequestContext } from '~/lib/server/providers/observability'
 
 export const runtime = 'nodejs'
 export const dynamic = 'force-dynamic'
@@ -34,14 +35,21 @@ export async function GET(request: NextRequest) {
 
     const forceRefresh = ['1', 'true', 'yes'].includes(request.nextUrl.searchParams.get('refresh')?.trim().toLowerCase() ?? '')
 
-    const payload = await getFlightSelectionDetails({
-      icao24,
-      callsign: request.nextUrl.searchParams.get('callsign')?.trim() ?? null,
-      departureAirport: request.nextUrl.searchParams.get('departureAirport')?.trim() ?? null,
-      arrivalAirport: request.nextUrl.searchParams.get('arrivalAirport')?.trim() ?? null,
-      referenceTime: parseOptionalTimestamp('referenceTime'),
-      lastSeen: parseOptionalTimestamp('lastSeen'),
-    }, { forceRefresh })
+    const payload = await withProviderRequestContext(
+      {
+        caller: 'details',
+        source: 'tracker-details',
+        metadata: { icao24, forceRefresh },
+      },
+      () => getFlightSelectionDetails({
+        icao24,
+        callsign: request.nextUrl.searchParams.get('callsign')?.trim() ?? null,
+        departureAirport: request.nextUrl.searchParams.get('departureAirport')?.trim() ?? null,
+        arrivalAirport: request.nextUrl.searchParams.get('arrivalAirport')?.trim() ?? null,
+        referenceTime: parseOptionalTimestamp('referenceTime'),
+        lastSeen: parseOptionalTimestamp('lastSeen'),
+      }, { forceRefresh }),
+    )
 
     return NextResponse.json(payload, {
       headers: {

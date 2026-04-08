@@ -2,6 +2,7 @@ import { geoNaturalEarth1 } from 'd3-geo';
 import type { FlightSourceDetail } from '~/components/tracker/flight/types';
 import { getProviderDisabledReason, isProviderEnabled } from './index';
 import { isProviderHistoryConfigured, readLatestProviderHistory, writeProviderHistory } from './history';
+import { recordProviderRequestLog } from './observability';
 
 export type AviationstackFlightEnrichment = {
   provider: 'aviationstack';
@@ -288,29 +289,88 @@ async function fetchFlights(params: Record<string, string>): Promise<Aviationsta
     url.searchParams.set(key, value);
   }
 
-  const response = await fetch(url, {
-    cache: 'no-store',
-  });
+  const startedAt = Date.now();
+  const requestDetails = {
+    method: 'GET',
+    url: url.toString(),
+    params,
+  };
+  let payload: AviationstackFlightsResponse | null = null;
+  let responseStatus: number | null = null;
+  let responseStatusText: string | null = null;
 
-  const payload = await response.json().catch(() => ({}) as AviationstackFlightsResponse) as AviationstackFlightsResponse;
-  const errorCode = String(payload.error?.code ?? response.status);
+  try {
+    const response = await fetch(url, {
+      cache: 'no-store',
+    });
 
-  if (!response.ok || payload.error) {
-    if (
-      response.status === 429
-      || errorCode === 'usage_limit_reached'
-      || errorCode === 'rate_limit_reached'
-      || errorCode === '429'
-      || errorCode === 'function_access_restricted'
-    ) {
-      providerCooldownUntil = Date.now() + PROVIDER_COOLDOWN_MS;
-      return [];
+    responseStatus = response.status;
+    responseStatusText = response.statusText;
+    payload = await response.json().catch(() => ({}) as AviationstackFlightsResponse) as AviationstackFlightsResponse;
+    const errorCode = String(payload.error?.code ?? response.status);
+
+    if (!response.ok || payload.error) {
+      if (
+        response.status === 429
+        || errorCode === 'usage_limit_reached'
+        || errorCode === 'rate_limit_reached'
+        || errorCode === '429'
+        || errorCode === 'function_access_restricted'
+      ) {
+        providerCooldownUntil = Date.now() + PROVIDER_COOLDOWN_MS;
+        await recordProviderRequestLog({
+          provider: 'aviationstack',
+          operation: 'lookup-flight',
+          status: 'error',
+          durationMs: Date.now() - startedAt,
+          request: requestDetails,
+          response: {
+            status: response.status,
+            statusText: response.statusText,
+            errorCode,
+            payload,
+          },
+          metadata: { rateLimited: true },
+        });
+        return [];
+      }
+
+      throw new Error(payload.error?.message || `Aviationstack request failed with status ${response.status}`);
     }
 
-    throw new Error(payload.error?.message || `Aviationstack request failed with status ${response.status}`);
-  }
+    const records = Array.isArray(payload.data) ? payload.data : [];
+    await recordProviderRequestLog({
+      provider: 'aviationstack',
+      operation: 'lookup-flight',
+      status: records.length > 0 ? 'success' : 'no-data',
+      durationMs: Date.now() - startedAt,
+      request: requestDetails,
+      response: {
+        status: response.status,
+        statusText: response.statusText,
+        ok: response.ok,
+        returnedRecords: records.length,
+        payload,
+      },
+    });
 
-  return Array.isArray(payload.data) ? payload.data : [];
+    return records;
+  } catch (error) {
+    await recordProviderRequestLog({
+      provider: 'aviationstack',
+      operation: 'lookup-flight',
+      status: 'error',
+      durationMs: Date.now() - startedAt,
+      request: requestDetails,
+      response: {
+        status: responseStatus,
+        statusText: responseStatusText,
+        payload,
+      },
+      error,
+    });
+    throw error;
+  }
 }
 
 function getRecordMatchScore(record: AviationstackFlightRecord, identifier: string): number {

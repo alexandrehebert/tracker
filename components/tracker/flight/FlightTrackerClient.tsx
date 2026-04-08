@@ -45,7 +45,7 @@ const AUTO_REFRESH_MS = 60_000;
 const MIN_MAP_LOADING_MS = 2_000;
 const STORAGE_KEY = 'tracker:last-query';
 const URL_QUERY_KEY = 'q';
-const TRACKER_SOURCES: FlightSourceName[] = ['opensky', 'aviationstack', 'flightaware'];
+const TRACKER_SOURCES: FlightSourceName[] = ['opensky', 'aviationstack', 'flightaware', 'aerodatabox'];
 
 function formatSourceLabel(source: FlightSourceName): string {
   switch (source) {
@@ -53,6 +53,8 @@ function formatSourceLabel(source: FlightSourceName): string {
       return 'FlightAware';
     case 'aviationstack':
       return 'Aviationstack';
+    case 'aerodatabox':
+      return 'AeroDataBox';
     default:
       return 'OpenSky';
   }
@@ -155,6 +157,10 @@ function formatDataSourceLabel(
 
   if (dataSource === 'flightaware') {
     return 'FlightAware';
+  }
+
+  if (dataSource === 'aerodatabox') {
+    return 'AeroDataBox';
   }
 
   return dataSource === 'aviationstack' ? 'Aviationstack' : 'OpenSky';

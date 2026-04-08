@@ -619,7 +619,11 @@ export function FriendsConfigProvider({
     }));
   }
 
-  async function runFlightLegValidation(friendId: string, legId: string): Promise<FlightProviderValidationResult | null> {
+  async function runFlightLegValidation(
+    friendId: string,
+    legId: string,
+    options?: { includeOnDemandProviders?: boolean },
+  ): Promise<FlightProviderValidationResult | null> {
     const activeTrip = selectedTrip;
     const friend = activeTrip?.friends.find((entry) => entry.id === friendId);
     const leg = friend?.flights.find((entry) => entry.id === legId);
@@ -675,6 +679,7 @@ export function FriendsConfigProvider({
           departureTime: leg.departureTime,
           from: leg.from,
           to: leg.to,
+          includeOnDemandProviders: options?.includeOnDemandProviders === true,
         }),
       });
       const payload = await response.json() as Partial<FlightProviderValidationResult> & { error?: string };
@@ -734,7 +739,7 @@ export function FriendsConfigProvider({
   }
 
   async function validateFlightLeg(friendId: string, legId: string) {
-    await runFlightLegValidation(friendId, legId);
+    await runFlightLegValidation(friendId, legId, { includeOnDemandProviders: true });
   }
 
   async function handleValidateSelectedTripFlights() {
@@ -756,7 +761,7 @@ export function FriendsConfigProvider({
     const results: FlightProviderValidationResult[] = [];
     try {
       for (const { friend, leg } of validatableLegs) {
-        const result = await runFlightLegValidation(friend.id, leg.id);
+        const result = await runFlightLegValidation(friend.id, leg.id, { includeOnDemandProviders: false });
         if (result) {
           results.push(result);
         }

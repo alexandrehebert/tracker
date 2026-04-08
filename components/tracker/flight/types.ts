@@ -30,9 +30,9 @@ export interface FlightAircraftDetails {
   model: string | null;
 }
 
-export type FlightDataSource = 'opensky' | 'aviationstack' | 'flightaware' | 'hybrid';
+export type FlightDataSource = 'opensky' | 'aviationstack' | 'flightaware' | 'aerodatabox' | 'hybrid';
 export type FlightFetchTrigger = 'search' | 'auto-refresh' | 'manual-refresh';
-export type FlightSourceName = 'opensky' | 'aviationstack' | 'flightaware';
+export type FlightSourceName = 'opensky' | 'aviationstack' | 'flightaware' | 'aerodatabox';
 export type FlightSourceStatus = 'used' | 'no-data' | 'skipped' | 'error';
 
 export interface FlightSourceDetail {

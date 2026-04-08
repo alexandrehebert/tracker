@@ -21,6 +21,12 @@ Open `http://localhost:4109`.
 This starts the app locally with Docker Compose in development mode (`next dev`) with auto-reload.
 It also starts a small `tracker-cron` sidecar that calls `/api/tracker/cron` automatically every 15 minutes so the Mongo-backed flight cache stays warm locally too.
 
+### Optional schedule-validation providers
+
+- `RAPIDAPI_AERODATABOX_API_KEY` enables the quota-aware AeroDataBox lookup for the per-flight `Validate flight` action on `/[locale]/chantal/config`.
+- The bulk `Validate flights` action intentionally skips AeroDataBox so low-volume plans (for example `1 req/s`, `300 calls/month`) are only consumed on explicit clicks.
+- `AERODATABOX_MIN_REQUEST_GAP_MS` defaults to `1200` to stay under a `1 call / second` cap, and `AERODATABOX_CACHE_TTL_SECONDS` defaults to `43200` (12h) to reduce repeated lookups.
+
 If you explicitly need a non-Docker workflow for local development:
 
 ```bash

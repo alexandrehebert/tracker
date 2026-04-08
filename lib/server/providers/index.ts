@@ -2,16 +2,18 @@ import type { FlightSourceName } from '~/components/tracker/flight/types';
 
 export type ProviderName = FlightSourceName;
 
-const ALL_PROVIDERS = ['opensky', 'flightaware', 'aviationstack'] as const satisfies readonly ProviderName[];
+export const ALL_PROVIDERS = ['opensky', 'flightaware', 'aviationstack', 'aerodatabox'] as const satisfies readonly ProviderName[];
 const PROVIDER_DISABLE_ENV: Record<ProviderName, string> = {
   opensky: 'OPENSKY_DISABLED',
   flightaware: 'FLIGHTAWARE_DISABLED',
   aviationstack: 'AVIATIONSTACK_DISABLED',
+  aerodatabox: 'AERODATABOX_DISABLED',
 };
 const PROVIDER_LABELS: Record<ProviderName, string> = {
   opensky: 'OpenSky',
   flightaware: 'FlightAware',
   aviationstack: 'Aviationstack',
+  aerodatabox: 'AeroDataBox',
 };
 const ENABLED_PROVIDER_ENV_KEYS = ['ENABLED_API_PROVIDERS', 'TRACKER_ENABLED_PROVIDERS'] as const;
 const DISABLED_PROVIDER_ENV_KEYS = ['DISABLED_API_PROVIDERS', 'TRACKER_DISABLED_PROVIDERS'] as const;
@@ -84,4 +86,8 @@ export function isProviderEnabled(name: ProviderName): boolean {
 
 export function getEnabledProviders(): ProviderName[] {
   return [...ALL_PROVIDERS].filter(isProviderEnabled);
+}
+
+export function getProviderLabel(name: ProviderName): string {
+  return PROVIDER_LABELS[name];
 }

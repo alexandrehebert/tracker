@@ -2,6 +2,7 @@ import { geoNaturalEarth1 } from 'd3-geo';
 import type { FlightSourceDetail } from '~/components/tracker/flight/types';
 import { getProviderDisabledReason, isProviderEnabled } from './index';
 import { isProviderHistoryConfigured, readLatestProviderHistory, writeProviderHistory } from './history';
+import { recordProviderRequestLog } from './observability';
 
 export type FlightAwareFlightEnrichment = {
   provider: 'flightaware';
@@ -362,35 +363,109 @@ async function fetchFlightAware<T>(pathname: string, searchParams?: Record<strin
   }
 
   return enqueueFlightAwareRequest(url.toString(), async () => {
-    const response = await fetch(url, {
-      headers: {
-        Accept: 'application/json',
-        'x-apikey': apiKey,
-      },
-      cache: 'no-store',
-    });
+    const startedAt = Date.now();
+    const requestDetails = {
+      method: 'GET',
+      url: url.toString(),
+      pathname,
+      params: searchParams ?? null,
+    };
+    let payload: Record<string, unknown> | null = null;
+    let responseStatus: number | null = null;
+    let responseStatusText: string | null = null;
 
-    if (response.status === 404) {
-      return null;
-    }
+    try {
+      const response = await fetch(url, {
+        headers: {
+          Accept: 'application/json',
+          'x-apikey': apiKey,
+        },
+        cache: 'no-store',
+      });
 
-    const payload = await response.json().catch(() => ({})) as Record<string, unknown>;
-    if (!response.ok) {
-      const message = typeof payload.message === 'string'
-        ? payload.message
-        : typeof payload.error === 'string'
-          ? payload.error
-          : `FlightAware request failed with status ${response.status}`;
+      responseStatus = response.status;
+      responseStatusText = response.statusText;
 
-      if (response.status === 402 || response.status === 429 || /(rate|quota|credit|limit)/i.test(message)) {
-        providerCooldownUntil = Date.now() + getRateLimitCooldownMs(response, payload);
+      if (response.status === 404) {
+        await recordProviderRequestLog({
+          provider: 'flightaware',
+          operation: 'lookup-flight',
+          status: 'no-data',
+          durationMs: Date.now() - startedAt,
+          request: requestDetails,
+          response: {
+            status: response.status,
+            statusText: response.statusText,
+          },
+        });
         return null;
       }
 
-      throw new Error(message);
-    }
+      payload = await response.json().catch(() => ({})) as Record<string, unknown>;
+      if (!response.ok) {
+        const message = typeof payload.message === 'string'
+          ? payload.message
+          : typeof payload.error === 'string'
+            ? payload.error
+            : `FlightAware request failed with status ${response.status}`;
 
-    return payload as T;
+        if (response.status === 402 || response.status === 429 || /(rate|quota|credit|limit)/i.test(message)) {
+          providerCooldownUntil = Date.now() + getRateLimitCooldownMs(response, payload);
+          await recordProviderRequestLog({
+            provider: 'flightaware',
+            operation: 'lookup-flight',
+            status: 'error',
+            durationMs: Date.now() - startedAt,
+            request: requestDetails,
+            response: {
+              status: response.status,
+              statusText: response.statusText,
+              payload,
+            },
+            metadata: { rateLimited: true },
+          });
+          return null;
+        }
+
+        throw new Error(message);
+      }
+
+      const flightCount = Array.isArray((payload as FlightAwareFlightsResponse).flights)
+        ? (payload as FlightAwareFlightsResponse).flights!.length
+        : 0;
+
+      await recordProviderRequestLog({
+        provider: 'flightaware',
+        operation: 'lookup-flight',
+        status: flightCount > 0 ? 'success' : 'no-data',
+        durationMs: Date.now() - startedAt,
+        request: requestDetails,
+        response: {
+          status: response.status,
+          statusText: response.statusText,
+          ok: response.ok,
+          flightCount,
+          payload,
+        },
+      });
+
+      return payload as T;
+    } catch (error) {
+      await recordProviderRequestLog({
+        provider: 'flightaware',
+        operation: 'lookup-flight',
+        status: 'error',
+        durationMs: Date.now() - startedAt,
+        request: requestDetails,
+        response: {
+          status: responseStatus,
+          statusText: responseStatusText,
+          payload,
+        },
+        error,
+      });
+      throw error;
+    }
   });
 }
 

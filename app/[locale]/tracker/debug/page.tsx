@@ -32,6 +32,12 @@ export default async function TrackerDebugPage({ params }: TrackerDebugPageProps
           >
             Open cron admin
           </Link>
+          <Link
+            href="/tracker/providers"
+            className="inline-flex items-center rounded-full border border-emerald-400/40 bg-emerald-500/10 px-3 py-1.5 text-sm text-emerald-100 transition hover:bg-emerald-500/20"
+          >
+            Provider metrics
+          </Link>
         </div>
 
         <div className="mt-5">

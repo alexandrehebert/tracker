@@ -2,7 +2,10 @@ import { NextRequest, NextResponse } from 'next/server';
 import { findMatchingTrackedFlightForLeg, normalizeFriendFlightIdentifier, type FriendFlightLeg } from '~/lib/friendsTracker';
 import { searchFlights } from '~/lib/server/opensky';
 import { lookupAviationstackFlightWithReport } from '~/lib/server/providers/aviationstack';
+import { lookupAeroDataBoxFlightWithReport } from '~/lib/server/providers/aerodatabox';
 import { lookupFlightAwareFlightWithReport } from '~/lib/server/providers/flightaware';
+import { getProviderLabel } from '~/lib/server/providers';
+import { withProviderRequestContext } from '~/lib/server/providers/observability';
 import type { FlightSourceDetail, TrackedFlight } from '~/components/tracker/flight/types';
 
 export const runtime = 'nodejs';
@@ -18,10 +21,6 @@ function toTimestampMs(value: number | null | undefined): number | null {
   return typeof value === 'number' && Number.isFinite(value) ? value * 1000 : null;
 }
 
-function capitalize(value: string): string {
-  return value ? value.charAt(0).toUpperCase() + value.slice(1) : value;
-}
-
 function sanitizeIcao24(value: string | null | undefined): string | null {
   const normalized = normalizeFriendFlightIdentifier(value ?? null);
   return /^[0-9A-F]{6}$/.test(normalized) ? normalized : null;
@@ -33,7 +32,16 @@ function buildProviderLabel(sourceDetails: FlightSourceDetail[]): string {
     return 'Tracker search';
   }
 
-  return usedSources.map((source) => capitalize(source)).join(' + ');
+  return usedSources.map((source) => getProviderLabel(source)).join(' + ');
+}
+
+function createSkippedReport(source: FlightSourceDetail['source'], reason: string): FlightSourceDetail {
+  return {
+    source,
+    status: 'skipped',
+    usedInResult: false,
+    reason,
+  };
 }
 
 type ValidationCandidate = {
@@ -104,6 +112,7 @@ export async function POST(request: NextRequest) {
       from?: string | null;
       to?: string | null;
       legId?: string | null;
+      includeOnDemandProviders?: boolean | null;
     };
 
     const identifier = normalizeFriendFlightIdentifier(body.identifier ?? body.flightNumber ?? null);
@@ -115,13 +124,37 @@ export async function POST(request: NextRequest) {
     const departureTimeMs = departureTime ? Date.parse(departureTime) : Number.NaN;
     const from = normalizeAirportCode(body.from);
     const to = normalizeAirportCode(body.to);
+    const includeOnDemandProviders = body.includeOnDemandProviders === true;
+    const withConfigContext = <T,>(callback: () => Promise<T>) => withProviderRequestContext(
+      {
+        caller: 'config',
+        source: 'chantal-validate-flight',
+        metadata: {
+          identifier,
+          legId: typeof body.legId === 'string' ? body.legId : null,
+          includeOnDemandProviders,
+        },
+      },
+      callback,
+    );
 
-    const [flightAwareLookup, aviationstackLookup] = await Promise.all([
+    const [flightAwareLookup, aviationstackLookup, aeroDataBoxLookup] = await withConfigContext(() => Promise.all([
       lookupFlightAwareFlightWithReport(identifier, {
         referenceTimeMs: Number.isFinite(departureTimeMs) ? departureTimeMs : undefined,
       }),
       lookupAviationstackFlightWithReport(identifier),
-    ]);
+      includeOnDemandProviders
+        ? lookupAeroDataBoxFlightWithReport(identifier, {
+            referenceTimeMs: Number.isFinite(departureTimeMs) ? departureTimeMs : undefined,
+          })
+        : Promise.resolve({
+            match: null,
+            report: createSkippedReport(
+              'aerodatabox',
+              'AeroDataBox is reserved for the per-flight “Validate flight” button so the RapidAPI quota is only used on demand.',
+            ),
+          }),
+    ]));
 
     const candidates: ValidationCandidate[] = [];
 
@@ -153,6 +186,20 @@ export async function POST(request: NextRequest) {
       });
     }
 
+    if (aeroDataBoxLookup.match) {
+      candidates.push({
+        providerLabel: 'AeroDataBox',
+        matchedIcao24: sanitizeIcao24(aeroDataBoxLookup.match.aircraft?.icao24),
+        matchedFlightNumber: aeroDataBoxLookup.match.flightNumber ?? aeroDataBoxLookup.match.callsign ?? null,
+        matchedDepartureTime: toTimestampMs(aeroDataBoxLookup.match.route.firstSeen),
+        matchedArrivalTime: toTimestampMs(aeroDataBoxLookup.match.route.lastSeen),
+        matchedDepartureAirport: normalizeAirportCode(aeroDataBoxLookup.match.route.departureAirport),
+        matchedArrivalAirport: normalizeAirportCode(aeroDataBoxLookup.match.route.arrivalAirport),
+        message: aeroDataBoxLookup.report.reason,
+        sourceDetails: [aeroDataBoxLookup.report],
+      });
+    }
+
     const requestedLeg: FriendFlightLeg = {
       id: typeof body.legId === 'string' ? body.legId : 'validation-leg',
       flightNumber: identifier,
@@ -166,7 +213,7 @@ export async function POST(request: NextRequest) {
     };
 
     try {
-      const trackerPayload = await searchFlights(identifier, { forceRefresh: true });
+      const trackerPayload = await withConfigContext(() => searchFlights(identifier, { forceRefresh: true }));
       const liveMatch = findMatchingTrackedFlightForLeg(trackerPayload.flights ?? [], requestedLeg);
       if (liveMatch) {
         candidates.push(buildCandidateFromLiveMatch(liveMatch));
@@ -176,11 +223,15 @@ export async function POST(request: NextRequest) {
     }
 
     if (candidates.length === 0) {
-      const reports = [flightAwareLookup.report, aviationstackLookup.report];
+      const reports = [
+        flightAwareLookup.report,
+        aviationstackLookup.report,
+        ...(includeOnDemandProviders ? [aeroDataBoxLookup.report] : []),
+      ];
       const hasError = reports.some((report) => report.status === 'error');
       const hasSkipped = reports.every((report) => report.status === 'skipped');
       const message = reports
-        .map((report) => `${capitalize(report.source)}: ${report.reason}`)
+        .map((report) => `${getProviderLabel(report.source)}: ${report.reason}`)
         .join(' ');
 
       return NextResponse.json({

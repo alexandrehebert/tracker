@@ -593,6 +593,65 @@ describe('FriendsConfigClient', () => {
     expect(await screen.findByText(/Arrival:/i)).toBeInTheDocument();
   });
 
+  it('marks single-flight validation as on-demand so premium providers stay click-only', async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.mocked(window.fetch);
+
+    fetchMock.mockImplementation(async (input, init) => {
+      const url = typeof input === 'string'
+        ? input
+        : input instanceof URL
+          ? input.toString()
+          : input.url;
+
+      if (url.includes('/api/airports')) {
+        return new Response(JSON.stringify(airportDirectoryResponse), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      if (url.includes('/api/chantal/validate-flight')) {
+        return new Response(JSON.stringify({
+          status: 'matched',
+          message: 'AeroDataBox matched AF123. Departure is +5 min vs the configured schedule. ICAO24 3C675A is available.',
+          providerLabel: 'AeroDataBox',
+          matchedIcao24: '3C675A',
+          matchedFlightNumber: 'AF123',
+          matchedDepartureTime: Date.parse('2026-04-14T09:35:00.000Z'),
+          matchedArrivalTime: Date.parse('2026-04-14T11:10:00.000Z'),
+          departureDeltaMinutes: 5,
+          matchedRoute: 'CDG → AMS',
+          lastCheckedAt: Date.now(),
+        }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      return new Response(JSON.stringify(initialConfig), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    });
+
+    render(<FriendsConfigClient initialConfig={initialConfig} initialCronDashboard={initialCronDashboard} />);
+
+    const aliceCard = screen.getByDisplayValue('Alice').closest('section');
+    expect(aliceCard).not.toBeNull();
+
+    await user.click(within(aliceCard as HTMLElement).getByRole('button', { name: /validate flight for leg 1/i }));
+
+    await screen.findByText(/Schedule match confirmed/i);
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith('/api/chantal/validate-flight', expect.objectContaining({
+        method: 'POST',
+        body: expect.stringContaining('"includeOnDemandProviders":true'),
+      }));
+    });
+  });
+
   it('enables save only when there are pending changes', async () => {
     const user = userEvent.setup();
 

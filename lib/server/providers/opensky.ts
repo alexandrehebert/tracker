@@ -4,6 +4,7 @@ import { geoNaturalEarth1 } from 'd3-geo';
 import type { AirportDetails, FlightMapPoint, TrackedFlightRoute } from '~/components/tracker/flight/types';
 import { guessNearestAirportDetails } from '~/lib/server/airports';
 import { getProviderDisabledReason, isProviderEnabled } from './index';
+import { recordProviderRequestLog } from './observability';
 
 const DEFAULT_DB_NAME = 'tracker';
 const OPENSKY_TOKEN_COLLECTION_NAME = 'opensky_token_cache';
@@ -869,55 +870,102 @@ async function getAccessToken(forceRefresh = false): Promise<string> {
         tokenRequestBody.set('client_secret', credentials.clientSecret);
       }
 
-      const response = await fetchWithOpenSkyTransportRetry(
-        tokenUrl,
-        {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/x-www-form-urlencoded',
-            Accept: 'application/json',
-            ...buildOpenSkyProxyHeaders(),
-          },
-          body: tokenRequestBody,
-          cache: 'no-store',
+      const startedAt = Date.now();
+      const requestDetails = {
+        method: 'POST',
+        url: tokenUrl,
+        body: {
+          grant_type: 'client_credentials',
+          client_id: credentials.clientId ? '[configured]' : null,
+          client_secret: credentials.clientSecret ? '[configured]' : null,
         },
-        'auth',
-        tokenUrl,
-      );
+      };
+      let responseStatus: number | null = null;
+      let responseStatusText: string | null = null;
+      let bodyPreview: string | null = null;
 
-      if (!response.ok) {
-        const bodyPreview = await readResponsePreview(response);
-        const statusSummary = [response.status, response.statusText].filter(Boolean).join(' ');
-        const message = bodyPreview
-          ? `OpenSky auth failed with status ${statusSummary}: ${bodyPreview}`
-          : `OpenSky auth failed with status ${statusSummary}`;
-
-        throw createOpenSkyError(message, compactRecord({
-          stage: 'auth',
-          url: tokenUrl,
-          status: response.status,
-          statusText: response.statusText,
-          bodyPreview,
-        }));
-      }
-
-      const payload = await response.json() as { access_token?: string; expires_in?: number };
-      if (!payload.access_token) {
-        throw createOpenSkyError(
-          'OpenSky auth response did not include an access token.',
-          { stage: 'auth', url: tokenUrl },
+      try {
+        const response = await fetchWithOpenSkyTransportRetry(
+          tokenUrl,
+          {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/x-www-form-urlencoded',
+              Accept: 'application/json',
+              ...buildOpenSkyProxyHeaders(),
+            },
+            body: tokenRequestBody,
+            cache: 'no-store',
+          },
+          'auth',
+          tokenUrl,
         );
+
+        responseStatus = response.status;
+        responseStatusText = response.statusText;
+
+        if (!response.ok) {
+          bodyPreview = await readResponsePreview(response.clone());
+          const statusSummary = [response.status, response.statusText].filter(Boolean).join(' ');
+          const message = bodyPreview
+            ? `OpenSky auth failed with status ${statusSummary}: ${bodyPreview}`
+            : `OpenSky auth failed with status ${statusSummary}`;
+
+          throw createOpenSkyError(message, compactRecord({
+            stage: 'auth',
+            url: tokenUrl,
+            status: response.status,
+            statusText: response.statusText,
+            bodyPreview,
+          }));
+        }
+
+        const payload = await response.json() as { access_token?: string; expires_in?: number };
+        if (!payload.access_token) {
+          throw createOpenSkyError(
+            'OpenSky auth response did not include an access token.',
+            { stage: 'auth', url: tokenUrl },
+          );
+        }
+
+        await recordProviderRequestLog({
+          provider: 'opensky',
+          operation: 'auth-token',
+          status: 'success',
+          durationMs: Date.now() - startedAt,
+          request: requestDetails,
+          response: {
+            status: response.status,
+            statusText: response.statusText,
+            expiresInSeconds: payload.expires_in ?? null,
+          },
+        });
+
+        const nextToken = createCachedOpenSkyToken({
+          accessToken: payload.access_token,
+          expiresAt: Date.now() + (payload.expires_in ?? 1800) * 1000,
+          storageSource: 'oauth',
+        });
+
+        tokenCache = nextToken;
+        await persistOpenSkyToken(nextToken);
+        return nextToken;
+      } catch (error) {
+        await recordProviderRequestLog({
+          provider: 'opensky',
+          operation: 'auth-token',
+          status: 'error',
+          durationMs: Date.now() - startedAt,
+          request: requestDetails,
+          response: {
+            status: responseStatus,
+            statusText: responseStatusText,
+            bodyPreview,
+          },
+          error,
+        });
+        throw error;
       }
-
-      const nextToken = createCachedOpenSkyToken({
-        accessToken: payload.access_token,
-        expiresAt: Date.now() + (payload.expires_in ?? 1800) * 1000,
-        storageSource: 'oauth',
-      });
-
-      tokenCache = nextToken;
-      await persistOpenSkyToken(nextToken);
-      return nextToken;
     })().finally(() => {
       tokenFetchPromise = null;
     });
@@ -974,35 +1022,101 @@ export async function fetchOpenSky<T>(pathname: string, searchParams?: Record<st
     );
   };
 
-  let response = await execute(false);
+  const startedAt = Date.now();
+  const requestDetails = {
+    method: 'GET',
+    url: makeUrl().toString(),
+    pathname,
+    params: searchParams ?? null,
+  };
+  let responseStatus: number | null = null;
+  let responseStatusText: string | null = null;
+  let bodyPreview: string | null = null;
+  let refreshedAfter401 = false;
 
-  if (response.status === 401) {
-    response = await execute(true);
+  try {
+    let response = await execute(false);
+    responseStatus = response.status;
+    responseStatusText = response.statusText;
+
+    if (response.status === 401) {
+      refreshedAfter401 = true;
+      response = await execute(true);
+      responseStatus = response.status;
+      responseStatusText = response.statusText;
+    }
+
+    if (response.status === 404) {
+      await recordProviderRequestLog({
+        provider: 'opensky',
+        operation: `api:${pathname}`,
+        status: 'no-data',
+        durationMs: Date.now() - startedAt,
+        request: requestDetails,
+        response: {
+          status: response.status,
+          statusText: response.statusText,
+        },
+        metadata: { refreshedAfter401 },
+      });
+      return null as T;
+    }
+
+    if (!response.ok) {
+      bodyPreview = await readResponsePreview(response.clone());
+      const statusSummary = [response.status, response.statusText].filter(Boolean).join(' ');
+      const message = bodyPreview
+        ? `OpenSky request failed for ${pathname} with status ${statusSummary}: ${bodyPreview}`
+        : `OpenSky request failed for ${pathname} with status ${statusSummary}`;
+
+      throw createOpenSkyError(message, compactRecord({
+        stage: 'request',
+        pathname,
+        url: response.url || makeUrl().toString(),
+        status: response.status,
+        statusText: response.statusText,
+        bodyPreview,
+        searchParams,
+      }));
+    }
+
+    const payload = await response.json() as T;
+    const successStatus = Array.isArray(payload)
+      ? (payload.length > 0 ? 'success' : 'no-data')
+      : 'success';
+
+    await recordProviderRequestLog({
+      provider: 'opensky',
+      operation: `api:${pathname}`,
+      status: successStatus,
+      durationMs: Date.now() - startedAt,
+      request: requestDetails,
+      response: {
+        status: response.status,
+        statusText: response.statusText,
+        payload,
+      },
+      metadata: { refreshedAfter401 },
+    });
+
+    return payload;
+  } catch (error) {
+    await recordProviderRequestLog({
+      provider: 'opensky',
+      operation: `api:${pathname}`,
+      status: 'error',
+      durationMs: Date.now() - startedAt,
+      request: requestDetails,
+      response: {
+        status: responseStatus,
+        statusText: responseStatusText,
+        bodyPreview,
+      },
+      metadata: { refreshedAfter401 },
+      error,
+    });
+    throw error;
   }
-
-  if (response.status === 404) {
-    return null as T;
-  }
-
-  if (!response.ok) {
-    const bodyPreview = await readResponsePreview(response);
-    const statusSummary = [response.status, response.statusText].filter(Boolean).join(' ');
-    const message = bodyPreview
-      ? `OpenSky request failed for ${pathname} with status ${statusSummary}: ${bodyPreview}`
-      : `OpenSky request failed for ${pathname} with status ${statusSummary}`;
-
-    throw createOpenSkyError(message, compactRecord({
-      stage: 'request',
-      pathname,
-      url: response.url || makeUrl().toString(),
-      status: response.status,
-      statusText: response.statusText,
-      bodyPreview,
-      searchParams,
-    }));
-  }
-
-  return response.json() as Promise<T>;
 }
 
 export function isOpenSkyConfigured(): boolean {
