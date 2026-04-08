@@ -381,6 +381,24 @@ describe('FlightMap2D', () => {
     expect(screen.getByText('CDG')).toBeInTheDocument();
   });
 
+  it('highlights destination airports in yellow on the shared map', () => {
+    const { container } = renderMap(false, {
+      airportMarkers: [
+        airportMarkers[0]!,
+        {
+          ...airportMarkers[1]!,
+          isDestination: true,
+        } as FlightMapAirportMarker & { isDestination: boolean },
+      ],
+    });
+
+    const airportCircles = Array.from(container.querySelectorAll('g[opacity="0.98"] circle'));
+
+    expect(airportCircles).toHaveLength(2);
+    expect(airportCircles[0]).toHaveAttribute('fill', '#a855f7');
+    expect(airportCircles[1]).toHaveAttribute('fill', '#fbbf24');
+  });
+
   it('renders tailored layouts for 2, 3, 4, and 5-plus friend clusters', () => {
     const { container } = renderMap(false, {
       staticFriendMarkers: [

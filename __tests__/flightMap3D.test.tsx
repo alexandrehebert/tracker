@@ -818,6 +818,50 @@ describe('FlightMap3D', () => {
     expect(renderedHtmlElements.some((item: { type?: string; usage?: string; code?: string }) => item.type === 'airport' && item.usage === 'arrival' && item.code === 'CDG')).toBe(true);
   });
 
+  it('colors destination airport overlays yellow in all-flight mode', async () => {
+    const { globe } = createGlobeMock();
+    globeFactory.mockReturnValue(() => globe);
+
+    render(
+      <TrackerMapProvider
+        value={{
+          globeRef: { current: null },
+          setGlobeRef: vi.fn(),
+          svgRef: { current: null },
+          mapTransform: { x: 0, y: 0, k: 1, apply: vi.fn(), applyX: vi.fn(), applyY: vi.fn(), invert: vi.fn(), invertX: vi.fn(), invertY: vi.fn(), rescaleX: vi.fn(), rescaleY: vi.fn(), scale: vi.fn(), translate: vi.fn(), toString: vi.fn(() => 'translate(0,0) scale(1)') },
+          zoomBy: vi.fn(),
+          resetZoom: vi.fn(),
+        }}
+      >
+        <FlightMap3D
+          flights={[trackedFlight]}
+          selectedIcao24={null}
+          selectionMode="all"
+          airportMarkers={[
+            airportMarkers[0]!,
+            {
+              ...airportMarkers[1]!,
+              isDestination: true,
+            } as FlightMapAirportMarker & { isDestination: boolean },
+          ]}
+        />
+      </TrackerMapProvider>,
+    );
+
+    await waitFor(() => {
+      expect(globe.htmlElementsData).toHaveBeenCalled();
+    });
+
+    const renderedHtmlElements = globe.htmlElementsData.mock.calls.at(-1)?.[0] ?? [];
+    const destinationAirport = renderedHtmlElements.find(
+      (item: { type?: string; code?: string }) => item.type === 'airport' && item.code === 'CDG',
+    );
+
+    expect(destinationAirport).toMatchObject({
+      color: '#fbbf24',
+    });
+  });
+
   it('renders friend avatars above airport pins on the globe', async () => {
     const { globe } = createGlobeMock();
     globeFactory.mockReturnValue(() => globe);

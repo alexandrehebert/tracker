@@ -617,6 +617,10 @@ function FriendTimelineCard({
 
   const initials = getFriendInitials(friend.name);
   const hasAnyMatch = friendStatuses.some((s) => s.status === 'matched');
+  const isPinnedNonTraveler = currentTripLegs.length === 0
+    && Boolean(configuredCurrentAirport)
+    && !hasAnyMatch
+    && lastContactSeconds == null;
 
   return (
     <article className="rounded-2xl border border-white/10 bg-slate-950/55 p-3">
@@ -649,14 +653,20 @@ function FriendTimelineCard({
         <div className="min-w-0 flex-1">
           <div className="truncate text-sm font-semibold text-white">{friend.name}</div>
           <div className="text-[11px] text-slate-400">
-            {currentTripLegs.length} leg{currentTripLegs.length === 1 ? '' : 's'}
-            {configuredCurrentAirport ? (
-              <span className="ml-1 text-slate-500">· at {configuredCurrentAirport}</span>
-            ) : hasConfiguredDestinationAirports ? (
-              <span className="ml-1 text-slate-500">
-                · {tripProgressLabel}
-              </span>
-            ) : null}
+            {isPinnedNonTraveler ? (
+              <span>At {configuredCurrentAirport}</span>
+            ) : (
+              <>
+                {currentTripLegs.length} leg{currentTripLegs.length === 1 ? '' : 's'}
+                {configuredCurrentAirport ? (
+                  <span className="ml-1 text-slate-500">· at {configuredCurrentAirport}</span>
+                ) : hasConfiguredDestinationAirports ? (
+                  <span className="ml-1 text-slate-500">
+                    · {tripProgressLabel}
+                  </span>
+                ) : null}
+              </>
+            )}
           </div>
         </div>
 
@@ -665,11 +675,11 @@ function FriendTimelineCard({
             <Clock3 className="h-3 w-3" />
             <span>{formatRelativeSeconds(lastContactSeconds, referenceTimeMs)}</span>
           </div>
-        ) : (
+        ) : !isPinnedNonTraveler ? (
           <div className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold ${hasAnyMatch ? 'bg-emerald-500/20 text-emerald-200' : 'bg-slate-700/60 text-slate-400'}`}>
             {hasAnyMatch ? 'live' : 'awaiting'}
           </div>
-        )}
+        ) : null}
       </div>
 
       {/* Horizontal timeline */}
@@ -815,7 +825,7 @@ function FriendTimelineCard({
             </div>
           ) : null}
         </div>
-      ) : (
+      ) : !isPinnedNonTraveler ? (
         <div className="mt-2 text-xs text-slate-500 italic">
           {airports.length === 1
             ? `Origin: ${airports[0]}`
@@ -823,7 +833,7 @@ function FriendTimelineCard({
               ? `Current airport: ${configuredCurrentAirport}`
               : 'No airport data configured for this trip.'}
         </div>
-      )}
+      ) : null}
     </article>
   );
 }

@@ -118,6 +118,7 @@ export interface FlightMapAirportMarker {
   latitude: number;
   longitude: number;
   usage: FlightMapAirportUsage;
+  isDestination?: boolean;
 }
 
 export interface AirportDirectoryResponse {

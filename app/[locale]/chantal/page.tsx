@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
 import type { FlightMapAirportMarker } from '~/components/tracker/flight/types';
 import FriendsTrackerClient from '~/components/tracker/friends/FriendsTrackerClient';
-import type { FriendsTrackerConfig } from '~/lib/friendsTracker';
+import { parseDestinationAirportCodes, type FriendsTrackerConfig } from '~/lib/friendsTracker';
 import { isValidLocale } from '~/i18n/routing';
 import { lookupAirportDetails } from '~/lib/server/airports';
 import { readFriendsTrackerConfig } from '~/lib/server/friendsTracker';
@@ -20,6 +20,7 @@ function normalizeAirportCode(value: string | null | undefined): string {
 
 async function resolveChantalAirportMarkers(config: FriendsTrackerConfig): Promise<FlightMapAirportMarker[]> {
   const requestedAirports = new Map<string, { departure: boolean; arrival: boolean; pinned: boolean }>();
+  const destinationAirports = new Set(parseDestinationAirportCodes(config.destinationAirport));
 
   for (const friend of config.friends) {
     const currentAirportCode = normalizeAirportCode(friend.currentAirport);
@@ -56,6 +57,8 @@ async function resolveChantalAirportMarkers(config: FriendsTrackerConfig): Promi
       const label = [airport.city, airport.name]
         .filter((value): value is string => Boolean(value))
         .join(' — ') || airport.name || airport.code;
+      const isDestination = [code, airport.iata, airport.icao, airport.code]
+        .some((candidate) => Boolean(candidate && destinationAirports.has(normalizeAirportCode(candidate))));
 
       return {
         id: `chantal-airport-${code.toLowerCase()}`,
@@ -70,12 +73,19 @@ async function resolveChantalAirportMarkers(config: FriendsTrackerConfig): Promi
             : usage.arrival
               ? 'arrival'
               : 'both',
+        isDestination,
       } satisfies FlightMapAirportMarker;
     }),
   );
 
-  return markers
-    .filter((marker): marker is FlightMapAirportMarker => Boolean(marker))
+  const resolvedMarkers: FlightMapAirportMarker[] = [];
+  for (const marker of markers) {
+    if (marker) {
+      resolvedMarkers.push(marker);
+    }
+  }
+
+  return resolvedMarkers
     .sort((left, right) => left.code.localeCompare(right.code, 'en', { sensitivity: 'base' }));
 }
 

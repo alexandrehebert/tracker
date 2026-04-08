@@ -19,6 +19,7 @@ const ROUTE_SHADOW_ALTITUDE = COUNTRY_ALTITUDE + 0.0008;
 const DEPARTURE_MARKER_COLOR = '#f59e0b';
 const ARRIVAL_MARKER_COLOR = '#22d3ee';
 const SHARED_AIRPORT_MARKER_COLOR = '#a855f7';
+const DESTINATION_AIRPORT_MARKER_COLOR = '#fbbf24';
 const DEPARTURE_MARKER_ALTITUDE = COUNTRY_ALTITUDE + 0.006;
 const PATH_ALTITUDE_OFFSET = 0.006;
 const FORECAST_PATH_ALTITUDE = COUNTRY_ALTITUDE + 0.0016;
@@ -175,6 +176,7 @@ interface GlobeAirportMarkerDatum {
   altitude: number;
   color: string;
   usage: FlightMapAirportMarker['usage'];
+  isDestination?: boolean;
 }
 
 interface GlobeFriendAvatarDatum {
@@ -338,8 +340,8 @@ function clamp(value: number, min: number, max: number): number {
   return Math.min(Math.max(value, min), max);
 }
 
-function getSharedAirportMarkerColor(): string {
-  return SHARED_AIRPORT_MARKER_COLOR;
+function getSharedAirportMarkerColor(airport: FlightMapAirportMarker): string {
+  return airport.isDestination ? DESTINATION_AIRPORT_MARKER_COLOR : SHARED_AIRPORT_MARKER_COLOR;
 }
 
 function unwrapLongitude(value: number, reference: number): number {
@@ -991,8 +993,9 @@ export default function FlightMap3D({
       lat: airport.latitude,
       lng: airport.longitude,
       altitude: DEPARTURE_MARKER_ALTITUDE + 0.003,
-      color: getSharedAirportMarkerColor(),
+      color: getSharedAirportMarkerColor(airport),
       usage: airport.usage,
+      isDestination: airport.isDestination,
     })) satisfies GlobeAirportMarkerDatum[];
   }, [airportMarkers]);
 

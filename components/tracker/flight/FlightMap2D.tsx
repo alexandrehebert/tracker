@@ -35,6 +35,7 @@ const COUNTRY_FILL = 'rgba(12,38,66,0.68)';
 const COUNTRY_STROKE = 'rgba(147,197,253,0.24)';
 const FORECAST_SHADOW_COLOR = 'rgba(8,17,32,0.7)';
 const AIRPORT_MARKER_COLOR = '#a855f7';
+const DESTINATION_AIRPORT_MARKER_COLOR = '#fbbf24';
 const ROUTE_POINT_DUPLICATE_DISTANCE_KM = 12;
 const ROUTE_WRAP_SEGMENT_BREAK_RATIO = 0.5;
 
@@ -54,6 +55,10 @@ function getPointDistanceKm(first: FlightMapPoint, second: FlightMapPoint): numb
 
 function getRoutePointVisitKey(point: FlightMapPoint): string {
   return `${point.latitude.toFixed(2)}:${point.longitude.toFixed(2)}:${point.onGround ? 'g' : 'a'}`;
+}
+
+function getAirportMarkerColor(airport: FlightMapAirportMarker): string {
+  return airport.isDestination ? DESTINATION_AIRPORT_MARKER_COLOR : AIRPORT_MARKER_COLOR;
 }
 
 function getWrappedRouteEdgePoints(
@@ -1293,6 +1298,7 @@ export default function FlightMap2D({
             const markerTransform = getFixedSizeTransform(airport.point, mapTransform.k);
             const isHovered = hoveredAirportId === airport.id;
             const airportTitle = `${airport.label} (${airport.code})`;
+            const markerColor = getAirportMarkerColor(airport);
 
             return (
               <g
@@ -1307,7 +1313,7 @@ export default function FlightMap2D({
                   cx="0"
                   cy="0"
                   r={isHovered ? 5.4 : 4.8}
-                  fill={AIRPORT_MARKER_COLOR}
+                  fill={markerColor}
                   stroke="rgba(255,255,255,0.92)"
                   strokeWidth="1.2"
                   vectorEffect="non-scaling-stroke"
@@ -1824,7 +1830,7 @@ export default function FlightMap2D({
                   height="18"
                   rx="9"
                   fill="rgba(2,6,23,0.88)"
-                  stroke={AIRPORT_MARKER_COLOR}
+                  stroke={getAirportMarkerColor(hoveredAirport)}
                   strokeWidth="0.9"
                   vectorEffect="non-scaling-stroke"
                 />

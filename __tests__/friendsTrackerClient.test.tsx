@@ -392,6 +392,10 @@ describe('FriendsTrackerClient', () => {
 
     expect(await screen.findByText(/maya/i)).toBeInTheDocument();
 
+    const mayaCard = screen.getByText(/maya/i).closest('article');
+    expect(mayaCard).not.toHaveTextContent(/awaiting/i);
+    expect(mayaCard).not.toHaveTextContent(/current airport:/i);
+
     await waitFor(() => {
       const staticFriendMarkers = latestFlightMapProps?.staticFriendMarkers as Array<{
         id: string;
