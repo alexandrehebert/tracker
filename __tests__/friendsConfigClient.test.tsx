@@ -1059,18 +1059,25 @@ describe('FriendsConfigClient', () => {
     });
   });
 
-  it('enables save only when there are pending changes', async () => {
+  it('keeps the save bar above group trips and highlights it when there are pending changes', async () => {
     const user = userEvent.setup();
 
     render(<FriendsConfigClient initialConfig={initialConfig} initialCronDashboard={initialCronDashboard} />);
 
     const saveButton = screen.getByRole('button', { name: /save config/i });
+    const saveBar = saveButton.closest('section');
+    const groupTripsHeading = screen.getByText(/group trips/i);
+
     expect(saveButton).toBeDisabled();
+    expect(saveBar).not.toBeNull();
+    expect(saveBar).toHaveClass('border-white/10');
+    expect(Boolean(saveBar?.compareDocumentPosition(groupTripsHeading) & Node.DOCUMENT_POSITION_FOLLOWING)).toBe(true);
 
     await user.clear(screen.getByDisplayValue('Lisbon'));
     await user.type(screen.getByPlaceholderText('Weekend in Lisbon'), 'Lisbon crew');
 
     expect(screen.getByRole('button', { name: /save config/i })).toBeEnabled();
+    expect(saveBar).toHaveClass('border-amber-400/35');
   });
 
   it('enables save when editing the built-in demo trip', async () => {

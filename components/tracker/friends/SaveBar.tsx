@@ -34,9 +34,19 @@ export function SaveBar() {
   const matchedLiveCount = reviewableLegs.filter((leg) => leg.validatedFlight?.status === 'matched').length;
   const warningLiveCount = reviewableLegs.filter((leg) => leg.validatedFlight?.status === 'warning').length;
   const unresolvedLiveCount = Math.max(reviewableLegs.length - matchedLiveCount - warningLiveCount, 0);
+  const saveBarToneClass = hasValidationErrors
+    ? 'border-rose-400/35 bg-rose-500/10 shadow-rose-950/20'
+    : hasPendingChanges
+      ? 'border-amber-400/35 bg-amber-500/10 shadow-amber-950/20'
+      : notice?.type === 'success'
+        ? 'border-emerald-400/30 bg-emerald-500/10 shadow-emerald-950/15'
+        : 'border-white/10 bg-slate-950/90 shadow-slate-950/25';
+  const saveButtonToneClass = hasPendingChanges
+    ? 'bg-amber-400 text-slate-950 hover:bg-amber-300'
+    : 'bg-cyan-500 text-slate-950 hover:bg-cyan-400';
 
   return (
-    <section className="sticky top-3 z-20 rounded-2xl border border-white/10 bg-slate-950/90 p-3 shadow-lg shadow-slate-950/25 backdrop-blur">
+    <section className={`sticky top-3 z-20 rounded-2xl border p-3 shadow-lg backdrop-blur transition-colors ${saveBarToneClass}`}>
       <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
         <div className="space-y-2">
           <p className="text-sm font-semibold text-white">
@@ -91,7 +101,7 @@ export function SaveBar() {
           <button
             type="button"
             onClick={handleSave}
-            className="inline-flex w-full items-center justify-center gap-2 whitespace-nowrap rounded-full bg-cyan-500 px-4 py-2 text-sm font-semibold text-slate-950 transition hover:bg-cyan-400 disabled:cursor-not-allowed disabled:opacity-60 md:w-auto"
+            className={`inline-flex w-full items-center justify-center gap-2 whitespace-nowrap rounded-full px-4 py-2 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-60 md:w-auto ${saveButtonToneClass}`}
             disabled={!hasPendingChanges || hasValidationErrors || isSaving || isSavingCronToggle}
           >
             {isSaving ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
