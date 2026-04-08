@@ -17,6 +17,7 @@ import {
   hasFlightAwareCredentials,
   type FlightAwareFlightEnrichment,
 } from './providers/flightaware';
+import { getProviderDisabledReasonAsync } from './providers';
 import {
   clearStoredOpenSkyAccessToken,
   ensureOpenSkyAccessToken,
@@ -26,6 +27,7 @@ import {
   getTrackForAircraft,
   getRecentRoute,
   guessDepartureAirportFromOriginPoint,
+  hasOpenSkyConfiguration,
   refreshOpenSkyAccessToken,
   setStoredOpenSkyAccessToken,
   type OpenSkyTokenStatus,
@@ -2050,6 +2052,64 @@ export async function searchFlights(query: string, options: SearchFlightsOptions
   }
 
   const pendingSearch = (async () => {
+    const openSkyDisabledReason = await getProviderDisabledReasonAsync('opensky');
+    const openSkyAvailable = !openSkyDisabledReason && hasOpenSkyConfiguration();
+
+    if (!openSkyAvailable) {
+      const skipReason = openSkyDisabledReason
+        ?? 'OpenSky is not configured for this deployment, so the tracker is using the external fallback providers only.';
+
+      if (!hasAviationstackCredentials() && !hasFlightAwareCredentials()) {
+        const historicalOnlyResult = await writeFlightSearchCache(
+          cacheKey,
+          mergeWithDemoPayload({
+            query: trimmedQuery,
+            requestedIdentifiers,
+            matchedIdentifiers: [],
+            notFoundIdentifiers: requestedIdentifiers,
+            fetchedAt: Date.now(),
+            flights: [],
+          }),
+          options.forceRefresh ? 'manual-refresh' : 'search',
+        );
+
+        if (historicalOnlyResult.flights.length > 0 || historicalOnlyResult.matchedIdentifiers.length > 0) {
+          return mergeWithDemoPayload(historicalOnlyResult);
+        }
+
+        throw new Error(skipReason);
+      }
+
+      const fallbackResult = await searchFlightsFromExternalSourcesOnly(remainingQuery, remainingIdentifiers);
+      const fallbackWithDiagnostics = mergeWithDemoPayload({
+        ...fallbackResult,
+        query: trimmedQuery,
+        requestedIdentifiers,
+        flights: fallbackResult.flights.map((flight) => ({
+          ...flight,
+          sourceDetails: mergeSourceDetails(flight.sourceDetails, [
+            createSourceDetail('opensky', 'skipped', false, skipReason, {
+              query: trimmedQuery,
+              requestedIdentifiers,
+              fallback: 'external-only',
+            }),
+          ]),
+        })),
+      } satisfies TrackerApiResponse);
+
+      const cachedFallbackResult = await writeFlightSearchCache(
+        cacheKey,
+        fallbackWithDiagnostics,
+        options.forceRefresh ? 'manual-refresh' : 'search',
+      );
+
+      if (cachedFallbackResult.flights.length === 0 && cachedFallbackResult.matchedIdentifiers.length === 0) {
+        throw new Error(skipReason);
+      }
+
+      return mergeWithDemoPayload(cachedFallbackResult);
+    }
+
     try {
       const freshResult = await fetchFreshFlights(remainingQuery, remainingIdentifiers);
       const enrichedResult = await enrichSearchResultWithExternalSources(freshResult);

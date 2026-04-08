@@ -78,6 +78,33 @@ describe('provider observability', () => {
     });
   });
 
+  it('treats disabled-provider failures as skipped activity', () => {
+    const logs: ProviderRequestLogEntry[] = [
+      {
+        id: 'disabled-opensky',
+        provider: 'opensky',
+        caller: 'system',
+        operation: 'auth-token',
+        status: 'error',
+        durationMs: 12,
+        createdAt: '2026-04-08T09:00:00.000Z',
+        request: { method: 'POST' },
+        response: null,
+        error: { message: 'OpenSky provider is disabled by `OPENSKY_DISABLED`.' },
+      },
+    ];
+
+    const dashboard = summarizeProviderRequestLogs(logs);
+
+    expect(dashboard.overview.errorCount).toBe(0);
+    expect(dashboard.overview.skippedCount).toBe(1);
+    expect(dashboard.recentLogs[0]?.status).toBe('skipped');
+    expect(dashboard.providers.find((provider) => provider.name === 'opensky')).toMatchObject({
+      errorCount: 0,
+      skippedCount: 1,
+    });
+  });
+
   it('propagates the current caller context across async work', async () => {
     const context = await withProviderRequestContext(
       {

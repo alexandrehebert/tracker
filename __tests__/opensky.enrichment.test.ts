@@ -466,6 +466,94 @@ describe('searchFlights', () => {
     expect(result.flights[0]?.flightNumber).toBe('575');
   });
 
+  it('skips OpenSky live requests when the provider is disabled and falls back directly to Aviationstack', async () => {
+    process.env.OPENSKY_DISABLED = 'true';
+    delete process.env.OPENSKY_CLIENT_ID;
+    delete process.env.OPENSKY_CLIENT_SECRET;
+    process.env.AVIATION_STACK_API_KEY = 'aviationstack-key';
+    delete process.env.MONGODB_URI;
+
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+
+      if (url.includes('aviationstack.com/v1/flights')) {
+        return new Response(JSON.stringify({
+          pagination: { count: 1, total: 1, offset: 0, limit: 100 },
+          data: [
+            {
+              flight_status: 'active',
+              departure: {
+                airport: 'Paris Charles de Gaulle Airport',
+                iata: 'CDG',
+                icao: 'LFPG',
+                scheduled: '2026-04-04T08:15:00+00:00',
+              },
+              arrival: {
+                airport: 'John F. Kennedy International Airport',
+                iata: 'JFK',
+                icao: 'KJFK',
+                scheduled: '2026-04-04T14:20:00+00:00',
+              },
+              airline: {
+                name: 'Air France',
+                iata: 'AF',
+                icao: 'AFR',
+              },
+              flight: {
+                number: '123',
+                iata: 'AF123',
+                icao: 'AFR123',
+              },
+              aircraft: {
+                registration: 'F-GZNN',
+                iata: 'B77W',
+                icao: 'B77W',
+                icao24: '39BD24',
+              },
+              live: {
+                updated: '2026-04-04T10:05:00+00:00',
+                latitude: 49.5,
+                longitude: -15.4,
+                altitude: 10668,
+                direction: 281,
+                speed_horizontal: 905,
+                is_ground: false,
+              },
+            },
+          ],
+        }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      throw new Error(`Unexpected fetch URL in test: ${url}`);
+    });
+
+    vi.stubGlobal('fetch', fetchMock);
+
+    const searchFlights = await loadSearchFlights();
+    const result = await searchFlights('AF123');
+
+    expect(result.flights).toHaveLength(1);
+    expect(result.flights[0]?.dataSource).toBe('aviationstack');
+    expect(result.flights[0]?.sourceDetails).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          source: 'opensky',
+          usedInResult: false,
+          reason: expect.stringContaining('OPENSKY_DISABLED'),
+        }),
+        expect.objectContaining({
+          source: 'aviationstack',
+          status: 'used',
+          usedInResult: true,
+        }),
+      ]),
+    );
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('opensky-network.org'))).toBe(false);
+  });
+
   it('enriches live OpenSky matches with FlightAware metadata when available', async () => {
     process.env.OPENSKY_CLIENT_ID = 'client-from-env';
     process.env.OPENSKY_CLIENT_SECRET = 'secret-from-env';

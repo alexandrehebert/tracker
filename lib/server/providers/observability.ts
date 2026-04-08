@@ -221,6 +221,35 @@ function serializeError(error: unknown): ProviderRequestLogEntry['error'] {
   };
 }
 
+function shouldTreatErrorAsSkipped(error: unknown): boolean {
+  const message = serializeError(error)?.message?.trim();
+  if (!message) {
+    return false;
+  }
+
+  return /provider is disabled\b/i.test(message) || /lookup skipped because/i.test(message);
+}
+
+function normalizeProviderRequestLogStatus(status: ProviderRequestLogStatus, error: unknown): ProviderRequestLogStatus {
+  if (status !== 'error') {
+    return status;
+  }
+
+  return shouldTreatErrorAsSkipped(error) ? 'skipped' : status;
+}
+
+function normalizeProviderRequestLogEntry(entry: ProviderRequestLogEntry): ProviderRequestLogEntry {
+  const normalizedStatus = normalizeProviderRequestLogStatus(entry.status, entry.error);
+  if (normalizedStatus === entry.status) {
+    return entry;
+  }
+
+  return {
+    ...entry,
+    status: normalizedStatus,
+  };
+}
+
 async function getProviderRequestLogCollection(): Promise<Collection<ProviderRequestLogDocument> | null> {
   const mongoUri = process.env.MONGODB_URI?.trim();
   if (!mongoUri) {
@@ -320,12 +349,13 @@ export async function recordProviderRequestLog(params: {
 
   const context = getProviderRequestContext();
   const now = new Date();
+  const serializedError = serializeError(params.error);
   const entry: ProviderRequestLogDocument = {
     provider: params.provider,
     caller: params.caller ?? context?.caller ?? 'system',
     source: params.source ?? context?.source ?? null,
     operation: params.operation,
-    status: params.status,
+    status: normalizeProviderRequestLogStatus(params.status, serializedError),
     durationMs: typeof params.durationMs === 'number' && Number.isFinite(params.durationMs)
       ? Math.max(0, Math.round(params.durationMs))
       : null,
@@ -336,7 +366,7 @@ export async function recordProviderRequestLog(params: {
       ...(context?.metadata ?? {}),
       ...(params.metadata ?? {}),
     }),
-    error: serializeError(params.error),
+    error: serializedError,
   };
 
   try {
@@ -347,19 +377,22 @@ export async function recordProviderRequestLog(params: {
 }
 
 function toLogEntry(document: ProviderRequestLogDocument & { _id?: unknown }): ProviderRequestLogEntry {
+  const error = document.error ?? null;
+  const status = normalizeProviderRequestLogStatus(document.status, error);
+
   return {
     id: document._id != null ? String(document._id) : `${document.provider}:${document.operation}:${document.createdAt.toISOString()}`,
     provider: document.provider,
     caller: document.caller,
     source: document.source ?? null,
     operation: document.operation,
-    status: document.status,
+    status,
     durationMs: document.durationMs ?? null,
     createdAt: document.createdAt instanceof Date ? document.createdAt.toISOString() : new Date(document.createdAt).toISOString(),
     request: document.request ?? null,
     response: document.response ?? null,
     metadata: document.metadata ?? null,
-    error: document.error ?? null,
+    error,
   };
 }
 
@@ -395,7 +428,9 @@ export function formatProviderCallerLabel(caller: string): string {
 }
 
 export function summarizeProviderRequestLogs(logs: ProviderRequestLogEntry[]): Omit<ProvidersDashboard, 'generatedAt' | 'logWindowSize' | 'mongoConfigured'> {
-  const orderedLogs = [...logs].sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt));
+  const orderedLogs = logs
+    .map((log) => normalizeProviderRequestLogEntry(log))
+    .sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt));
   const totalRequests = orderedLogs.length;
   const successCount = orderedLogs.filter((log) => log.status === 'success').length;
   const errorCount = orderedLogs.filter((log) => log.status === 'error').length;
