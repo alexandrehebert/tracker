@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTrackerLayout } from '../contexts/TrackerLayoutContext';
 import { useTrackerMap } from '../contexts/TrackerMapContext';
-import { getFlightMapColor, getReadableTextColor, SELECTED_FLIGHT_COLOR } from './colors';
+import { getFlightMapColor, getReadableTextColor, SELECTED_FLIGHT_COLOR, withAlphaColor } from './colors';
 import { getFriendInitials } from '~/lib/utils/friendInitials';
 import type { FlightMapAirportMarker, FlightMapPoint, FriendAvatarInfo, FriendAvatarMarker, SelectedFlightDetails, TrackedFlight } from './types';
 
@@ -41,8 +41,10 @@ const PATH_POINT_DUPLICATE_DISTANCE_KM = 12;
 const GROUND_RING_ALTITUDE = COUNTRY_ALTITUDE + 0.001;
 const FRIEND_AVATAR_CLUSTER_DEGREES = 2.5;
 const FRIEND_AVATAR_ALTITUDE = DEPARTURE_MARKER_ALTITUDE + 0.006;
-const FRIEND_CLUSTER_FALLBACK_FILL = 'rgba(15,23,42,0.94)';
-const FRIEND_CLUSTER_DIVIDER_STROKE = 'rgba(255,255,255,0.42)';
+const FRIEND_CLUSTER_FALLBACK_FILL = '#020617';
+const FRIEND_CLUSTER_ACCENT = '#93c5fd';
+const FRIEND_CLUSTER_BORDER_COLOR = 'rgba(147,197,253,0.24)';
+const FRIEND_CLUSTER_DIVIDER_STROKE = 'rgba(147,197,253,0.22)';
 
 type FriendClusterLayout = 'single' | 'split-2' | 'split-3' | 'split-4' | 'overflow';
 
@@ -1346,7 +1348,7 @@ export default function FlightMap3D({
         if (item.type === 'friend-avatar') {
           const isSingle = item.members.length === 1;
           const firstMember = item.members[0]!;
-          const size = isSingle ? 30 : 36;
+          const size = isSingle ? 31 : 38;
           const halfSize = size / 2;
           const staleCount = item.members.filter((member) => member.isStale).length;
           const hasStaleMembers = staleCount > 0;
@@ -1389,9 +1391,11 @@ export default function FlightMap3D({
             bubble.style.height = `${size}px`;
             bubble.style.borderRadius = '50%';
             bubble.style.overflow = 'hidden';
-            bubble.style.background = firstMember.color;
-            bubble.style.border = '2.5px solid rgba(255,255,255,0.95)';
-            bubble.style.boxShadow = `0 0 0 3px color-mix(in srgb, ${firstMember.color} 22%, transparent), 0 6px 16px rgba(2,6,23,0.4)`;
+            bubble.style.boxSizing = 'border-box';
+            bubble.style.padding = '1.5px';
+            bubble.style.backgroundColor = firstMember.color;
+            bubble.style.border = `0.3px solid ${firstMember.color}`;
+            bubble.style.boxShadow = `0 0 0 3px ${withAlphaColor(firstMember.color, 0.12)}, 0 6px 16px rgba(2,6,23,0.4)`;
             bubble.style.display = 'flex';
             bubble.style.filter = 'none';
             bubble.style.alignItems = 'center';
@@ -1403,20 +1407,29 @@ export default function FlightMap3D({
               img.style.width = '100%';
               img.style.height = '100%';
               img.style.objectFit = 'cover';
+              img.style.borderRadius = '50%';
+              img.style.display = 'block';
               img.alt = firstMember.name;
               bubble.appendChild(img);
             } else {
+              const surface = document.createElement('div');
+              surface.style.width = '100%';
+              surface.style.height = '100%';
+              surface.style.display = 'flex';
+              surface.style.alignItems = 'center';
+              surface.style.justifyContent = 'center';
+              surface.style.borderRadius = '50%';
+              surface.style.background = '#020617';
+
               const initials = document.createElement('span');
-              const initialsColor = getReadableTextColor(firstMember.color, { light: '#ffffff' });
               initials.textContent = getFriendInitials(firstMember.name);
-              initials.style.color = initialsColor;
-              initials.style.textShadow = initialsColor.startsWith('rgba(15, 23, 42')
-                ? '0 1px 1px rgba(255,255,255,0.22)'
-                : '0 1px 1px rgba(2,6,23,0.4)';
+              initials.style.color = '#ffffff';
+              initials.style.textShadow = '0 1px 1px rgba(2,6,23,0.4)';
               initials.style.fontSize = '11px';
               initials.style.fontWeight = '700';
               initials.style.fontFamily = 'ui-sans-serif, system-ui, sans-serif';
-              bubble.appendChild(initials);
+              surface.appendChild(initials);
+              bubble.appendChild(surface);
             }
 
             element.appendChild(bubble);
@@ -1436,18 +1449,20 @@ export default function FlightMap3D({
             clusterContainer.style.height = `${size}px`;
             clusterContainer.style.borderRadius = '50%';
             clusterContainer.style.position = 'relative';
-            clusterContainer.style.background = 'rgba(15,23,42,0.24)';
-            clusterContainer.style.border = '2.5px solid rgba(255,255,255,0.95)';
-            clusterContainer.style.boxShadow = '0 0 0 3px rgba(15,23,42,0.24), 0 6px 16px rgba(2,6,23,0.4)';
+            clusterContainer.style.boxSizing = 'border-box';
+            clusterContainer.style.padding = '1.5px';
+            clusterContainer.style.background = FRIEND_CLUSTER_ACCENT;
+            clusterContainer.style.border = `0.3px solid ${FRIEND_CLUSTER_BORDER_COLOR}`;
+            clusterContainer.style.boxShadow = `0 0 0 3px ${withAlphaColor(FRIEND_CLUSTER_ACCENT, 0.12)}, 0 6px 16px rgba(2,6,23,0.4)`;
             clusterContainer.style.overflow = 'hidden';
             clusterContainer.style.filter = 'none';
 
             const fillLayer = document.createElement('div');
             fillLayer.style.position = 'absolute';
-            fillLayer.style.inset = '0';
+            fillLayer.style.inset = '1.5px';
             fillLayer.style.borderRadius = '50%';
             fillLayer.style.overflow = 'hidden';
-            fillLayer.style.background = 'rgba(2,6,23,0.9)';
+            fillLayer.style.background = FRIEND_CLUSTER_FALLBACK_FILL;
 
             const segmentDefinitions = getFriendClusterSegmentDefinitions(clusterLayout === 'single' ? 'split-2' : clusterLayout);
             const overflowCount = Math.max(0, item.members.length - 4);
@@ -1464,7 +1479,7 @@ export default function FlightMap3D({
               segmentElement.style.top = `${segment.top}%`;
               segmentElement.style.width = `${segment.width}%`;
               segmentElement.style.height = `${segment.height}%`;
-              segmentElement.style.background = member?.color ?? FRIEND_CLUSTER_FALLBACK_FILL;
+              segmentElement.style.background = FRIEND_CLUSTER_FALLBACK_FILL;
               segmentElement.style.overflow = 'hidden';
 
               if (member?.avatarUrl) {
@@ -1477,36 +1492,19 @@ export default function FlightMap3D({
                 segmentElement.appendChild(img);
               }
 
-              if (member) {
+              if (member && !member.avatarUrl) {
                 const initSpan = document.createElement('span');
-                const initialsColor = getReadableTextColor(member.color, { light: '#ffffff' });
                 initSpan.textContent = getFriendInitials(member.name).slice(0, 1);
                 initSpan.style.position = 'absolute';
                 initSpan.style.left = '50%';
                 initSpan.style.top = '50%';
                 initSpan.style.transform = 'translate(-50%, -50%)';
-                initSpan.style.color = initialsColor;
-                initSpan.style.textShadow = initialsColor.startsWith('rgba(15, 23, 42')
-                  ? '0 1px 1px rgba(255,255,255,0.22)'
-                  : '0 1px 1px rgba(2,6,23,0.4)';
+                initSpan.style.color = member.color;
+                initSpan.style.textShadow = '0 1px 1px rgba(2,6,23,0.55)';
                 initSpan.style.fontSize = segment.width < 100 || segment.height < 100 ? '8px' : '10px';
                 initSpan.style.fontWeight = '800';
                 initSpan.style.fontFamily = 'ui-sans-serif, system-ui, sans-serif';
                 initSpan.style.pointerEvents = 'none';
-
-                if (member.avatarUrl) {
-                  initSpan.style.background = 'rgba(2,6,23,0.68)';
-                  initSpan.style.borderRadius = '999px';
-                  initSpan.style.padding = '0 3px';
-                  initSpan.style.left = 'auto';
-                  initSpan.style.right = '2px';
-                  initSpan.style.top = 'auto';
-                  initSpan.style.bottom = '1px';
-                  initSpan.style.transform = 'none';
-                  initSpan.style.fontSize = '7px';
-                  initSpan.style.lineHeight = '1.2';
-                }
-
                 segmentElement.appendChild(initSpan);
               }
 

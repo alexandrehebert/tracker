@@ -523,7 +523,7 @@ describe('FlightMap2D', () => {
     expect(overflowCluster?.textContent).toContain('+1');
   });
 
-  it('uses a dark initials color on bright single-marker backgrounds for readability', () => {
+  it('uses white initials on bright single-marker backgrounds', () => {
     const { container } = renderMap(false, {
       staticFriendMarkers: [
         {
@@ -542,7 +542,33 @@ describe('FlightMap2D', () => {
 
     expect(singleCluster).not.toBeNull();
     expect(initialsText).not.toBeNull();
-    expect(initialsText).toHaveAttribute('fill', 'rgba(15, 23, 42, 0.82)');
+    expect(initialsText).toHaveAttribute('fill', '#ffffff');
+  });
+
+  it('styles single friend bubbles with a solid background and dark fallback fill', () => {
+    const { container } = renderMap(false, {
+      staticFriendMarkers: [
+        {
+          id: 'styled-single',
+          name: 'Alice Sunset',
+          avatarUrl: null,
+          color: '#f97316',
+          latitude: 48.8566,
+          longitude: 2.3522,
+        },
+      ],
+    });
+
+    const singleCluster = container.querySelector('[data-cluster-layout="single"]');
+    const circles = Array.from(singleCluster?.querySelectorAll('circle') ?? []);
+    const initialsText = singleCluster?.querySelector('text');
+
+    expect(singleCluster).not.toBeNull();
+    expect(circles.some((circle) => circle.getAttribute('stroke') === '#f97316')).toBe(true);
+    expect(circles.some((circle) => circle.getAttribute('fill') === '#f97316')).toBe(true);
+    expect(circles.some((circle) => circle.getAttribute('fill') === 'rgba(249, 115, 22, 0.12)')).toBe(true);
+    expect(circles.some((circle) => circle.getAttribute('fill') === '#020617')).toBe(true);
+    expect(initialsText).toHaveAttribute('fill', '#ffffff');
   });
 
   it('shows avatar images inside clustered friend bubbles when available', () => {
@@ -609,10 +635,22 @@ describe('FlightMap2D', () => {
 
     const splitTwoCluster = container.querySelector('[data-cluster-layout="split-2"]');
     const overflowCluster = container.querySelector('[data-cluster-layout="overflow"]');
+    const splitTwoTexts = Array.from(splitTwoCluster?.querySelectorAll('text') ?? []).map((node) => node.textContent ?? '');
+    const overflowTexts = Array.from(overflowCluster?.querySelectorAll('text') ?? []).map((node) => node.textContent ?? '');
+    const overflowRects = Array.from(overflowCluster?.querySelectorAll('rect') ?? []).map((node) => node.getAttribute('fill'));
+    const overflowInitialNodes = Array.from(overflowCluster?.querySelectorAll('text') ?? []);
 
     expect(splitTwoCluster?.querySelectorAll('image').length).toBe(2);
+    expect(splitTwoTexts).toEqual([]);
     expect(overflowCluster?.querySelectorAll('image').length).toBeGreaterThan(0);
-    expect(overflowCluster?.textContent).toContain('+1');
+    expect(overflowRects.every((fill) => fill === '#020617' || fill === 'rgba(2,6,23,0.58)')).toBe(true);
+    expect(overflowTexts).toContain('D');
+    expect(overflowTexts).toContain('F');
+    expect(overflowTexts).toContain('+1');
+    expect(overflowTexts).not.toContain('C');
+    expect(overflowTexts).not.toContain('E');
+    expect(overflowInitialNodes.find((node) => node.textContent === 'D')).toHaveAttribute('fill', '#f59e0b');
+    expect(overflowInitialNodes.find((node) => node.textContent === 'F')).toHaveAttribute('fill', '#14b8a6');
   });
 
   it('renders the hovered friend cluster last so its label stays above the other markers', () => {

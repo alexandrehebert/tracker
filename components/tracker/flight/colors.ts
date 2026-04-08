@@ -95,6 +95,17 @@ export function getReadableTextColor(
   return luminance >= luminanceThreshold ? dark : light;
 }
 
+export function withAlphaColor(color: string, alpha: number) {
+  const normalizedAlpha = Math.max(0, Math.min(1, alpha));
+  const rgb = parseColorToRgb(color);
+
+  if (!rgb) {
+    return color;
+  }
+
+  return `rgba(${rgb.r}, ${rgb.g}, ${rgb.b}, ${normalizedAlpha})`;
+}
+
 function toHexByte(value: number) {
   return Math.max(0, Math.min(255, Math.round(value))).toString(16).padStart(2, '0');
 }

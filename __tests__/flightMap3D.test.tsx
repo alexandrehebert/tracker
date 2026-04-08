@@ -851,16 +851,76 @@ describe('FlightMap3D', () => {
     );
 
     await waitFor(() => {
+      expect(globe.htmlElement).toHaveBeenCalled();
       expect(globe.htmlElementsData).toHaveBeenCalled();
     });
 
+    const htmlElementAccessor = globe.htmlElement.mock.calls.at(-1)?.[0];
     const renderedHtmlElements = globe.htmlElementsData.mock.calls.at(-1)?.[0] ?? [];
     const airportOverlay = renderedHtmlElements.find((item: { type?: string; code?: string }) => item.type === 'airport' && item.code === 'CDG');
     const friendOverlay = renderedHtmlElements.find((item: { type?: string }) => item.type === 'friend-avatar');
+    const friendElement = htmlElementAccessor?.(friendOverlay) as HTMLDivElement | undefined;
+    const bubble = Array.from(friendElement?.children ?? []).find(
+      (node): node is HTMLDivElement => node instanceof HTMLDivElement && node.style.borderRadius === '50%',
+    );
+    const fallbackSurface = bubble?.querySelector('div');
 
     expect(airportOverlay).toBeDefined();
     expect(friendOverlay).toBeDefined();
     expect(friendOverlay.altitude).toBeGreaterThan(airportOverlay.altitude);
+    expect(bubble?.style.backgroundColor).toBe('rgb(34, 197, 94)');
+    expect(fallbackSurface).not.toBeNull();
+    expect((fallbackSurface as HTMLDivElement).style.background).toBe('rgb(2, 6, 23)');
+  });
+
+  it('keeps the nicer tinted avatar treatment for single globe friend bubbles', async () => {
+    const { globe } = createGlobeMock();
+    globeFactory.mockReturnValue(() => globe);
+
+    render(
+      <TrackerMapProvider
+        value={{
+          globeRef: { current: null },
+          setGlobeRef: vi.fn(),
+          svgRef: { current: null },
+          mapTransform: { x: 0, y: 0, k: 1, apply: vi.fn(), applyX: vi.fn(), applyY: vi.fn(), invert: vi.fn(), invertX: vi.fn(), invertY: vi.fn(), rescaleX: vi.fn(), rescaleY: vi.fn(), scale: vi.fn(), translate: vi.fn(), toString: vi.fn(() => 'translate(0,0) scale(1)') },
+          zoomBy: vi.fn(),
+          resetZoom: vi.fn(),
+        }}
+      >
+        <FlightMap3D
+          flights={[trackedFlight]}
+          selectedIcao24={null}
+          selectionMode="all"
+          flightAvatars={{
+            [trackedFlight.icao24]: [{
+              friendId: 'friend-1',
+              name: 'Alice Demo',
+              avatarUrl: 'https://example.com/alice.jpg',
+              color: '#22c55e',
+            }],
+          }}
+        />
+      </TrackerMapProvider>,
+    );
+
+    await waitFor(() => {
+      expect(globe.htmlElement).toHaveBeenCalled();
+      expect(globe.htmlElementsData).toHaveBeenCalled();
+    });
+
+    const htmlElementAccessor = globe.htmlElement.mock.calls.at(-1)?.[0];
+    const renderedHtmlElements = globe.htmlElementsData.mock.calls.at(-1)?.[0] ?? [];
+    const friendOverlay = renderedHtmlElements.find((item: { type?: string; members?: Array<unknown> }) => item.type === 'friend-avatar' && (item.members?.length ?? 0) === 1);
+    const friendElement = htmlElementAccessor?.(friendOverlay) as HTMLDivElement | undefined;
+    const bubble = Array.from(friendElement?.children ?? []).find(
+      (node): node is HTMLDivElement => node instanceof HTMLDivElement && node.style.borderRadius === '50%',
+    );
+
+    expect(bubble).toBeDefined();
+    expect(bubble?.style.border).toContain('rgb(34, 197, 94)');
+    expect(bubble?.style.backgroundColor).toBe('rgb(34, 197, 94)');
+    expect(bubble?.style.boxShadow).toContain('rgba(34, 197, 94, 0.12)');
   });
 
   it('renders clustered friend bubbles with the same grid layout logic as the 2D map', async () => {
@@ -910,7 +970,59 @@ describe('FlightMap3D', () => {
     expect(clusterGrid).not.toBeNull();
     expect(clusterGrid?.querySelectorAll('[data-friend-cluster-segment]').length).toBe(4);
     expect(clusterGrid?.querySelectorAll('img').length).toBe(4);
+    expect(clusterGrid?.querySelectorAll('[data-friend-cluster-segment] span').length).toBe(0);
     expect(clusterGrid?.textContent).toContain('+1');
+  });
+
+  it('shows globe initials only for clustered members without avatars', async () => {
+    const { globe } = createGlobeMock();
+    globeFactory.mockReturnValue(() => globe);
+
+    render(
+      <TrackerMapProvider
+        value={{
+          globeRef: { current: null },
+          setGlobeRef: vi.fn(),
+          svgRef: { current: null },
+          mapTransform: { x: 0, y: 0, k: 1, apply: vi.fn(), applyX: vi.fn(), applyY: vi.fn(), invert: vi.fn(), invertX: vi.fn(), invertY: vi.fn(), rescaleX: vi.fn(), rescaleY: vi.fn(), scale: vi.fn(), translate: vi.fn(), toString: vi.fn(() => 'translate(0,0) scale(1)') },
+          zoomBy: vi.fn(),
+          resetZoom: vi.fn(),
+        }}
+      >
+        <FlightMap3D
+          flights={[trackedFlight]}
+          selectedIcao24={null}
+          selectionMode="all"
+          flightAvatars={{
+            [trackedFlight.icao24]: [
+              { friendId: 'friend-1', name: 'Alice Demo', avatarUrl: 'https://example.com/alice.jpg', color: '#22c55e' },
+              { friendId: 'friend-2', name: 'Bob Demo', avatarUrl: null, color: '#0ea5e9' },
+            ],
+          }}
+        />
+      </TrackerMapProvider>,
+    );
+
+    await waitFor(() => {
+      expect(globe.htmlElement).toHaveBeenCalled();
+      expect(globe.htmlElementsData).toHaveBeenCalled();
+    });
+
+    const htmlElementAccessor = globe.htmlElement.mock.calls.at(-1)?.[0];
+    const renderedHtmlElements = globe.htmlElementsData.mock.calls.at(-1)?.[0] ?? [];
+    const friendOverlay = renderedHtmlElements.find((item: { type?: string; members?: Array<unknown> }) => item.type === 'friend-avatar' && (item.members?.length ?? 0) === 2);
+    const friendElement = htmlElementAccessor?.(friendOverlay) as HTMLDivElement | undefined;
+    const clusterGrid = friendElement?.querySelector('[data-cluster-layout="split-2"]') as HTMLDivElement | null;
+    const visibleInitials = Array.from(clusterGrid?.querySelectorAll('[data-friend-cluster-segment] span') ?? []);
+    const clusterSegments = Array.from(clusterGrid?.querySelectorAll('[data-friend-cluster-segment]') ?? []) as HTMLDivElement[];
+
+    expect(clusterGrid).not.toBeNull();
+    expect(clusterGrid?.style.border).toContain('rgba(147, 197, 253, 0.24)');
+    expect(clusterGrid?.style.background).toBe('rgb(147, 197, 253)');
+    expect(clusterGrid?.querySelectorAll('img').length).toBe(1);
+    expect(clusterSegments.every((segment) => segment.style.backgroundColor === 'rgb(2, 6, 23)')).toBe(true);
+    expect(visibleInitials.map((node) => node.textContent ?? '')).toEqual(['B']);
+    expect(visibleInitials[0]?.style.color).toBe('rgb(14, 165, 233)');
   });
 
   it('renders an orange departure marker for the selected route like the 2D map', async () => {

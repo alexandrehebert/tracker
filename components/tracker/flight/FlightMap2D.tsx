@@ -7,7 +7,7 @@ import { getFriendInitials } from '~/lib/utils/friendInitials';
 import type { WorldMapPayload } from '~/lib/server/worldMap';
 import { useTrackerLayout } from '../contexts/TrackerLayoutContext';
 import { useTrackerMap } from '../contexts/TrackerMapContext';
-import { getFlightMapColor, getReadableTextColor } from './colors';
+import { getFlightMapColor, getReadableTextColor, withAlphaColor } from './colors';
 import type { FlightMapAirportMarker, FlightMapPoint, FriendAvatarInfo, FriendAvatarMarker, SelectedFlightDetails, TrackedFlight } from './types';
 
 interface FlightMap2DProps {
@@ -568,8 +568,10 @@ interface FriendSvgCluster {
 }
 
 const FRIEND_CLUSTER_RADIUS_PX = 40;
-const FRIEND_CLUSTER_FALLBACK_FILL = 'rgba(15,23,42,0.94)';
-const FRIEND_CLUSTER_DIVIDER_STROKE = 'rgba(255,255,255,0.42)';
+const FRIEND_CLUSTER_FALLBACK_FILL = '#020617';
+const FRIEND_CLUSTER_ACCENT = '#93c5fd';
+const FRIEND_CLUSTER_BORDER_STROKE = 'rgba(147,197,253,0.78)';
+const FRIEND_CLUSTER_DIVIDER_STROKE = 'rgba(147,197,253,0.22)';
 
 type FriendClusterLayout = 'single' | 'split-2' | 'split-3' | 'split-4' | 'overflow';
 
@@ -635,14 +637,17 @@ function renderFriendClusterSegmentFill(
   height: number,
   key: string,
 ) {
-  const fill = member?.color ?? FRIEND_CLUSTER_FALLBACK_FILL;
+  const fill = FRIEND_CLUSTER_FALLBACK_FILL;
   const initials = member
-    ? getFriendInitials(member.name).slice(0, width <= 17 || height <= 17 ? 1 : 2)
+    ? getFriendInitials(member.name).slice(0, 1)
     : '';
-  const textColor = getReadableTextColor(fill, { light: '#ffffff' });
-  const textStroke = textColor.startsWith('rgba(15, 23, 42')
-    ? 'rgba(255,255,255,0.28)'
-    : 'rgba(2,6,23,0.5)';
+  const textColor = member?.color ?? '#ffffff';
+  const textStroke = 'rgba(2,6,23,0.7)';
+  const centerX = x + (width / 2);
+  const centerY = y + (height / 2);
+  const centerBiasFactor = 0.22;
+  const textX = centerX * (1 - centerBiasFactor);
+  const textY = centerY * (1 - centerBiasFactor);
 
   return (
     <g key={key}>
@@ -663,17 +668,17 @@ function renderFriendClusterSegmentFill(
           preserveAspectRatio="xMidYMid slice"
         />
       ) : null}
-      {member ? (
+      {member && !member.avatarUrl ? (
         <text
-          x={x + (width / 2)}
-          y={y + (height / 2)}
+          x={textX}
+          y={textY}
           textAnchor="middle"
           dominantBaseline="middle"
           fill={textColor}
           stroke={textStroke}
           strokeWidth="0.9"
           paintOrder="stroke"
-          fontSize={width <= 17 || height <= 17 ? '8' : '9.5'}
+          fontSize={width <= 17 || height <= 17 ? '7' : '8'}
           fontWeight="800"
           fontFamily="ui-sans-serif, system-ui, sans-serif"
         >
@@ -1540,8 +1545,12 @@ export default function FlightMap2D({
             const isHovered = hoveredClusterKey === clusterKey;
             const isSingle = cluster.members.length === 1;
             const firstMember = cluster.members[0]!;
-            const outerRadius = isSingle ? 17 : 20;
-            const innerRadius = isSingle ? 14 : 17;
+            const outerRadius = isSingle ? 15.5 : 18.5;
+            const singleBubbleFill = firstMember.color;
+            const singleBubbleSurfaceFill = firstMember.avatarUrl ? 'transparent' : '#020617';
+            const singleBubbleContentRadius = Math.max(outerRadius - 0.8, 0);
+            const clusterBubbleFill = FRIEND_CLUSTER_ACCENT;
+            const clusterBubbleContentRadius = Math.max(outerRadius - 0.05, 0);
             const clusterLayout = getFriendClusterLayout(cluster.members.length);
             const clusterTransform = `translate(${cluster.x} ${cluster.y}) scale(${mapTransform.k > 0 ? 1 / mapTransform.k : 1})`;
             const staleMemberCount = cluster.members.filter((member) => member.isStale).length;
@@ -1557,7 +1566,7 @@ export default function FlightMap2D({
             const clusterFillClipId = `friend-cluster-fill-${safeClusterKey}`;
             const segmentDefinitions = clusterLayout === 'single'
               ? []
-              : getFriendClusterSegmentDefinitions(clusterLayout, innerRadius);
+              : getFriendClusterSegmentDefinitions(clusterLayout, clusterBubbleContentRadius);
             const overflowCount = Math.max(0, cluster.members.length - 4);
             const overflowSegment = clusterLayout === 'overflow'
               ? segmentDefinitions[3] ?? null
@@ -1576,59 +1585,65 @@ export default function FlightMap2D({
                   <>
                     <defs>
                       <clipPath id={`friend-avatar-clip-${firstMember.key}`}>
-                        <circle cx="0" cy="0" r={innerRadius} />
+                        <circle cx="0" cy="0" r={singleBubbleContentRadius} />
                       </clipPath>
                     </defs>
                     <g>
-                      <circle cx="0" cy="0" r={outerRadius} fill={firstMember.color} fillOpacity="0.22" />
-                      <circle cx="0" cy="0" r={innerRadius} fill={firstMember.color} />
+                      <circle cx="0" cy="0" r={outerRadius + 3} fill={withAlphaColor(firstMember.color, 0.12)} />
+                      <circle
+                        cx="0"
+                        cy="0"
+                        r={outerRadius}
+                        fill={singleBubbleFill}
+                        stroke={firstMember.color}
+                        strokeWidth="0.3"
+                        vectorEffect="non-scaling-stroke"
+                      />
                       {firstMember.avatarUrl ? (
                         <image
                           href={firstMember.avatarUrl}
-                          x={-innerRadius}
-                          y={-innerRadius}
-                          width={innerRadius * 2}
-                          height={innerRadius * 2}
+                          x={-singleBubbleContentRadius}
+                          y={-singleBubbleContentRadius}
+                          width={singleBubbleContentRadius * 2}
+                          height={singleBubbleContentRadius * 2}
                           clipPath={`url(#friend-avatar-clip-${firstMember.key})`}
                           preserveAspectRatio="xMidYMid slice"
                         />
                       ) : (
-                        <text
-                          x="0"
-                          y="0"
-                          textAnchor="middle"
-                          dominantBaseline="middle"
-                          fill={getReadableTextColor(firstMember.color, { light: '#ffffff' })}
-                          fontSize="11"
-                          fontWeight="700"
-                          fontFamily="ui-sans-serif, system-ui, sans-serif"
-                        >
-                          {getFriendInitials(firstMember.name)}
-                        </text>
+                        <>
+                          <circle cx="0" cy="0" r={singleBubbleContentRadius} fill={singleBubbleSurfaceFill} />
+                          <text
+                            x="0"
+                            y="0"
+                            textAnchor="middle"
+                            dominantBaseline="middle"
+                            fill="#ffffff"
+                            fontSize="11"
+                            fontWeight="700"
+                            fontFamily="ui-sans-serif, system-ui, sans-serif"
+                          >
+                            {getFriendInitials(firstMember.name)}
+                          </text>
+                        </>
                       )}
-                      <circle
-                        cx="0"
-                        cy="0"
-                        r={innerRadius}
-                        fill="none"
-                        stroke="white"
-                        strokeWidth="2"
-                        vectorEffect="non-scaling-stroke"
-                      />
                     </g>
                   </>
                 ) : (
                   <>
                     <defs>
                       <clipPath id={clusterFillClipId}>
-                        <circle cx="0" cy="0" r={innerRadius} />
+                        <circle cx="0" cy="0" r={clusterBubbleContentRadius} />
                       </clipPath>
                     </defs>
+                    <circle cx="0" cy="0" r={outerRadius + 3} fill={withAlphaColor(FRIEND_CLUSTER_ACCENT, 0.12)} />
                     <circle
                       cx="0"
                       cy="0"
                       r={outerRadius}
-                      fill={isHovered ? 'rgba(56,189,248,0.24)' : 'rgba(15,23,42,0.24)'}
+                      fill={clusterBubbleFill}
+                      stroke={FRIEND_CLUSTER_BORDER_STROKE}
+                      strokeWidth="2"
+                      vectorEffect="non-scaling-stroke"
                     />
                     <g clipPath={`url(#${clusterFillClipId})`}>
                       {segmentDefinitions.length > 0 ? (
@@ -1666,16 +1681,16 @@ export default function FlightMap2D({
                           ) : null}
                         </>
                       ) : (
-                        <circle cx="0" cy="0" r={innerRadius} fill="rgba(2,6,23,0.9)" />
+                        <circle cx="0" cy="0" r={clusterBubbleContentRadius} fill={FRIEND_CLUSTER_FALLBACK_FILL} />
                       )}
                     </g>
 
                     {clusterLayout === 'split-2' ? (
                       <line
                         x1="0"
-                        y1={-innerRadius}
+                        y1={-clusterBubbleContentRadius}
                         x2="0"
-                        y2={innerRadius}
+                        y2={clusterBubbleContentRadius}
                         stroke={FRIEND_CLUSTER_DIVIDER_STROKE}
                         strokeWidth="1.2"
                         vectorEffect="non-scaling-stroke"
@@ -1684,15 +1699,15 @@ export default function FlightMap2D({
                       <>
                         <line
                           x1="0"
-                          y1={-innerRadius}
+                          y1={-clusterBubbleContentRadius}
                           x2="0"
-                          y2={innerRadius}
+                          y2={clusterBubbleContentRadius}
                           stroke={FRIEND_CLUSTER_DIVIDER_STROKE}
                           strokeWidth="1.2"
                           vectorEffect="non-scaling-stroke"
                         />
                         <line
-                          x1={-innerRadius}
+                          x1={-clusterBubbleContentRadius}
                           y1="0"
                           x2="0"
                           y2="0"
@@ -1705,17 +1720,17 @@ export default function FlightMap2D({
                       <>
                         <line
                           x1="0"
-                          y1={-innerRadius}
+                          y1={-clusterBubbleContentRadius}
                           x2="0"
-                          y2={innerRadius}
+                          y2={clusterBubbleContentRadius}
                           stroke={FRIEND_CLUSTER_DIVIDER_STROKE}
                           strokeWidth="1.2"
                           vectorEffect="non-scaling-stroke"
                         />
                         <line
-                          x1={-innerRadius}
+                          x1={-clusterBubbleContentRadius}
                           y1="0"
-                          x2={innerRadius}
+                          x2={clusterBubbleContentRadius}
                           y2="0"
                           stroke={FRIEND_CLUSTER_DIVIDER_STROKE}
                           strokeWidth="1.2"
@@ -1740,9 +1755,9 @@ export default function FlightMap2D({
                     <circle
                       cx="0"
                       cy="0"
-                      r={innerRadius}
+                      r={outerRadius}
                       fill="none"
-                      stroke="white"
+                      stroke={FRIEND_CLUSTER_BORDER_STROKE}
                       strokeWidth="2"
                       vectorEffect="non-scaling-stroke"
                     />
