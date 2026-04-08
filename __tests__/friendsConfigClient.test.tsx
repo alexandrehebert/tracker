@@ -1077,7 +1077,31 @@ describe('FriendsConfigClient', () => {
     await user.type(screen.getByPlaceholderText('Weekend in Lisbon'), 'Lisbon crew');
 
     expect(screen.getByRole('button', { name: /save config/i })).toBeEnabled();
-    expect(saveBar).toHaveClass('border-amber-400/35');
+    expect(saveBar).toHaveClass('border-slate-700');
+  });
+
+  it('reverts pending changes when cancel is clicked', async () => {
+    const user = userEvent.setup();
+
+    render(<FriendsConfigClient initialConfig={initialConfig} initialCronDashboard={initialCronDashboard} />);
+
+    const tripNameInput = screen.getByDisplayValue('Lisbon') as HTMLInputElement;
+    const saveButton = screen.getByRole('button', { name: /save config/i });
+
+    await user.clear(tripNameInput);
+    await user.type(screen.getByPlaceholderText('Weekend in Lisbon'), 'Lisbon crew');
+
+    expect(saveButton).toBeEnabled();
+    expect(screen.getByRole('button', { name: /cancel/i })).toBeEnabled();
+
+    await user.click(screen.getByRole('button', { name: /cancel/i }));
+
+    await waitFor(() => {
+      expect(screen.getByDisplayValue('Lisbon')).toBeInTheDocument();
+      expect(screen.queryByDisplayValue('Lisbon crew')).not.toBeInTheDocument();
+      expect(screen.getByRole('button', { name: /save config/i })).toBeDisabled();
+      expect(screen.queryByRole('button', { name: /cancel/i })).not.toBeInTheDocument();
+    });
   });
 
   it('enables save when editing the built-in demo trip', async () => {

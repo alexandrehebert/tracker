@@ -409,6 +409,7 @@ export interface FriendsConfigContextValue {
   handleExport: () => void;
   handleImport: (event: ChangeEvent<HTMLInputElement>) => Promise<void>;
   handlePublishCurrentTrip: (nextTripId: string) => Promise<void>;
+  handleCancelPendingChanges: () => void;
   handleSave: () => Promise<void>;
 }
 
@@ -479,6 +480,13 @@ export function FriendsConfigProvider({
   const [airportTimezones, setAirportTimezones] = useState<Record<string, string>>(() => ({ ...initialAirportTimezones }));
   const [activeAirportField, setActiveAirportField] = useState<string | null>(null);
   const [lastSavedAt, setLastSavedAt] = useState<number | null>(normalizedConfig.updatedAt);
+  const [lastSavedConfig, setLastSavedConfig] = useState<FriendsTrackerConfig>({
+    ...normalizedConfig,
+    currentTripId: normalizedConfig.currentTripId ?? initialCurrentTrip?.id ?? normalizedConfig.trips?.[0]?.id ?? null,
+    cronEnabled: normalizedConfig.cronEnabled ?? true,
+    trips: normalizedConfig.trips ?? [],
+    airportTimezones: normalizedConfig.airportTimezones ?? initialAirportTimezones,
+  });
   const [savedSnapshot, setSavedSnapshot] = useState(() => buildSaveableConfigSnapshot({
     ...normalizedConfig,
     currentTripId: normalizedConfig.currentTripId ?? initialCurrentTrip?.id ?? normalizedConfig.trips?.[0]?.id ?? null,
@@ -729,12 +737,16 @@ export function FriendsConfigProvider({
       }));
     }
 
-    setSavedSnapshot(buildSaveableConfigSnapshot({
+    const canonicalSavedConfig = {
       ...normalizedNextConfig,
       currentTripId: normalizedNextConfig.currentTripId ?? nextTrips[0]?.id ?? null,
       cronEnabled: normalizedNextConfig.cronEnabled ?? true,
       trips: nextTrips,
-    }, demoReferenceTime));
+      airportTimezones: nextConfig.airportTimezones ?? normalizedNextConfig.airportTimezones ?? {},
+    } satisfies FriendsTrackerConfig;
+
+    setLastSavedConfig(canonicalSavedConfig);
+    setSavedSnapshot(buildSaveableConfigSnapshot(canonicalSavedConfig, demoReferenceTime));
 
     const nextChantalIdentifiers = normalizedNextConfig.cronEnabled === false
       ? []
@@ -1378,6 +1390,21 @@ export function FriendsConfigProvider({
     });
   }
 
+  function handleCancelPendingChanges() {
+    if (!hasPendingChanges || isSaving || isSavingCronToggle) {
+      return;
+    }
+
+    setFlightValidationResults({});
+    setValidationModal(null);
+    setActiveAirportField(null);
+    setAirportSuggestions([]);
+    setTripPendingRemovalId(null);
+    setNotice(null);
+    setJsonNotice(null);
+    applySavedConfig(lastSavedConfig);
+  }
+
   async function handleSave() {
     await persistConfig(undefined, {
       updatedBy: 'chantal config page',
@@ -1446,6 +1473,7 @@ export function FriendsConfigProvider({
     handleExport,
     handleImport,
     handlePublishCurrentTrip,
+    handleCancelPendingChanges,
     handleSave,
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }), [
@@ -1480,6 +1508,7 @@ export function FriendsConfigProvider({
     flightValidationResults,
     combinedFlightValidationResults,
     validationModal,
+    lastSavedConfig,
   ]);
 
   return (
