@@ -1189,6 +1189,8 @@ function FriendsTrackerDashboard({
       const searchParams = new URLSearchParams({ q: identifiersQuery });
       if (forceRefresh) {
         searchParams.set('refresh', '1');
+      } else {
+        searchParams.set('cacheonly', '1');
       }
 
       const response = await fetch(`/api/tracker?${searchParams.toString()}`, {

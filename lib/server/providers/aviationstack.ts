@@ -1,6 +1,6 @@
 import { geoNaturalEarth1 } from 'd3-geo';
 import type { FlightSourceDetail } from '~/components/tracker/flight/types';
-import { getProviderDisabledReason, isProviderEnabled } from './index';
+import { getProviderDisabledReason, getProviderDisabledReasonAsync, isProviderEnabled } from './index';
 import { isProviderHistoryConfigured, readLatestProviderHistory, writeProviderHistory } from './history';
 import { recordProviderRequestLog } from './observability';
 
@@ -491,16 +491,27 @@ export async function lookupAviationstackFlightWithReport(identifier: string): P
     };
   }
 
-  if (!isAviationstackConfigured()) {
-    const disabledReason = getProviderDisabledReason('aviationstack');
-
+  const dbDisabledReason = await getProviderDisabledReasonAsync('aviationstack');
+  if (dbDisabledReason) {
     return {
       match: null,
       report: createAviationstackReport(
         'skipped',
-        disabledReason ?? 'Aviationstack lookup skipped because `AVIATION_STACK_API_KEY` is not configured.',
+        dbDisabledReason,
         false,
-        { identifier: normalizedIdentifier, disabledByFlag: Boolean(disabledReason) },
+        { identifier: normalizedIdentifier, disabledByFlag: true },
+      ),
+    };
+  }
+
+  if (!isAviationstackConfigured()) {
+    return {
+      match: null,
+      report: createAviationstackReport(
+        'skipped',
+        'Aviationstack lookup skipped because `AVIATION_STACK_API_KEY` is not configured.',
+        false,
+        { identifier: normalizedIdentifier, disabledByFlag: false },
       ),
     };
   }

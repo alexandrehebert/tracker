@@ -96,9 +96,11 @@ type ParsedState = {
 
 type SearchFlightsOptions = {
   forceRefresh?: boolean;
+  /** When true, return only cached data (including stale entries) without calling any provider. */
+  cacheOnly?: boolean;
 };
 
-type DemoFlightIdentifier = 'TEST1' | 'TEST2' | 'TEST3' | 'TEST4' | 'TEST5' | 'TEST6';
+type DemoFlightIdentifier = 'TEST1' | 'TEST2' | 'TEST3' | 'TEST4' | 'TEST5' | 'TEST6' | 'TEST7' | 'TEST8' | 'TEST9' | 'TEST10';
 
 function isDemoFlightIdentifier(value: string): value is DemoFlightIdentifier {
   return value === 'TEST1'
@@ -106,7 +108,11 @@ function isDemoFlightIdentifier(value: string): value is DemoFlightIdentifier {
     || value === 'TEST3'
     || value === 'TEST4'
     || value === 'TEST5'
-    || value === 'TEST6';
+    || value === 'TEST6'
+    || value === 'TEST7'
+    || value === 'TEST8'
+    || value === 'TEST9'
+    || value === 'TEST10';
 }
 
 function resolveDemoFlightIdentifier(value: string): DemoFlightIdentifier | null {
@@ -114,7 +120,7 @@ function resolveDemoFlightIdentifier(value: string): DemoFlightIdentifier | null
     return value;
   }
 
-  const normalizedAlias = value.match(/^DEMO[-_]?(TEST[1-6])$/)?.[1] ?? null;
+  const normalizedAlias = value.match(/^DEMO[-_]?(TEST(?:[1-9]|10))$/)?.[1] ?? null;
   return normalizedAlias as DemoFlightIdentifier | null;
 }
 
@@ -748,6 +754,326 @@ function createDemoTrackedFlight(identifier: DemoFlightIdentifier, nowSeconds = 
               route: {
                 departureAirport: 'DFW',
                 arrivalAirport: 'ICN',
+              },
+            },
+          ),
+        ],
+      };
+    }
+    case 'TEST7': {
+      // Pre-departure gate hold at AMS (AMS → JFK, upcoming connection ~70 min away)
+      const track = [
+        createDemoFlightPoint({
+          time: nowSeconds - 1_800,
+          latitude: 52.3105,
+          longitude: 4.7683,
+          altitude: 0,
+          heading: 270,
+          onGround: true,
+        }),
+        createDemoFlightPoint({
+          time: nowSeconds - 300,
+          latitude: 52.3091,
+          longitude: 4.7661,
+          altitude: 0,
+          heading: 271,
+          onGround: true,
+        }),
+      ];
+      const current = track.at(-1) ?? null;
+
+      return {
+        icao24: 'demo-test7',
+        callsign: 'KLM641',
+        originCountry: 'Netherlands',
+        matchedBy: [identifier],
+        lastContact: current?.time ?? nowSeconds - 300,
+        current,
+        originPoint: track[0] ?? current,
+        track,
+        rawTrack: track,
+        onGround: true,
+        velocity: 0,
+        heading: current?.heading ?? 271,
+        verticalRate: 0,
+        geoAltitude: 0,
+        baroAltitude: 0,
+        squawk: '2732',
+        category: 1,
+        route: {
+          departureAirport: 'AMS',
+          arrivalAirport: 'JFK',
+          firstSeen: null,
+          lastSeen: null,
+        },
+        flightNumber: 'KL 641',
+        airline: {
+          name: 'KLM Royal Dutch Airlines',
+          iata: 'KL',
+          icao: 'KLM',
+        },
+        aircraft: {
+          registration: 'PH-BVD',
+          iata: 'B772',
+          icao: 'B772',
+          icao24: 'demo-test7',
+          model: 'Boeing 777-200',
+        },
+        dataSource: 'opensky',
+        sourceDetails: [
+          createSourceDetail(
+            'opensky',
+            'used',
+            true,
+            'Built-in demo result for TEST7: KLM KLM641 is at the gate at Amsterdam Schiphol, pre-departure for the transatlantic leg to New York JFK.',
+            {
+              demoIdentifier: identifier,
+              scenario: 'pre-departure-gate',
+              route: {
+                departureAirport: 'AMS',
+                arrivalAirport: 'JFK',
+              },
+            },
+          ),
+        ],
+      };
+    }
+    case 'TEST8': {
+      // Completed feeder hop, on ground at MAD (LIS → MAD, arrived ~5 hours ago)
+      const track = [
+        createDemoFlightPoint({
+          time: nowSeconds - 18_000,
+          latitude: 38.7813,
+          longitude: -9.1359,
+          altitude: 0,
+          heading: 55,
+          onGround: true,
+        }),
+        createDemoFlightPoint({
+          time: nowSeconds - 16_800,
+          latitude: 38.94,
+          longitude: -8.76,
+          altitude: 2_600,
+          heading: 52,
+          onGround: false,
+        }),
+        createDemoFlightPoint({
+          time: nowSeconds - 14_400,
+          latitude: 39.82,
+          longitude: -6.44,
+          altitude: 9_800,
+          heading: 50,
+          onGround: false,
+        }),
+        createDemoFlightPoint({
+          time: nowSeconds - 12_000,
+          latitude: 40.52,
+          longitude: -4.11,
+          altitude: 5_200,
+          heading: 48,
+          onGround: false,
+        }),
+        createDemoFlightPoint({
+          time: nowSeconds - 10_800,
+          latitude: 40.4722,
+          longitude: -3.5608,
+          altitude: 0,
+          heading: 45,
+          onGround: true,
+        }),
+      ];
+      const current = track.at(-1) ?? null;
+
+      return {
+        icao24: 'demo-test8',
+        callsign: 'VLG1153',
+        originCountry: 'Spain',
+        matchedBy: [identifier],
+        lastContact: current?.time ?? nowSeconds - 10_800,
+        current,
+        originPoint: track[0] ?? current,
+        track,
+        rawTrack: track,
+        onGround: true,
+        velocity: 5,
+        heading: current?.heading ?? 45,
+        verticalRate: 0,
+        geoAltitude: 0,
+        baroAltitude: 0,
+        squawk: '3211',
+        category: 1,
+        route: {
+          departureAirport: 'LIS',
+          arrivalAirport: 'MAD',
+          firstSeen: nowSeconds - 18_000,
+          lastSeen: nowSeconds - 10_800,
+        },
+        flightNumber: 'VY 1153',
+        airline: {
+          name: 'Vueling Airlines',
+          iata: 'VY',
+          icao: 'VLG',
+        },
+        aircraft: {
+          registration: 'EC-MXY',
+          iata: 'A320',
+          icao: 'A320',
+          icao24: 'demo-test8',
+          model: 'Airbus A320',
+        },
+        dataSource: 'opensky',
+        sourceDetails: [
+          createSourceDetail(
+            'opensky',
+            'used',
+            true,
+            'Built-in demo result for TEST8: Vueling VLG1153 has completed the feeder hop from Lisbon to Madrid and is now on the ground at the connection point.',
+            {
+              demoIdentifier: identifier,
+              scenario: 'feeder-landed',
+              route: {
+                departureAirport: 'LIS',
+                arrivalAirport: 'MAD',
+              },
+            },
+          ),
+        ],
+      };
+    }
+    case 'TEST9': {
+      // Future feeder on ground at FCO (FCO → CDG, departure ~7 hours away)
+      const track = [
+        createDemoFlightPoint({
+          time: nowSeconds - 600,
+          latitude: 41.8003,
+          longitude: 12.2389,
+          altitude: 0,
+          heading: 180,
+          onGround: true,
+        }),
+      ];
+      const current = track.at(-1) ?? null;
+
+      return {
+        icao24: 'demo-test9',
+        callsign: 'AFR1840',
+        originCountry: 'France',
+        matchedBy: [identifier],
+        lastContact: current?.time ?? nowSeconds - 600,
+        current,
+        originPoint: track[0] ?? current,
+        track,
+        rawTrack: track,
+        onGround: true,
+        velocity: 0,
+        heading: 180,
+        verticalRate: 0,
+        geoAltitude: 0,
+        baroAltitude: 0,
+        squawk: null,
+        category: 1,
+        route: {
+          departureAirport: 'FCO',
+          arrivalAirport: 'CDG',
+          firstSeen: null,
+          lastSeen: null,
+        },
+        flightNumber: 'AF 1840',
+        airline: {
+          name: 'Air France',
+          iata: 'AF',
+          icao: 'AFR',
+        },
+        aircraft: {
+          registration: 'F-GZNP',
+          iata: 'B788',
+          icao: 'B788',
+          icao24: 'demo-test9',
+          model: 'Boeing 787-8',
+        },
+        dataSource: 'opensky',
+        sourceDetails: [
+          createSourceDetail(
+            'opensky',
+            'used',
+            true,
+            'Built-in demo result for TEST9: Air France AFR1840 is parked at Rome Fiumicino, awaiting its feeder flight to Paris CDG departing in several hours.',
+            {
+              demoIdentifier: identifier,
+              scenario: 'pre-departure-future',
+              route: {
+                departureAirport: 'FCO',
+                arrivalAirport: 'CDG',
+              },
+            },
+          ),
+        ],
+      };
+    }
+    case 'TEST10': {
+      // Future long-haul on ground at CDG (CDG → JFK, departure ~10 hours away)
+      const track = [
+        createDemoFlightPoint({
+          time: nowSeconds - 600,
+          latitude: 49.0097,
+          longitude: 2.5479,
+          altitude: 0,
+          heading: 90,
+          onGround: true,
+        }),
+      ];
+      const current = track.at(-1) ?? null;
+
+      return {
+        icao24: 'demo-test10',
+        callsign: 'AFR022',
+        originCountry: 'France',
+        matchedBy: [identifier],
+        lastContact: current?.time ?? nowSeconds - 600,
+        current,
+        originPoint: track[0] ?? current,
+        track,
+        rawTrack: track,
+        onGround: true,
+        velocity: 0,
+        heading: 90,
+        verticalRate: 0,
+        geoAltitude: 0,
+        baroAltitude: 0,
+        squawk: null,
+        category: 1,
+        route: {
+          departureAirport: 'CDG',
+          arrivalAirport: 'JFK',
+          firstSeen: null,
+          lastSeen: null,
+        },
+        flightNumber: 'AF 22',
+        airline: {
+          name: 'Air France',
+          iata: 'AF',
+          icao: 'AFR',
+        },
+        aircraft: {
+          registration: 'F-GSPS',
+          iata: 'B77W',
+          icao: 'B77W',
+          icao24: 'demo-test10',
+          model: 'Boeing 777-300ER',
+        },
+        dataSource: 'opensky',
+        sourceDetails: [
+          createSourceDetail(
+            'opensky',
+            'used',
+            true,
+            'Built-in demo result for TEST10: Air France AFR022 is on stand at Paris Charles de Gaulle, well ahead of its scheduled long-haul departure to New York JFK.',
+            {
+              demoIdentifier: identifier,
+              scenario: 'pre-departure-future',
+              route: {
+                departureAirport: 'CDG',
+                arrivalAirport: 'JFK',
               },
             },
           ),
@@ -1702,9 +2028,20 @@ export async function searchFlights(query: string, options: SearchFlightsOptions
   const cacheKey = buildSearchCacheKey(requestedIdentifiers);
 
   const inFlightKey = options.forceRefresh ? `${cacheKey}:force` : cacheKey;
-  const cachedResult = options.forceRefresh ? null : await readFlightSearchCache(cacheKey);
+  const cachedResult = options.forceRefresh ? null : await readFlightSearchCache(cacheKey, options.cacheOnly);
   if (cachedResult && payloadHasRawTrackData(cachedResult)) {
     return mergeWithDemoPayload(cachedResult);
+  }
+
+  if (options.cacheOnly) {
+    return mergeWithDemoPayload({
+      query: trimmedQuery,
+      requestedIdentifiers,
+      matchedIdentifiers: [],
+      notFoundIdentifiers: remainingIdentifiers,
+      fetchedAt: Date.now(),
+      flights: [],
+    });
   }
 
   const existingSearch = inFlightSearches.get(inFlightKey);

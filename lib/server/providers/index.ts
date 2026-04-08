@@ -1,4 +1,5 @@
 import type { FlightSourceName } from '~/components/tracker/flight/types';
+import { getCachedProviderOverrides } from './overrides';
 
 export type ProviderName = FlightSourceName;
 
@@ -80,8 +81,27 @@ export function getProviderDisabledReason(name: ProviderName): string | null {
   return null;
 }
 
+export async function getProviderDisabledReasonAsync(name: ProviderName): Promise<string | null> {
+  const overrides = await getCachedProviderOverrides();
+  const override = overrides[name];
+
+  if (override === 'disabled') {
+    return `${PROVIDER_LABELS[name]} provider is disabled via the admin control panel.`;
+  }
+
+  if (override === 'enabled') {
+    return null;
+  }
+
+  return getProviderDisabledReason(name);
+}
+
 export function isProviderEnabled(name: ProviderName): boolean {
   return getProviderDisabledReason(name) == null;
+}
+
+export async function isProviderEnabledAsync(name: ProviderName): Promise<boolean> {
+  return (await getProviderDisabledReasonAsync(name)) == null;
 }
 
 export function getEnabledProviders(): ProviderName[] {

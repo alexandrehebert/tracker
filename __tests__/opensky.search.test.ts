@@ -63,6 +63,17 @@ vi.mock('mongodb', () => {
                 upsertedCount: current._id ? 0 : 1,
               };
             },
+            find(_query: Record<string, unknown>) {
+              return {
+                async toArray() {
+                  return [...store.values()].map((doc) => structuredClone(doc));
+                },
+              };
+            },
+            async deleteOne(filter: { _id: string }) {
+              store.delete(filter._id);
+              return { acknowledged: true, deletedCount: 1 };
+            },
           };
         },
       };

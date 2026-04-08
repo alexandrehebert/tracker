@@ -10,15 +10,16 @@ export const maxDuration = 30;
 export async function GET(request: NextRequest) {
   const query = request.nextUrl.searchParams.get('q')?.trim() ?? '';
   const forceRefresh = ['1', 'true', 'yes'].includes(request.nextUrl.searchParams.get('refresh')?.trim().toLowerCase() ?? '');
+  const cacheOnly = !forceRefresh && ['1', 'true', 'yes'].includes(request.nextUrl.searchParams.get('cacheonly')?.trim().toLowerCase() ?? '');
 
   try {
     const payload = await withProviderRequestContext(
       {
         caller: 'on-demand',
         source: 'tracker-search',
-        metadata: { query, forceRefresh },
+        metadata: { query, forceRefresh, cacheOnly },
       },
-      () => searchFlights(query, { forceRefresh }),
+      () => searchFlights(query, { forceRefresh, cacheOnly }),
     );
     return NextResponse.json(payload, {
       headers: {

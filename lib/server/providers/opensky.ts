@@ -3,7 +3,7 @@ import { Agent } from 'undici';
 import { geoNaturalEarth1 } from 'd3-geo';
 import type { AirportDetails, FlightMapPoint, TrackedFlightRoute } from '~/components/tracker/flight/types';
 import { guessNearestAirportDetails } from '~/lib/server/airports';
-import { getProviderDisabledReason, isProviderEnabled } from './index';
+import { getProviderDisabledReason, getProviderDisabledReasonAsync, isProviderEnabled } from './index';
 import { recordProviderRequestLog } from './observability';
 
 const DEFAULT_DB_NAME = 'tracker';
@@ -817,7 +817,7 @@ function normalizeTrackHistory(points: FlightMapPoint[]): FlightMapPoint[] {
 }
 
 async function readCredentialsFromEnv(): Promise<Credentials> {
-  const disabledReason = getProviderDisabledReason('opensky');
+  const disabledReason = await getProviderDisabledReasonAsync('opensky');
   if (disabledReason) {
     throw new Error(disabledReason);
   }

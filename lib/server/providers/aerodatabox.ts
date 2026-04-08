@@ -1,6 +1,6 @@
 import { geoNaturalEarth1 } from 'd3-geo';
 import type { FlightSourceDetail } from '~/components/tracker/flight/types';
-import { getProviderDisabledReason, isProviderEnabled } from './index';
+import { getProviderDisabledReason, getProviderDisabledReasonAsync, isProviderEnabled } from './index';
 import { isProviderHistoryConfigured, readLatestProviderHistory, writeProviderHistory } from './history';
 import { recordProviderRequestLog } from './observability';
 
@@ -619,16 +619,27 @@ export async function lookupAeroDataBoxFlightWithReport(
     };
   }
 
-  if (!isAeroDataBoxConfigured()) {
-    const disabledReason = getProviderDisabledReason('aerodatabox');
-
+  const dbDisabledReason = await getProviderDisabledReasonAsync('aerodatabox');
+  if (dbDisabledReason) {
     return {
       match: null,
       report: createAeroDataBoxReport(
         'skipped',
-        disabledReason ?? 'AeroDataBox lookup skipped because `AERODATABOX_RAPIDAPI_KEY` (or `RAPIDAPI_AERODATABOX_API_KEY`) is not configured.',
+        dbDisabledReason,
         false,
-        { identifier: normalizedIdentifier, disabledByFlag: Boolean(disabledReason) },
+        { identifier: normalizedIdentifier, disabledByFlag: true },
+      ),
+    };
+  }
+
+  if (!isAeroDataBoxConfigured()) {
+    return {
+      match: null,
+      report: createAeroDataBoxReport(
+        'skipped',
+        'AeroDataBox lookup skipped because `AERODATABOX_RAPIDAPI_KEY` (or `RAPIDAPI_AERODATABOX_API_KEY`) is not configured.',
+        false,
+        { identifier: normalizedIdentifier, disabledByFlag: false },
       ),
     };
   }
