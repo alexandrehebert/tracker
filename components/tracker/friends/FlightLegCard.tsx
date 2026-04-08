@@ -1,6 +1,6 @@
 'use client';
 
-import { ArrowDown, ArrowUp, PlaneTakeoff, RefreshCw, Trash2 } from 'lucide-react';
+import { ArrowDown, ArrowUp, CheckCircle2, PlaneTakeoff, RefreshCw, Trash2 } from 'lucide-react';
 import { useFriendsConfig } from './FriendsConfigContext';
 import { AirportAutocomplete } from './AirportAutocomplete';
 import { getAirportFieldKey, normalizeAirportCode } from '~/lib/utils/airportUtils';
@@ -35,6 +35,8 @@ export function FlightLegCard({ friendId, leg, legIndex, totalLegs }: FlightLegC
   const toSuggestions = activeAirportField === toFieldKey ? airportSuggestions : [];
   const hasOpenSuggestions = fromSuggestions.length > 0 || toSuggestions.length > 0;
   const validationResult = flightValidationResults[leg.id];
+  const hasAppliedValidation = leg.validatedFlight?.status === 'matched' || leg.validatedFlight?.status === 'warning';
+  const isValidationLoading = validationResult?.status === 'loading';
 
   function formatValidationTimestamp(value: number | null): string | null {
     if (value == null || !Number.isFinite(value)) {
@@ -89,14 +91,20 @@ export function FlightLegCard({ friendId, leg, legIndex, totalLegs }: FlightLegC
           </button>
           <button
             type="button"
-            aria-label={`Validate flight for leg ${legIndex + 1}`}
+            aria-label={`${hasAppliedValidation ? 'Validated' : 'Validate'} flight for leg ${legIndex + 1}`}
             onClick={() => {
               void validateFlightLeg(friendId, leg.id);
             }}
-            className="inline-flex items-center gap-1 rounded-full border border-sky-400/30 bg-sky-500/10 px-3 py-1.5 text-xs font-medium text-sky-100 transition hover:bg-sky-500/20"
+            className={`inline-flex items-center gap-1 rounded-full border px-3 py-1.5 text-xs font-medium transition ${hasAppliedValidation
+              ? 'border-emerald-400/40 bg-emerald-500/10 text-emerald-50 hover:bg-emerald-500/20'
+              : 'border-sky-400/30 bg-sky-500/10 text-sky-100 hover:bg-sky-500/20'}`}
           >
-            <RefreshCw className="h-3.5 w-3.5" />
-            Validate flight
+            {hasAppliedValidation ? (
+              <CheckCircle2 className="h-3.5 w-3.5" />
+            ) : (
+              <RefreshCw className={`h-3.5 w-3.5 ${isValidationLoading ? 'animate-spin' : ''}`} />
+            )}
+            {isValidationLoading ? 'Validating…' : hasAppliedValidation ? 'Validated' : 'Validate flight'}
           </button>
           <button
             type="button"
@@ -124,7 +132,7 @@ export function FlightLegCard({ friendId, leg, legIndex, totalLegs }: FlightLegC
             value={leg.flightNumber}
             onChange={(event) => {
               const flightNumber = event.target.value;
-              updateLeg((l) => ({ ...l, flightNumber }));
+              updateLeg((l) => ({ ...l, flightNumber, validatedFlight: null }));
             }}
             placeholder="AF123"
             className="w-full rounded-2xl border border-white/10 bg-slate-950/90 px-3 py-2 text-sm text-slate-100 outline-none transition focus:border-cyan-400/60 focus:ring-2 focus:ring-cyan-500/20"
@@ -139,7 +147,7 @@ export function FlightLegCard({ friendId, leg, legIndex, totalLegs }: FlightLegC
               value={hasHydrated ? toDateTimeLocalValue(leg.departureTime, departureTimezone) : ''}
               onChange={(event) => {
                 const departureTime = fromDateTimeLocalValue(event.target.value, departureTimezone);
-                updateLeg((l) => ({ ...l, departureTime }));
+                updateLeg((l) => ({ ...l, departureTime, validatedFlight: null }));
               }}
               className="w-full rounded-2xl border border-white/10 bg-slate-950/90 px-3 py-2 text-sm text-slate-100 outline-none transition focus:border-cyan-400/60 focus:ring-2 focus:ring-cyan-500/20"
               aria-busy={!hasHydrated}
@@ -170,10 +178,10 @@ export function FlightLegCard({ friendId, leg, legIndex, totalLegs }: FlightLegC
             legId={leg.id}
             onChange={(from) => {
               const nextDepartureTimezone = airportTimezones[normalizeAirportCode(from)] ?? null;
-              updateLeg((l) => ({ ...l, from, departureTimezone: nextDepartureTimezone }));
+              updateLeg((l) => ({ ...l, from, departureTimezone: nextDepartureTimezone, validatedFlight: null }));
             }}
             onSelectAirport={(code, timezone) => {
-              updateLeg((l) => ({ ...l, from: code, departureTimezone: timezone }));
+              updateLeg((l) => ({ ...l, from: code, departureTimezone: timezone, validatedFlight: null }));
             }}
           />
         </div>
@@ -187,10 +195,10 @@ export function FlightLegCard({ friendId, leg, legIndex, totalLegs }: FlightLegC
             listboxLabel={`Arrival airport suggestions for leg ${legIndex + 1}`}
             legId={leg.id}
             onChange={(to) => {
-              updateLeg((l) => ({ ...l, to }));
+              updateLeg((l) => ({ ...l, to, validatedFlight: null }));
             }}
             onSelectAirport={(code) => {
-              updateLeg((l) => ({ ...l, to: code }));
+              updateLeg((l) => ({ ...l, to: code, validatedFlight: null }));
             }}
           />
         </div>
@@ -216,7 +224,7 @@ export function FlightLegCard({ friendId, leg, legIndex, totalLegs }: FlightLegC
           <button
             type="button"
             onClick={() => {
-              updateLeg((l) => ({ ...l, resolvedIcao24: null, lastResolvedAt: null }));
+              updateLeg((l) => ({ ...l, resolvedIcao24: null, lastResolvedAt: null, validatedFlight: null }));
             }}
             className="rounded-full border border-white/10 bg-slate-900/80 px-2.5 py-1 font-medium text-slate-200 transition hover:border-white/20 hover:bg-slate-900"
           >

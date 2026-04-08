@@ -1,7 +1,11 @@
 'use client';
 
 import { Check, RefreshCw, X } from 'lucide-react';
-import { useFriendsConfig, type FlightValidationModalCandidate } from './FriendsConfigContext';
+import {
+  useFriendsConfig,
+  type FlightValidationModalCandidate,
+  type FlightValidationProviderId,
+} from './FriendsConfigContext';
 
 function formatTimestampMs(value: number | null, locale: string): string | null {
   if (value == null || !Number.isFinite(value)) {
@@ -26,6 +30,33 @@ interface CandidateCardProps {
 }
 
 const TIMING_WARNING_THRESHOLD_MINUTES = 180;
+
+const VALIDATION_PROVIDER_OPTIONS: Array<{
+  id: FlightValidationProviderId;
+  label: string;
+  description: string;
+}> = [
+  {
+    id: 'tracker',
+    label: 'Tracker search',
+    description: 'Live and recent telemetry already known by the tracker.',
+  },
+  {
+    id: 'flightaware',
+    label: 'FlightAware',
+    description: 'Premium airline schedule and equipment lookup.',
+  },
+  {
+    id: 'aviationstack',
+    label: 'Aviationstack',
+    description: 'Scheduled flight metadata and route details.',
+  },
+  {
+    id: 'aerodatabox',
+    label: 'AeroDataBox',
+    description: 'On-demand RapidAPI lookup for manual validation.',
+  },
+];
 
 function CandidateCard({ candidate, locale, onApply }: CandidateCardProps) {
   const hasDelta = candidate.departureDeltaMinutes != null;
@@ -96,14 +127,22 @@ function CandidateCard({ candidate, locale, onApply }: CandidateCardProps) {
 }
 
 export function FlightValidationModal() {
-  const { locale, validationModal, closeValidationModal, applyValidationCandidate } = useFriendsConfig();
+  const {
+    locale,
+    validationModal,
+    closeValidationModal,
+    applyValidationCandidate,
+    runValidationModal,
+    toggleValidationProvider,
+  } = useFriendsConfig();
 
   if (!validationModal) {
     return null;
   }
 
-  const { identifier, status, candidates, message } = validationModal;
+  const { identifier, status, selectedProviders, candidates, message } = validationModal;
   const isLoading = status === 'loading';
+  const selectedProviderCount = Object.values(selectedProviders).filter(Boolean).length;
 
   return (
     <div
@@ -114,7 +153,7 @@ export function FlightValidationModal() {
         role="dialog"
         aria-modal="true"
         aria-label={`Validate flight ${identifier}`}
-        className="w-full max-w-xl overflow-hidden rounded-3xl border border-sky-400/25 bg-slate-950/97 shadow-2xl shadow-slate-950/40"
+        className="w-full max-w-2xl overflow-hidden rounded-3xl border border-sky-400/25 bg-slate-950/97 shadow-2xl shadow-slate-950/40"
         onClick={(event) => event.stopPropagation()}
       >
         <div className="flex items-start justify-between gap-3 border-b border-white/10 px-4 py-3">
@@ -132,7 +171,53 @@ export function FlightValidationModal() {
           </button>
         </div>
 
-        <div className="px-4 py-4">
+        <div className="space-y-4 px-4 py-4">
+          <div className="rounded-2xl border border-white/10 bg-slate-900/60 p-3">
+            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-sky-200">Select provider(s)</p>
+            <div className="mt-3 grid gap-2 sm:grid-cols-2">
+              {VALIDATION_PROVIDER_OPTIONS.map((option) => {
+                const isSelected = selectedProviders[option.id];
+                return (
+                  <button
+                    key={option.id}
+                    type="button"
+                    aria-pressed={isSelected}
+                    aria-label={`Select provider ${option.label}`}
+                    onClick={() => toggleValidationProvider(option.id)}
+                    className={`rounded-2xl border px-3 py-2 text-left transition ${isSelected
+                      ? 'border-cyan-400/40 bg-cyan-500/10 text-cyan-50'
+                      : 'border-white/10 bg-slate-950/70 text-slate-300 hover:border-white/20 hover:bg-slate-900'}`}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-sm font-semibold">{option.label}</span>
+                      {isSelected ? <Check className="h-4 w-4" /> : null}
+                    </div>
+                    <p className="mt-1 text-[11px] opacity-85">{option.description}</p>
+                  </button>
+                );
+              })}
+            </div>
+
+            <div className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+              <p className="text-xs text-slate-400">
+                {selectedProviderCount > 0
+                  ? `${selectedProviderCount} provider${selectedProviderCount === 1 ? '' : 's'} selected.`
+                  : 'Select at least one provider before running validation.'}
+              </p>
+              <button
+                type="button"
+                onClick={() => {
+                  void runValidationModal();
+                }}
+                disabled={isLoading || selectedProviderCount === 0}
+                className="inline-flex items-center justify-center gap-2 rounded-full border border-cyan-400/40 bg-cyan-500/15 px-4 py-2 text-sm font-semibold text-cyan-100 transition hover:bg-cyan-500/25 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <RefreshCw className={`h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
+                {isLoading ? 'Running…' : 'Run validation'}
+              </button>
+            </div>
+          </div>
+
           {isLoading ? (
             <div className="flex items-center gap-3 rounded-2xl border border-sky-400/20 bg-sky-500/8 px-4 py-4 text-sm text-sky-100">
               <RefreshCw className="h-4 w-4 shrink-0 animate-spin" />
@@ -142,7 +227,7 @@ export function FlightValidationModal() {
             <div className="space-y-3">
               <p className="text-xs text-slate-400">
                 {candidates.length === 1
-                  ? '1 provider match found. Review the details and click Apply to lock the ICAO24.'
+                  ? '1 provider match found. Review the details and click Apply to attach it to this leg.'
                   : `${candidates.length} provider matches found, sorted by best fit. Review and click Apply on the correct one.`}
               </p>
               {candidates.map((candidate, index) => (
@@ -154,12 +239,16 @@ export function FlightValidationModal() {
                 />
               ))}
             </div>
-          ) : (
-            <div className={`rounded-2xl border px-4 py-3 text-sm ${status === 'error' ? 'border-rose-400/30 bg-rose-500/10 text-rose-100' : 'border-slate-400/20 bg-slate-900/60 text-slate-300'}`}>
-              <p className="font-semibold">{status === 'error' ? 'Validation error' : 'No provider match found'}</p>
-              {message ? <p className="mt-1 text-xs opacity-90">{message}</p> : null}
+          ) : message ? (
+            <div className={`rounded-2xl border px-4 py-3 text-sm ${status === 'error'
+              ? 'border-rose-400/30 bg-rose-500/10 text-rose-100'
+              : status === 'setup'
+                ? 'border-slate-400/20 bg-slate-900/60 text-slate-300'
+                : 'border-slate-400/20 bg-slate-900/60 text-slate-300'}`}>
+              <p className="font-semibold">{status === 'error' ? 'Validation error' : status === 'setup' ? 'Choose providers' : 'No provider match found'}</p>
+              <p className="mt-1 text-xs opacity-90">{message}</p>
             </div>
-          )}
+          ) : null}
         </div>
 
         <div className="flex justify-end border-t border-white/10 px-4 py-3">

@@ -56,6 +56,27 @@ type ValidationCandidate = {
   sourceDetails: FlightSourceDetail[];
 };
 
+type ValidationProviderSelection = {
+  tracker: boolean;
+  flightaware: boolean;
+  aviationstack: boolean;
+  aerodatabox: boolean;
+};
+
+function buildSelectedProviders(
+  input: Partial<ValidationProviderSelection> | null | undefined,
+  includeOnDemandProviders: boolean,
+): ValidationProviderSelection {
+  const hasExplicitSelection = Boolean(input && typeof input === 'object');
+
+  return {
+    tracker: hasExplicitSelection ? input?.tracker === true : true,
+    flightaware: hasExplicitSelection ? input?.flightaware === true : true,
+    aviationstack: hasExplicitSelection ? input?.aviationstack === true : true,
+    aerodatabox: hasExplicitSelection ? input?.aerodatabox === true : includeOnDemandProviders,
+  };
+}
+
 function scoreCandidate(
   candidate: ValidationCandidate,
   request: { departureTimeMs: number | null; from: string | null; to: string | null },
@@ -113,6 +134,7 @@ export async function POST(request: NextRequest) {
       to?: string | null;
       legId?: string | null;
       includeOnDemandProviders?: boolean | null;
+      providers?: Partial<ValidationProviderSelection> | null;
     };
 
     const identifier = normalizeFriendFlightIdentifier(body.identifier ?? body.flightNumber ?? null);
@@ -125,6 +147,12 @@ export async function POST(request: NextRequest) {
     const from = normalizeAirportCode(body.from);
     const to = normalizeAirportCode(body.to);
     const includeOnDemandProviders = body.includeOnDemandProviders === true;
+    const selectedProviders = buildSelectedProviders(body.providers, includeOnDemandProviders);
+
+    if (!Object.values(selectedProviders).some(Boolean)) {
+      return NextResponse.json({ error: 'Select at least one provider before running validation.' }, { status: 400 });
+    }
+
     const withConfigContext = <T,>(callback: () => Promise<T>) => withProviderRequestContext(
       {
         caller: 'config',
@@ -133,17 +161,30 @@ export async function POST(request: NextRequest) {
           identifier,
           legId: typeof body.legId === 'string' ? body.legId : null,
           includeOnDemandProviders,
+          providers: Object.entries(selectedProviders)
+            .filter(([, enabled]) => enabled)
+            .map(([provider]) => provider),
         },
       },
       callback,
     );
 
     const [flightAwareLookup, aviationstackLookup, aeroDataBoxLookup] = await withConfigContext(() => Promise.all([
-      lookupFlightAwareFlightWithReport(identifier, {
-        referenceTimeMs: Number.isFinite(departureTimeMs) ? departureTimeMs : undefined,
-      }),
-      lookupAviationstackFlightWithReport(identifier),
-      includeOnDemandProviders
+      selectedProviders.flightaware
+        ? lookupFlightAwareFlightWithReport(identifier, {
+            referenceTimeMs: Number.isFinite(departureTimeMs) ? departureTimeMs : undefined,
+          })
+        : Promise.resolve({
+            match: null,
+            report: createSkippedReport('flightaware', 'FlightAware was not selected for this validation run.'),
+          }),
+      selectedProviders.aviationstack
+        ? lookupAviationstackFlightWithReport(identifier)
+        : Promise.resolve({
+            match: null,
+            report: createSkippedReport('aviationstack', 'Aviationstack was not selected for this validation run.'),
+          }),
+      selectedProviders.aerodatabox
         ? lookupAeroDataBoxFlightWithReport(identifier, {
             referenceTimeMs: Number.isFinite(departureTimeMs) ? departureTimeMs : undefined,
           })
@@ -151,7 +192,7 @@ export async function POST(request: NextRequest) {
             match: null,
             report: createSkippedReport(
               'aerodatabox',
-              'AeroDataBox is reserved for the per-flight “Validate flight” button so the RapidAPI quota is only used on demand.',
+              'AeroDataBox was not selected for this validation run.',
             ),
           }),
     ]));
@@ -212,14 +253,16 @@ export async function POST(request: NextRequest) {
       lastResolvedAt: null,
     };
 
-    try {
-      const trackerPayload = await withConfigContext(() => searchFlights(identifier, { forceRefresh: true }));
-      const liveMatch = findMatchingTrackedFlightForLeg(trackerPayload.flights ?? [], requestedLeg);
-      if (liveMatch) {
-        candidates.push(buildCandidateFromLiveMatch(liveMatch));
+    if (selectedProviders.tracker) {
+      try {
+        const trackerPayload = await withConfigContext(() => searchFlights(identifier, { forceRefresh: true }));
+        const liveMatch = findMatchingTrackedFlightForLeg(trackerPayload.flights ?? [], requestedLeg);
+        if (liveMatch) {
+          candidates.push(buildCandidateFromLiveMatch(liveMatch));
+        }
+      } catch {
+        // Keep provider-only results when the tracker search is unavailable.
       }
-    } catch {
-      // Keep provider-only results when the tracker search is unavailable.
     }
 
     const scoringContext = {
@@ -274,6 +317,8 @@ export async function POST(request: NextRequest) {
         matchedFlightNumber: null,
         matchedDepartureTime: null,
         matchedArrivalTime: null,
+        matchedDepartureAirport: null,
+        matchedArrivalAirport: null,
         departureDeltaMinutes: null,
         matchedRoute: null,
         lastCheckedAt: Date.now(),
@@ -313,6 +358,8 @@ export async function POST(request: NextRequest) {
       matchedFlightNumber: bestCandidate.matchedFlightNumber,
       matchedDepartureTime: bestCandidate.matchedDepartureTime,
       matchedArrivalTime: bestCandidate.matchedArrivalTime,
+      matchedDepartureAirport: bestCandidate.matchedDepartureAirport,
+      matchedArrivalAirport: bestCandidate.matchedArrivalAirport,
       departureDeltaMinutes,
       matchedRoute,
       lastCheckedAt: Date.now(),
@@ -327,6 +374,8 @@ export async function POST(request: NextRequest) {
       matchedFlightNumber: null,
       matchedDepartureTime: null,
       matchedArrivalTime: null,
+      matchedDepartureAirport: null,
+      matchedArrivalAirport: null,
       departureDeltaMinutes: null,
       matchedRoute: null,
       lastCheckedAt: Date.now(),

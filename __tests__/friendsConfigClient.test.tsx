@@ -513,7 +513,7 @@ describe('FriendsConfigClient', () => {
     });
   });
 
-  it('validates a configured leg on demand and surfaces live provider details', async () => {
+  it('opens the validation modal first so providers can be chosen before running validation', async () => {
     const user = userEvent.setup();
     const fetchMock = vi.mocked(window.fetch);
     const matchedDepartureSeconds = Math.floor(Date.parse('2026-04-14T09:35:00.000Z') / 1000);
@@ -558,6 +558,8 @@ describe('FriendsConfigClient', () => {
           matchedDepartureTime: matchedDepartureSeconds * 1000,
           matchedArrivalTime: matchedArrivalSeconds * 1000,
           departureDeltaMinutes: 5,
+          matchedDepartureAirport: 'CDG',
+          matchedArrivalAirport: 'AMS',
           matchedRoute: 'CDG → AMS',
           lastCheckedAt: Date.now(),
         }), {
@@ -588,9 +590,170 @@ describe('FriendsConfigClient', () => {
     const aliceQueries = within(aliceCard as HTMLElement);
     await user.click(aliceQueries.getByRole('button', { name: /validate flight for leg 1/i }));
 
+    expect(await screen.findByText(/Select provider/i)).toBeInTheDocument();
+    expect(fetchMock).not.toHaveBeenCalledWith('/api/chantal/validate-flight', expect.anything());
+
+    await user.click(screen.getByRole('button', { name: /run validation/i }));
+
     expect(await screen.findByText(/Schedule match confirmed/i)).toBeInTheDocument();
     expect((await screen.findAllByText(/3C675A/i)).length).toBeGreaterThan(0);
     expect(await screen.findByText(/Arrival:/i)).toBeInTheDocument();
+  });
+
+  it('applies the selected validation match onto the leg and save payload', async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.mocked(window.fetch);
+    const matchedDepartureMs = Date.parse('2026-04-14T11:45:00.000Z');
+    const matchedArrivalMs = Date.parse('2026-04-14T13:05:00.000Z');
+    let savedConfigBody: Record<string, unknown> | null = null;
+
+    fetchMock.mockImplementation(async (input, init) => {
+      const url = typeof input === 'string'
+        ? input
+        : input instanceof URL
+          ? input.toString()
+          : input.url;
+
+      if (url.includes('/api/airports')) {
+        return new Response(JSON.stringify({
+          ...airportDirectoryResponse,
+          timezones: buildAirportFixtureTimezoneLookup(airportDirectoryResponse.airports),
+        }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      if (url.includes('/api/chantal/validate-flight')) {
+        return new Response(JSON.stringify({
+          status: 'matched',
+          message: 'FlightAware matched the updated schedule.',
+          providerLabel: 'FlightAware',
+          matchedIcao24: 'A1B2C3',
+          matchedFlightNumber: 'AF456',
+          matchedDepartureTime: matchedDepartureMs,
+          matchedArrivalTime: matchedArrivalMs,
+          departureDeltaMinutes: 135,
+          matchedRoute: 'JFK → LIS',
+          lastCheckedAt: Date.now(),
+          candidates: [
+            {
+              providerLabel: 'FlightAware',
+              matchedIcao24: 'A1B2C3',
+              matchedFlightNumber: 'AF456',
+              matchedDepartureTime: matchedDepartureMs,
+              matchedArrivalTime: matchedArrivalMs,
+              matchedDepartureAirport: 'JFK',
+              matchedArrivalAirport: 'LIS',
+              departureDeltaMinutes: 135,
+              matchedRoute: 'JFK → LIS',
+              message: 'Best match based on route and schedule.',
+            },
+          ],
+        }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      if (url.includes('/api/chantal/config') && init?.method === 'PUT') {
+        savedConfigBody = JSON.parse(typeof init.body === 'string' ? init.body : '{}') as Record<string, unknown>;
+        return new Response(JSON.stringify(savedConfigBody), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      return new Response(JSON.stringify(initialConfig), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    });
+
+    render(<FriendsConfigClient initialConfig={initialConfig} initialCronDashboard={initialCronDashboard} />);
+
+    const aliceCard = screen.getByDisplayValue('Alice').closest('section');
+    expect(aliceCard).not.toBeNull();
+
+    const aliceQueries = within(aliceCard as HTMLElement);
+    await user.click(aliceQueries.getByRole('button', { name: /validate flight for leg 1/i }));
+    await user.click(await screen.findByRole('button', { name: /run validation/i }));
+    await user.click(await screen.findByRole('button', { name: /apply/i }));
+
+    await waitFor(() => {
+      expect(aliceQueries.getByLabelText(/flight number for leg 1/i)).toHaveValue('AF456');
+      expect(aliceQueries.getByLabelText(/from airport for leg 1/i)).toHaveValue('JFK');
+      expect(aliceQueries.getByLabelText(/to airport for leg 1/i)).toHaveValue('LIS');
+    });
+
+    expect(await screen.findByText(/Locked ICAO24: A1B2C3/i)).toBeInTheDocument();
+
+    const saveButton = screen.getByRole('button', { name: /save config/i });
+    await waitFor(() => {
+      expect(saveButton).toBeEnabled();
+    });
+    await user.click(saveButton);
+
+    await waitFor(() => {
+      const savedTrips = savedConfigBody?.trips;
+      expect(Array.isArray(savedTrips)).toBe(true);
+      const savedLeg = (savedTrips as Array<{ friends: Array<{ flights: Array<Record<string, unknown>> }> }>)[0]?.friends[0]?.flights[0];
+      expect(savedLeg).toMatchObject({
+        flightNumber: 'AF456',
+        departureTime: '2026-04-14T11:45:00.000Z',
+        arrivalTime: '2026-04-14T13:05:00.000Z',
+        from: 'JFK',
+        to: 'LIS',
+        resolvedIcao24: 'A1B2C3',
+      });
+    });
+  });
+
+  it('restores the applied validation banner and green button state after refresh', async () => {
+    const persistedConfig: FriendsTrackerConfig = {
+      ...initialConfig,
+      trips: [
+        {
+          ...initialConfig.trips![0]!,
+          friends: [
+            {
+              ...initialConfig.trips![0]!.friends[0]!,
+              flights: [
+                {
+                  ...initialConfig.trips![0]!.friends[0]!.flights[0]!,
+                  flightNumber: 'AF456',
+                  from: 'JFK',
+                  to: 'LIS',
+                  resolvedIcao24: 'A1B2C3',
+                  lastResolvedAt: 1_775_520_843_900,
+                  validatedFlight: {
+                    status: 'matched',
+                    providerLabel: 'FlightAware',
+                    message: 'Applied and saved.',
+                    matchedIcao24: 'A1B2C3',
+                    matchedFlightNumber: 'AF456',
+                    matchedDepartureTime: '2026-04-14T11:45:00.000Z',
+                    matchedArrivalTime: '2026-04-14T13:05:00.000Z',
+                    matchedDepartureAirport: 'JFK',
+                    matchedArrivalAirport: 'LIS',
+                    matchedRoute: 'JFK → LIS',
+                    departureDeltaMinutes: 135,
+                    lastCheckedAt: 1_775_520_843_900,
+                  },
+                },
+                ...initialConfig.trips![0]!.friends[0]!.flights.slice(1),
+              ],
+            },
+          ],
+        },
+      ],
+    };
+
+    render(<FriendsConfigClient initialConfig={persistedConfig} initialCronDashboard={initialCronDashboard} />);
+
+    expect(screen.getByRole('button', { name: /validated flight for leg 1/i })).toBeInTheDocument();
+    expect(screen.getByText(/Schedule match confirmed/i)).toBeInTheDocument();
+    expect(screen.getByText(/Source: FlightAware/i)).toBeInTheDocument();
   });
 
   it('marks single-flight validation as on-demand so premium providers stay click-only', async () => {
@@ -641,6 +804,7 @@ describe('FriendsConfigClient', () => {
     expect(aliceCard).not.toBeNull();
 
     await user.click(within(aliceCard as HTMLElement).getByRole('button', { name: /validate flight for leg 1/i }));
+    await user.click(await screen.findByRole('button', { name: /run validation/i }));
 
     await screen.findByText(/Schedule match confirmed/i);
 

@@ -554,6 +554,97 @@ describe('searchFlights', () => {
     expect(fetchMock.mock.calls.some(([url]) => String(url).includes('opensky-network.org'))).toBe(false);
   });
 
+  it('prefers the scheduled future FlightAware record when validation passes a future departure reference time', async () => {
+    process.env.FLIGHT_AWARE_API_KEY = 'flightaware-key';
+    delete process.env.FLIGHTAWARE_API_KEY;
+    delete process.env.AVIATION_STACK_API_KEY;
+    delete process.env.MONGODB_URI;
+
+    const now = Math.floor(Date.now() / 1000);
+    const futureDeparture = new Date((now + (48 * 60 * 60)) * 1000).toISOString();
+    const futureArrival = new Date((now + (54 * 60 * 60)) * 1000).toISOString();
+    const liveDeparture = new Date((now - (2 * 60 * 60)) * 1000).toISOString();
+    const livePosition = new Date((now - 120) * 1000).toISOString();
+
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      links: {},
+      num_pages: 1,
+      flights: [
+        {
+          ident: 'ETH575',
+          ident_icao: 'ETH575',
+          ident_iata: 'ET575',
+          fa_flight_id: 'ETH575-live',
+          operator: 'Ethiopian Airlines',
+          operator_icao: 'ETH',
+          operator_iata: 'ET',
+          flight_number: '575',
+          aircraft_type: 'B788',
+          origin: {
+            code: 'KORD',
+            code_icao: 'KORD',
+            code_iata: 'ORD',
+            name: "Chicago O'Hare Intl",
+          },
+          destination: {
+            code: 'HAAB',
+            code_icao: 'HAAB',
+            code_iata: 'ADD',
+            name: "Bole Int'l",
+          },
+          actual_out: liveDeparture,
+          last_position: {
+            latitude: 46.4141,
+            longitude: 0.762,
+            altitude: 39450,
+            groundspeed: 460,
+            heading: 117,
+            timestamp: livePosition,
+          },
+        },
+        {
+          ident: 'ETH575',
+          ident_icao: 'ETH575',
+          ident_iata: 'ET575',
+          fa_flight_id: 'ETH575-future',
+          operator: 'Ethiopian Airlines',
+          operator_icao: 'ETH',
+          operator_iata: 'ET',
+          flight_number: '575',
+          aircraft_type: 'B788',
+          origin: {
+            code: 'KORD',
+            code_icao: 'KORD',
+            code_iata: 'ORD',
+            name: "Chicago O'Hare Intl",
+          },
+          destination: {
+            code: 'HAAB',
+            code_icao: 'HAAB',
+            code_iata: 'ADD',
+            name: "Bole Int'l",
+          },
+          scheduled_out: futureDeparture,
+          scheduled_in: futureArrival,
+          last_position: null,
+        },
+      ],
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }));
+
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { lookupFlightAwareFlightWithReport } = await loadFlightAwareProvider();
+    const result = await lookupFlightAwareFlightWithReport('ETH575', {
+      referenceTimeMs: Date.parse(futureDeparture),
+    });
+
+    expect(result.match?.faFlightId).toBe('ETH575-future');
+    expect(result.match?.current).toBeNull();
+  });
+
   it('enriches live OpenSky matches with FlightAware metadata when available', async () => {
     process.env.OPENSKY_CLIENT_ID = 'client-from-env';
     process.env.OPENSKY_CLIENT_SECRET = 'secret-from-env';

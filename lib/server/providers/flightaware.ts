@@ -528,7 +528,8 @@ function getRouteLastSeen(record: FlightAwareFlightRecord): number | null {
 }
 
 function getRecordTemporalScore(record: FlightAwareFlightRecord, referenceTimeMs?: number | null): number {
-  const nowSeconds = Math.floor((referenceTimeMs ?? Date.now()) / 1000);
+  const hasExplicitReferenceTime = typeof referenceTimeMs === 'number' && Number.isFinite(referenceTimeMs);
+  const referenceSeconds = Math.floor((hasExplicitReferenceTime ? referenceTimeMs : Date.now()) / 1000);
   const liveTimestamp = toTimestampSeconds(record.last_position?.timestamp);
   const routeFirstSeen = getRouteFirstSeen(record);
   const routeLastSeen = getRouteLastSeen(record);
@@ -536,20 +537,29 @@ function getRecordTemporalScore(record: FlightAwareFlightRecord, referenceTimeMs
   let score = 0;
 
   if (liveTimestamp != null) {
-    const liveAgeSeconds = Math.abs(nowSeconds - liveTimestamp);
-    score += 30;
+    const liveAgeSeconds = Math.abs(referenceSeconds - liveTimestamp);
 
     if (liveAgeSeconds <= 15 * 60) {
-      score += 25;
+      score += 55;
     } else if (liveAgeSeconds <= 2 * 60 * 60) {
-      score += 15;
+      score += 45;
     } else if (liveAgeSeconds <= 12 * 60 * 60) {
-      score += 5;
+      score += hasExplicitReferenceTime ? 25 : 30;
+    } else if (liveAgeSeconds <= 24 * 60 * 60) {
+      score += hasExplicitReferenceTime ? 8 : 12;
+    } else if (hasExplicitReferenceTime && liveAgeSeconds <= 48 * 60 * 60) {
+      score -= 28;
+    } else if (hasExplicitReferenceTime && liveAgeSeconds > 48 * 60 * 60) {
+      score -= 65;
     }
   }
 
   if (/(ENROUTE|AIRBORNE|ACTIVE|DEPARTED|TAXI)/.test(status)) {
-    score += 12;
+    score += liveTimestamp != null ? 12 : 4;
+  }
+
+  if (/(SCHEDULED|FILED)/.test(status)) {
+    score += hasExplicitReferenceTime ? 8 : 2;
   }
 
   if (/(ARRIVED|CANCELLED|DIVERTED)/.test(status)) {
@@ -558,22 +568,26 @@ function getRecordTemporalScore(record: FlightAwareFlightRecord, referenceTimeMs
 
   const routeDeltas = [routeFirstSeen, routeLastSeen]
     .filter((timestamp): timestamp is number => timestamp != null)
-    .map((timestamp) => Math.abs(timestamp - nowSeconds));
+    .map((timestamp) => Math.abs(timestamp - referenceSeconds));
   const nearestRouteDelta = routeDeltas.length > 0 ? Math.min(...routeDeltas) : null;
 
   if (nearestRouteDelta != null) {
-    if (nearestRouteDelta <= 2 * 60 * 60) {
-      score += 10;
+    if (nearestRouteDelta <= 30 * 60) {
+      score += hasExplicitReferenceTime ? 26 : 14;
+    } else if (nearestRouteDelta <= 2 * 60 * 60) {
+      score += hasExplicitReferenceTime ? 18 : 10;
     } else if (nearestRouteDelta <= 12 * 60 * 60) {
-      score += 4;
+      score += hasExplicitReferenceTime ? 8 : 4;
+    } else if (hasExplicitReferenceTime && nearestRouteDelta >= 3 * 24 * 60 * 60) {
+      score -= 18;
     }
   }
 
-  if (liveTimestamp == null && routeFirstSeen != null && routeFirstSeen > nowSeconds + (6 * 60 * 60)) {
+  if (!hasExplicitReferenceTime && liveTimestamp == null && routeFirstSeen != null && routeFirstSeen > referenceSeconds + (6 * 60 * 60)) {
     score -= 35;
   }
 
-  if (liveTimestamp == null && routeLastSeen != null && routeLastSeen > nowSeconds + (6 * 60 * 60)) {
+  if (!hasExplicitReferenceTime && liveTimestamp == null && routeLastSeen != null && routeLastSeen > referenceSeconds + (6 * 60 * 60)) {
     score -= 20;
   }
 

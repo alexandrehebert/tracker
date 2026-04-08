@@ -6,16 +6,33 @@ const AUTO_LOCK_LOOKBACK_DAYS = 7;
 const FLIGHT_MATCH_WINDOW_HOURS = 6;
 const DEMO_REFERENCE_BUCKET_MS = 15 * 60 * 1000;
 
+export interface FriendFlightValidationSnapshot {
+  status?: 'matched' | 'warning' | 'not-found' | 'error' | 'skipped' | null;
+  providerLabel?: string | null;
+  message?: string | null;
+  matchedIcao24?: string | null;
+  matchedFlightNumber?: string | null;
+  matchedDepartureTime?: string | null;
+  matchedArrivalTime?: string | null;
+  matchedDepartureAirport?: string | null;
+  matchedArrivalAirport?: string | null;
+  matchedRoute?: string | null;
+  departureDeltaMinutes?: number | null;
+  lastCheckedAt?: number | null;
+}
+
 export interface FriendFlightLeg {
   id: string;
   flightNumber: string;
   departureTime: string;
+  arrivalTime?: string | null;
   departureTimezone?: string | null;
   from?: string | null;
   to?: string | null;
   note?: string | null;
   resolvedIcao24?: string | null;
   lastResolvedAt?: number | null;
+  validatedFlight?: FriendFlightValidationSnapshot | null;
 }
 
 export interface FriendTravelConfig {
@@ -320,6 +337,69 @@ function normalizeDateTime(value: unknown): string {
   return Number.isNaN(parsedTime) ? trimmedValue : new Date(parsedTime).toISOString();
 }
 
+function normalizeFriendFlightValidationSnapshot(
+  input: Partial<FriendFlightValidationSnapshot> | null | undefined,
+): FriendFlightValidationSnapshot | null {
+  if (!input) {
+    return null;
+  }
+
+  const status = input.status === 'matched'
+    || input.status === 'warning'
+    || input.status === 'not-found'
+    || input.status === 'error'
+    || input.status === 'skipped'
+    ? input.status
+    : null;
+  const providerLabel = normalizeOptionalText(input.providerLabel);
+  const message = normalizeOptionalText(input.message);
+  const matchedIcao24 = normalizeFriendFlightIdentifier(input.matchedIcao24 ?? null) || null;
+  const matchedFlightNumber = normalizeFriendFlightIdentifier(input.matchedFlightNumber ?? null) || null;
+  const matchedDepartureTime = normalizeDateTime(input.matchedDepartureTime);
+  const matchedArrivalTime = normalizeDateTime(input.matchedArrivalTime);
+  const matchedDepartureAirport = normalizeOptionalText(input.matchedDepartureAirport)?.toUpperCase() ?? null;
+  const matchedArrivalAirport = normalizeOptionalText(input.matchedArrivalAirport)?.toUpperCase() ?? null;
+  const matchedRoute = normalizeOptionalText(input.matchedRoute);
+  const departureDeltaMinutes = typeof input.departureDeltaMinutes === 'number' && Number.isFinite(input.departureDeltaMinutes)
+    ? input.departureDeltaMinutes
+    : null;
+  const lastCheckedAt = typeof input.lastCheckedAt === 'number' && Number.isFinite(input.lastCheckedAt)
+    ? input.lastCheckedAt
+    : null;
+
+  const hasContent = status != null
+    || providerLabel != null
+    || message != null
+    || matchedIcao24 != null
+    || matchedFlightNumber != null
+    || Boolean(matchedDepartureTime)
+    || Boolean(matchedArrivalTime)
+    || matchedDepartureAirport != null
+    || matchedArrivalAirport != null
+    || matchedRoute != null
+    || departureDeltaMinutes != null
+    || lastCheckedAt != null;
+
+  if (!hasContent) {
+    return null;
+  }
+
+  return {
+    status,
+    providerLabel,
+    message,
+    matchedIcao24,
+    matchedFlightNumber,
+    matchedDepartureTime: matchedDepartureTime || null,
+    matchedArrivalTime: matchedArrivalTime || null,
+    matchedDepartureAirport,
+    matchedArrivalAirport,
+    matchedRoute,
+    departureDeltaMinutes,
+    lastCheckedAt,
+  };
+}
+
 function getFallbackId(prefix: string, firstIndex: number, secondIndex?: number): string {
   return secondIndex == null
     ? `${prefix}-${firstIndex + 1}`
@@ -379,12 +459,14 @@ export function createEmptyFriendFlightLeg(): FriendFlightLeg {
     id: '',
     flightNumber: '',
     departureTime: '',
+    arrivalTime: null,
     departureTimezone: null,
     from: null,
     to: null,
     note: null,
     resolvedIcao24: null,
     lastResolvedAt: null,
+    validatedFlight: null,
   };
 }
 
@@ -565,11 +647,14 @@ function mergeDemoFriend(
 
     return {
       ...freshLeg,
+      departureTime: existingLeg.departureTime || freshLeg.departureTime,
+      arrivalTime: existingLeg.arrivalTime ?? freshLeg.arrivalTime,
       from: existingLeg.from ?? freshLeg.from,
       to: existingLeg.to ?? freshLeg.to,
       note: existingLeg.note ?? freshLeg.note,
       resolvedIcao24: existingLeg.resolvedIcao24 ?? freshLeg.resolvedIcao24,
       lastResolvedAt: existingLeg.lastResolvedAt ?? freshLeg.lastResolvedAt,
+      validatedFlight: existingLeg.validatedFlight ?? freshLeg.validatedFlight ?? null,
     };
   });
 
@@ -645,6 +730,7 @@ export function normalizeFriendFlightLeg(
     id: typeof input?.id === 'string' && input.id.trim() ? input.id.trim() : getFallbackId('leg', friendIndex, legIndex),
     flightNumber,
     departureTime: normalizeDateTime(input?.departureTime),
+    arrivalTime: normalizeDateTime(input?.arrivalTime) || null,
     departureTimezone: normalizeOptionalText(input?.departureTimezone),
     from: normalizeOptionalText(input?.from),
     to: normalizeOptionalText(input?.to),
@@ -653,6 +739,7 @@ export function normalizeFriendFlightLeg(
     lastResolvedAt: typeof input?.lastResolvedAt === 'number' && Number.isFinite(input.lastResolvedAt)
       ? input.lastResolvedAt
       : null,
+    validatedFlight: normalizeFriendFlightValidationSnapshot(input?.validatedFlight),
   };
 }
 
