@@ -560,6 +560,49 @@ describe('FriendsConfigClient', () => {
     });
   });
 
+  it('counts flights without an applied validation as unresolved in the save bar', () => {
+    const configWithPartialValidation: FriendsTrackerConfig = {
+      ...initialConfig,
+      trips: [
+        {
+          ...initialConfig.trips![0]!,
+          friends: [
+            {
+              ...initialConfig.trips![0]!.friends[0]!,
+              flights: [
+                {
+                  ...initialConfig.trips![0]!.friends[0]!.flights[0]!,
+                  validatedFlight: {
+                    status: 'matched',
+                    providerLabel: 'FlightAware',
+                    message: 'FlightAware confirmed the schedule.',
+                    matchedIcao24: '3C675A',
+                    matchedFlightNumber: 'AF123',
+                    matchedDepartureTime: '2026-04-14T09:30:00.000Z',
+                    matchedArrivalTime: '2026-04-14T11:10:00.000Z',
+                    matchedDepartureAirport: 'CDG',
+                    matchedArrivalAirport: 'AMS',
+                    matchedRoute: 'CDG → AMS',
+                    departureDeltaMinutes: 0,
+                    lastCheckedAt: 1_775_520_843_900,
+                  },
+                },
+                {
+                  ...initialConfig.trips![0]!.friends[0]!.flights[1]!,
+                  validatedFlight: null,
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+
+    render(<FriendsConfigClient initialConfig={configWithPartialValidation} initialCronDashboard={initialCronDashboard} />);
+
+    expect(screen.getByText(/1 matched • 0 warnings • 1 unresolved/i)).toBeInTheDocument();
+  });
+
   it('opens the validation modal first so providers can be chosen before running validation', async () => {
     const user = userEvent.setup();
     const fetchMock = vi.mocked(window.fetch);

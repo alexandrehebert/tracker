@@ -4,6 +4,17 @@ import { Save, RefreshCw } from 'lucide-react';
 import { useFriendsConfig } from './FriendsConfigContext';
 import { formatDateTime } from '~/lib/utils/dateTimeLocal';
 
+function shouldCountLegForValidation(leg: {
+  flightNumber?: string | null;
+  departureTime?: string | null;
+  from?: string | null;
+  to?: string | null;
+  resolvedIcao24?: string | null;
+}): boolean {
+  return [leg.flightNumber, leg.departureTime, leg.from, leg.to, leg.resolvedIcao24]
+    .some((value) => typeof value === 'string' && value.trim().length > 0);
+}
+
 export function SaveBar() {
   const {
     locale,
@@ -16,14 +27,13 @@ export function SaveBar() {
     currentTrip,
     validationIssues,
     hasValidationErrors,
-    flightValidationResults,
     handleSave,
   } = useFriendsConfig();
 
-  const liveValidationResults = selectedTrip?.friends.flatMap((friend) => friend.flights.map((leg) => flightValidationResults[leg.id])).filter(Boolean) ?? [];
-  const matchedLiveCount = liveValidationResults.filter((result) => result?.status === 'matched').length;
-  const warningLiveCount = liveValidationResults.filter((result) => result?.status === 'warning').length;
-  const unresolvedLiveCount = liveValidationResults.filter((result) => result?.status === 'not-found' || result?.status === 'error').length;
+  const reviewableLegs = selectedTrip?.friends.flatMap((friend) => friend.flights.filter((leg) => shouldCountLegForValidation(leg))) ?? [];
+  const matchedLiveCount = reviewableLegs.filter((leg) => leg.validatedFlight?.status === 'matched').length;
+  const warningLiveCount = reviewableLegs.filter((leg) => leg.validatedFlight?.status === 'warning').length;
+  const unresolvedLiveCount = Math.max(reviewableLegs.length - matchedLiveCount - warningLiveCount, 0);
 
   return (
     <section className="sticky top-3 z-20 rounded-2xl border border-white/10 bg-slate-950/90 p-3 shadow-lg shadow-slate-950/25 backdrop-blur">
@@ -55,7 +65,7 @@ export function SaveBar() {
             </div>
           ) : null}
 
-          {liveValidationResults.length > 0 ? (
+          {reviewableLegs.length > 0 ? (
             <div className="rounded-2xl border border-sky-400/25 bg-sky-500/10 px-3 py-2 text-xs text-sky-100">
               <p className="font-semibold">Flight provider validation</p>
               <p className="mt-1 text-sky-50/90">
