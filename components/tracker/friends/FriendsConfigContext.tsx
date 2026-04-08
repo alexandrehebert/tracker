@@ -745,6 +745,14 @@ export function FriendsConfigProvider({
         status?: string;
         message?: string;
         error?: string;
+        providerLabel?: string | null;
+        matchedIcao24?: string | null;
+        matchedFlightNumber?: string | null;
+        matchedDepartureTime?: number | null;
+        matchedArrivalTime?: number | null;
+        departureDeltaMinutes?: number | null;
+        matchedRoute?: string | null;
+        lastCheckedAt?: number | null;
         candidates?: FlightValidationModalCandidate[];
       };
 
@@ -755,6 +763,36 @@ export function FriendsConfigProvider({
       const candidates = Array.isArray(payload.candidates) ? payload.candidates : [];
       const overallStatus = payload.status ?? 'not-found';
       const isError = overallStatus === 'error';
+      const inlineResult = {
+        legId,
+        friendId,
+        status: (overallStatus as FlightProviderValidationResult['status']) ?? 'not-found',
+        message: payload.message ?? `No scheduled or live provider match was found for ${identifier}.`,
+        providerLabel: typeof payload.providerLabel === 'string' ? payload.providerLabel : null,
+        matchedIcao24: typeof payload.matchedIcao24 === 'string' ? payload.matchedIcao24 : null,
+        matchedFlightNumber: typeof payload.matchedFlightNumber === 'string' ? payload.matchedFlightNumber : null,
+        matchedDepartureTime: typeof payload.matchedDepartureTime === 'number' && Number.isFinite(payload.matchedDepartureTime)
+          ? payload.matchedDepartureTime
+          : null,
+        matchedArrivalTime: typeof payload.matchedArrivalTime === 'number' && Number.isFinite(payload.matchedArrivalTime)
+          ? payload.matchedArrivalTime
+          : null,
+        departureDeltaMinutes: typeof payload.departureDeltaMinutes === 'number' && Number.isFinite(payload.departureDeltaMinutes)
+          ? payload.departureDeltaMinutes
+          : null,
+        matchedRoute: typeof payload.matchedRoute === 'string' ? payload.matchedRoute : null,
+        lastCheckedAt: typeof payload.lastCheckedAt === 'number' && Number.isFinite(payload.lastCheckedAt)
+          ? payload.lastCheckedAt
+          : Date.now(),
+      } satisfies FlightProviderValidationResult;
+
+      const shouldApplyInlineMatch = candidates.length === 0 && (overallStatus === 'matched' || overallStatus === 'warning');
+
+      if (shouldApplyInlineMatch) {
+        setValidationModal(null);
+        setFlightValidationResult(legId, inlineResult);
+        return;
+      }
 
       setValidationModal({
         friendId,
@@ -762,24 +800,11 @@ export function FriendsConfigProvider({
         identifier,
         status: isError ? 'error' : 'loaded',
         candidates,
-        message: payload.message ?? `No scheduled or live provider match was found for ${identifier}.`,
+        message: inlineResult.message,
       });
 
       if (candidates.length === 0) {
-        setFlightValidationResult(legId, {
-          legId,
-          friendId,
-          status: (overallStatus as FlightProviderValidationResult['status']) ?? 'not-found',
-          message: payload.message ?? `No scheduled or live provider match was found for ${identifier}.`,
-          providerLabel: null,
-          matchedIcao24: null,
-          matchedFlightNumber: null,
-          matchedDepartureTime: null,
-          matchedArrivalTime: null,
-          departureDeltaMinutes: null,
-          matchedRoute: null,
-          lastCheckedAt: Date.now(),
-        });
+        setFlightValidationResult(legId, inlineResult);
       }
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unable to validate this flight right now.';
