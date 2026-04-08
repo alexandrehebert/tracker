@@ -160,6 +160,12 @@ export async function TrackerProvidersPageContent({ showIntro = true }: TrackerP
       extra: openSkyTokenStatus.hasToken && openSkyTokenStatus.expiresAt
         ? `Token expires: ${formatDateTime(new Date(openSkyTokenStatus.expiresAt).toISOString())}`
         : null,
+      resourceLinks: [
+        { label: 'OpenSky account', href: 'https://opensky-network.org/my-opensky/account' },
+      ],
+      connectionLinks: [
+        { label: 'Scaleway proxy console', href: 'https://console.scaleway.com/functions/namespaces/fr-par/d51f53f6-8a82-452d-96aa-6f4f2cfebfbc/functions' },
+      ],
     },
     {
       provider: 'flightaware' as ProviderName,
@@ -171,6 +177,10 @@ export async function TrackerProvidersPageContent({ showIntro = true }: TrackerP
         : 'Missing `FLIGHT_AWARE_API_KEY` / `FLIGHTAWARE_API_KEY`.',
       extra: null,
       connectionDetail: null,
+      resourceLinks: [
+        { label: 'FlightAware usage', href: 'https://www.flightaware.com/aeroapi/portal/usage' },
+      ],
+      connectionLinks: [],
     },
     {
       provider: 'aviationstack' as ProviderName,
@@ -182,6 +192,10 @@ export async function TrackerProvidersPageContent({ showIntro = true }: TrackerP
         : 'Missing `AVIATION_STACK_API_KEY` / `AVIATIONSTACK_ACCESS_KEY`.',
       extra: null,
       connectionDetail: null,
+      resourceLinks: [
+        { label: 'Aviationstack dashboard', href: 'https://aviationstack.com/dashboard' },
+      ],
+      connectionLinks: [],
     },
     {
       provider: 'aerodatabox' as ProviderName,
@@ -193,6 +207,10 @@ export async function TrackerProvidersPageContent({ showIntro = true }: TrackerP
         : 'Missing `AERODATABOX_RAPIDAPI_KEY` / RapidAPI credentials.',
       extra: null,
       connectionDetail: null,
+      resourceLinks: [
+        { label: 'RapidAPI auth', href: 'https://rapidapi.com/console/11781167/applications/8609151/authorizations' },
+      ],
+      connectionLinks: [],
     },
   ].map((providerState) => {
     const defaultDisabledReason = getProviderDisabledReason(providerState.provider);
@@ -260,6 +278,8 @@ export async function TrackerProvidersPageContent({ showIntro = true }: TrackerP
         : null,
       extra: providerState.extra,
       debugHref: providerState.provider === 'opensky' ? '/tracker/debug' : null,
+      resourceLinks: providerState.resourceLinks,
+      connectionLinks: providerState.connectionLinks,
       metrics: {
         totalRequests: metrics?.totalRequests ?? 0,
         averageDurationMs: metrics?.averageDurationMs ?? null,

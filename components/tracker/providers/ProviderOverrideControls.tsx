@@ -1,5 +1,6 @@
 'use client';
 
+import { ExternalLink } from 'lucide-react';
 import { useCallback, useState } from 'react';
 import type { ProviderName } from '~/lib/server/providers';
 import type { ProviderOverrideState, ProviderOverridesMap } from '~/lib/server/providers/overrides';
@@ -35,6 +36,11 @@ interface ProviderMetricSummary {
   callers: Array<{ label: string; count: number }>;
 }
 
+interface ProviderResourceLink {
+  href: string;
+  label: string;
+}
+
 interface ProviderCardData {
   provider: ProviderName;
   name: string;
@@ -45,6 +51,8 @@ interface ProviderCardData {
   connectionTone?: ProviderStatusTone | null;
   extra?: string | null;
   debugHref?: string | null;
+  resourceLinks?: ProviderResourceLink[];
+  connectionLinks?: ProviderResourceLink[];
   metrics?: Partial<ProviderMetricSummary>;
 }
 
@@ -87,6 +95,8 @@ const DEFAULT_PROVIDER_CARDS: ProviderCardData[] = ALL_PROVIDERS.map((provider) 
   connectionTone: null,
   extra: null,
   debugHref: null,
+  resourceLinks: [],
+  connectionLinks: [],
   metrics: {
     totalRequests: 0,
     averageDurationMs: null,
@@ -240,6 +250,18 @@ export function ProviderOverrideControls({
                         DEBUG
                       </a>
                     ) : null}
+                    {card.resourceLinks?.map((link) => (
+                      <a
+                        key={`${card.provider}-${link.href}`}
+                        href={link.href}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center gap-1 text-xs font-medium text-sky-200 transition hover:text-sky-100 hover:underline"
+                      >
+                        <span>{link.label}</span>
+                        <ExternalLink aria-hidden="true" className="h-3.5 w-3.5" />
+                      </a>
+                    ))}
                   </div>
                   <p className="mt-1 text-xs uppercase tracking-[0.18em] text-slate-400">Current runtime state</p>
                 </div>
@@ -285,13 +307,27 @@ export function ProviderOverrideControls({
 
               {card.connectionDetail ? (
                 <div className="mt-3 rounded-2xl border border-white/10 bg-slate-950/40 p-3">
-                  <div className="flex items-center justify-between gap-2">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
                     <p className="text-[10px] uppercase tracking-[0.18em] text-slate-400">OpenSky connection</p>
-                    {card.connectionStatusLabel ? (
-                      <span className={`rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] ${getRuntimeStatusBadgeClass(card.connectionTone)}`}>
-                        {card.connectionStatusLabel}
-                      </span>
-                    ) : null}
+                    <div className="flex flex-wrap items-center gap-2">
+                      {card.connectionLinks?.map((link) => (
+                        <a
+                          key={`${card.provider}-connection-${link.href}`}
+                          href={link.href}
+                          target="_blank"
+                          rel="noreferrer"
+                          className="inline-flex items-center gap-1 text-[11px] font-medium text-sky-200 transition hover:text-sky-100 hover:underline"
+                        >
+                          <span>{link.label}</span>
+                          <ExternalLink aria-hidden="true" className="h-3.5 w-3.5" />
+                        </a>
+                      ))}
+                      {card.connectionStatusLabel ? (
+                        <span className={`rounded-full border px-2.5 py-1 text-[10px] font-semibold uppercase tracking-[0.14em] ${getRuntimeStatusBadgeClass(card.connectionTone)}`}>
+                          {card.connectionStatusLabel}
+                        </span>
+                      ) : null}
+                    </div>
                   </div>
                   <p className="mt-1 text-xs text-slate-300">{card.connectionDetail}</p>
                 </div>
@@ -299,22 +335,22 @@ export function ProviderOverrideControls({
 
               {card.extra ? <p className="mt-2 text-xs text-slate-400">{card.extra}</p> : null}
 
-              <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
-                <div className="rounded-2xl border border-white/10 bg-white/5 p-3">
-                  <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Requests</p>
-                  <p className="mt-1 text-lg font-semibold text-white">{metrics.totalRequests}</p>
+              <div className="mt-4 grid grid-cols-2 gap-2 text-sm md:grid-cols-4">
+                <div className="rounded-xl border border-white/10 bg-white/5 px-3 py-2.5">
+                  <p className="text-[10px] uppercase tracking-[0.16em] text-slate-400">Requests</p>
+                  <p className="mt-0.5 text-base font-semibold text-white">{metrics.totalRequests}</p>
                 </div>
-                <div className="rounded-2xl border border-white/10 bg-white/5 p-3">
-                  <p className="text-xs uppercase tracking-[0.18em] text-slate-400">Avg duration</p>
-                  <p className="mt-1 text-lg font-semibold text-white">{formatDuration(metrics.averageDurationMs)}</p>
+                <div className="rounded-xl border border-white/10 bg-white/5 px-3 py-2.5">
+                  <p className="text-[10px] uppercase tracking-[0.16em] text-slate-400">Avg duration</p>
+                  <p className="mt-0.5 text-base font-semibold text-white">{formatDuration(metrics.averageDurationMs)}</p>
                 </div>
-                <div className="rounded-2xl border border-emerald-400/20 bg-emerald-500/5 p-3 text-emerald-100">
-                  <p className="text-xs uppercase tracking-[0.18em] text-emerald-200">Success</p>
-                  <p className="mt-1 text-lg font-semibold text-white">{metrics.successCount}</p>
+                <div className="rounded-xl border border-emerald-400/20 bg-emerald-500/5 px-3 py-2.5 text-emerald-100">
+                  <p className="text-[10px] uppercase tracking-[0.16em] text-emerald-200">Success</p>
+                  <p className="mt-0.5 text-base font-semibold text-white">{metrics.successCount}</p>
                 </div>
-                <div className="rounded-2xl border border-rose-400/20 bg-rose-500/5 p-3 text-rose-100">
-                  <p className="text-xs uppercase tracking-[0.18em] text-rose-200">Errors</p>
-                  <p className="mt-1 text-lg font-semibold text-white">{metrics.errorCount}</p>
+                <div className="rounded-xl border border-rose-400/20 bg-rose-500/5 px-3 py-2.5 text-rose-100">
+                  <p className="text-[10px] uppercase tracking-[0.16em] text-rose-200">Errors</p>
+                  <p className="mt-0.5 text-base font-semibold text-white">{metrics.errorCount}</p>
                 </div>
               </div>
 

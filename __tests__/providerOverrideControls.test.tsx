@@ -16,6 +16,24 @@ describe('ProviderOverrideControls', () => {
       <ProviderOverrideControls
         initialOverrides={initialOverrides}
         storageConfigured
+        providerCards={[
+          {
+            provider: 'opensky',
+            name: 'OpenSky',
+            connectionDetail: 'Proxy enabled via the shared Scaleway function.',
+            connectionStatusLabel: 'Proxy enabled',
+            connectionTone: 'active',
+            resourceLinks: [
+              { label: 'OpenSky account', href: 'https://opensky-network.org/my-opensky/account' },
+            ],
+            connectionLinks: [
+              { label: 'Scaleway proxy console', href: 'https://console.scaleway.com/functions/namespaces/fr-par/d51f53f6-8a82-452d-96aa-6f4f2cfebfbc/functions' },
+            ],
+          },
+          { provider: 'flightaware', name: 'FlightAware' },
+          { provider: 'aviationstack', name: 'Aviationstack' },
+          { provider: 'aerodatabox', name: 'AeroDataBox' },
+        ]}
         providerStatuses={{
           opensky: {
             defaultStatus: {
@@ -101,5 +119,7 @@ describe('ProviderOverrideControls', () => {
     expect(within(openSkyCard as HTMLElement).queryByText(/admin override/i)).not.toBeInTheDocument();
     expect(within(openSkyCard as HTMLElement).queryByText('Missing config')).not.toBeInTheDocument();
     expect(within(openSkyCard as HTMLElement).getAllByText(/OPENSKY_DISABLED/i)).toHaveLength(1);
+    expect(within(openSkyCard as HTMLElement).getByRole('link', { name: /opensky account/i })).toHaveAttribute('href', 'https://opensky-network.org/my-opensky/account');
+    expect(within(openSkyCard as HTMLElement).getByRole('link', { name: /scaleway proxy console/i })).toHaveAttribute('href', 'https://console.scaleway.com/functions/namespaces/fr-par/d51f53f6-8a82-452d-96aa-6f4f2cfebfbc/functions');
   });
 });
