@@ -1036,6 +1036,136 @@ describe('FriendsConfigClient', () => {
     });
   });
 
+  it('keeps the typed airline prefix when FlightAware returns only the numeric suffix', async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.mocked(window.fetch);
+    const matchedDepartureMs = Date.parse('2026-04-14T11:45:00.000Z');
+    let savedConfigBody: Record<string, unknown> | null = null;
+
+    fetchMock.mockImplementation(async (input, init) => {
+      const url = typeof input === 'string'
+        ? input
+        : input instanceof URL
+          ? input.toString()
+          : input.url;
+
+      if (url.includes('/api/airports')) {
+        return new Response(JSON.stringify({
+          ...airportDirectoryResponse,
+          timezones: buildAirportFixtureTimezoneLookup(airportDirectoryResponse.airports),
+        }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      if (url.includes('/api/chantal/validate-flight')) {
+        return new Response(JSON.stringify({
+          status: 'matched',
+          message: 'FlightAware matched the schedule.',
+          providerLabel: 'FlightAware',
+          matchedIcao24: 'A1B2C3',
+          matchedFlightNumber: '335',
+          matchedDepartureTime: matchedDepartureMs,
+          matchedArrivalTime: null,
+          matchedDepartureAirport: 'CDG',
+          matchedArrivalAirport: 'YUL',
+          departureDeltaMinutes: 0,
+          matchedRoute: 'CDG → YUL',
+          lastCheckedAt: Date.now(),
+          candidates: [
+            {
+              status: 'matched',
+              providerLabel: 'FlightAware',
+              matchedIcao24: 'A1B2C3',
+              matchedFlightNumber: '335',
+              matchedDepartureTime: matchedDepartureMs,
+              matchedArrivalTime: null,
+              matchedDepartureAirport: 'CDG',
+              matchedArrivalAirport: 'YUL',
+              departureDeltaMinutes: 0,
+              matchedRoute: 'CDG → YUL',
+              message: 'Best match based on route and schedule.',
+            },
+          ],
+        }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      if (url.includes('/api/chantal/config') && init?.method === 'PUT') {
+        savedConfigBody = JSON.parse(typeof init.body === 'string' ? init.body : '{}') as Record<string, unknown>;
+        return new Response(JSON.stringify(savedConfigBody), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      return new Response(JSON.stringify(prefixedConfig), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    });
+
+    const prefixedConfig: FriendsTrackerConfig = {
+      ...initialConfig,
+      trips: [
+        {
+          ...initialConfig.trips![0]!,
+          friends: [
+            {
+              ...initialConfig.trips![0]!.friends[0]!,
+              flights: [
+                {
+                  ...initialConfig.trips![0]!.friends[0]!.flights[0]!,
+                  flightNumber: 'AF335',
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    };
+
+    render(<FriendsConfigClient initialConfig={prefixedConfig} initialCronDashboard={initialCronDashboard} />);
+
+    const aliceCard = screen.getByDisplayValue('Alice').closest('section');
+    expect(aliceCard).not.toBeNull();
+
+    const aliceQueries = within(aliceCard as HTMLElement);
+    expect(aliceQueries.getByLabelText(/flight number for leg 1/i)).toHaveValue('AF335');
+
+    await user.click(aliceQueries.getByRole('button', { name: /validate flight for leg 1/i }));
+    await user.click(await screen.findByRole('button', { name: /run validation/i }));
+    await user.click(await screen.findByRole('button', { name: /apply/i }));
+
+    await waitFor(() => {
+      expect(aliceQueries.getByLabelText(/flight number for leg 1/i)).toHaveValue('AF335');
+      expect(aliceQueries.getByLabelText(/from airport for leg 1/i)).toHaveValue('CDG');
+      expect(aliceQueries.getByLabelText(/to airport for leg 1/i)).toHaveValue('YUL');
+    });
+
+    const saveButton = screen.getByRole('button', { name: /save config/i });
+    await waitFor(() => {
+      expect(saveButton).toBeEnabled();
+    });
+    await user.click(saveButton);
+
+    await waitFor(() => {
+      const savedTrips = savedConfigBody?.trips;
+      expect(Array.isArray(savedTrips)).toBe(true);
+      const savedLeg = (savedTrips as Array<{ friends: Array<{ flights: Array<Record<string, unknown>> }> }>)[0]?.friends[0]?.flights[0];
+      expect(savedLeg).toMatchObject({
+        flightNumber: 'AF335',
+        resolvedIcao24: 'A1B2C3',
+        validatedFlight: expect.objectContaining({
+          matchedFlightNumber: 'AF335',
+        }),
+      });
+    });
+  });
+
   it('restores the applied validation modal summary and green leg state after refresh', async () => {
     const user = userEvent.setup();
     const persistedConfig: FriendsTrackerConfig = {

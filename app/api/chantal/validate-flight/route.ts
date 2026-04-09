@@ -1,5 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { findMatchingTrackedFlightForLeg, normalizeFriendFlightIdentifier, type FriendFlightLeg } from '~/lib/friendsTracker';
+import {
+  findMatchingTrackedFlightForLeg,
+  normalizeFriendFlightIdentifier,
+  resolveSuggestedFlightNumber,
+  type FriendFlightLeg,
+} from '~/lib/friendsTracker';
 import { searchFlights } from '~/lib/server/opensky';
 import { lookupAirlabsFlightWithReport } from '~/lib/server/providers/airlabs';
 import { lookupAviationstackFlightWithReport } from '~/lib/server/providers/aviationstack';
@@ -111,13 +116,13 @@ function scoreCandidate(
   return score;
 }
 
-function buildCandidateFromLiveMatch(flight: TrackedFlight): ValidationCandidate {
+function buildCandidateFromLiveMatch(flight: TrackedFlight, identifier: string): ValidationCandidate {
   const sourceDetails = Array.isArray(flight.sourceDetails) ? flight.sourceDetails : [];
 
   return {
     providerLabel: buildProviderLabel(sourceDetails),
     matchedIcao24: sanitizeIcao24(flight.aircraft?.icao24 ?? flight.icao24),
-    matchedFlightNumber: flight.flightNumber ?? flight.callsign ?? null,
+    matchedFlightNumber: resolveSuggestedFlightNumber(identifier, flight.flightNumber ?? flight.callsign ?? null) || null,
     matchedDepartureTime: toTimestampMs(flight.route.firstSeen),
     matchedArrivalTime: toTimestampMs(flight.route.lastSeen),
     matchedDepartureAirport: normalizeAirportCode(flight.route.departureAirport),
@@ -216,7 +221,10 @@ export async function POST(request: NextRequest) {
       candidates.push({
         providerLabel: 'FlightAware',
         matchedIcao24: sanitizeIcao24(flightAwareLookup.match.aircraft?.icao24),
-        matchedFlightNumber: flightAwareLookup.match.flightNumber ?? flightAwareLookup.match.callsign ?? null,
+        matchedFlightNumber: resolveSuggestedFlightNumber(
+          identifier,
+          flightAwareLookup.match.flightNumber ?? flightAwareLookup.match.callsign ?? null,
+        ) || null,
         matchedDepartureTime: toTimestampMs(flightAwareLookup.match.route.firstSeen),
         matchedArrivalTime: toTimestampMs(flightAwareLookup.match.route.lastSeen),
         matchedDepartureAirport: normalizeAirportCode(flightAwareLookup.match.route.departureAirport),
@@ -230,7 +238,10 @@ export async function POST(request: NextRequest) {
       candidates.push({
         providerLabel: 'Aviationstack',
         matchedIcao24: sanitizeIcao24(aviationstackLookup.match.aircraft?.icao24),
-        matchedFlightNumber: aviationstackLookup.match.flightNumber ?? aviationstackLookup.match.callsign ?? null,
+        matchedFlightNumber: resolveSuggestedFlightNumber(
+          identifier,
+          aviationstackLookup.match.flightNumber ?? aviationstackLookup.match.callsign ?? null,
+        ) || null,
         matchedDepartureTime: toTimestampMs(aviationstackLookup.match.route.firstSeen),
         matchedArrivalTime: toTimestampMs(aviationstackLookup.match.route.lastSeen),
         matchedDepartureAirport: normalizeAirportCode(aviationstackLookup.match.route.departureAirport),
@@ -244,7 +255,10 @@ export async function POST(request: NextRequest) {
       candidates.push({
         providerLabel: 'AirLabs',
         matchedIcao24: sanitizeIcao24(airlabsLookup.match.aircraft?.icao24),
-        matchedFlightNumber: airlabsLookup.match.flightNumber ?? airlabsLookup.match.callsign ?? null,
+        matchedFlightNumber: resolveSuggestedFlightNumber(
+          identifier,
+          airlabsLookup.match.flightNumber ?? airlabsLookup.match.callsign ?? null,
+        ) || null,
         matchedDepartureTime: toTimestampMs(airlabsLookup.match.route.firstSeen),
         matchedArrivalTime: toTimestampMs(airlabsLookup.match.route.lastSeen),
         matchedDepartureAirport: normalizeAirportCode(airlabsLookup.match.route.departureAirport),
@@ -258,7 +272,10 @@ export async function POST(request: NextRequest) {
       candidates.push({
         providerLabel: 'AeroDataBox',
         matchedIcao24: sanitizeIcao24(aeroDataBoxLookup.match.aircraft?.icao24),
-        matchedFlightNumber: aeroDataBoxLookup.match.flightNumber ?? aeroDataBoxLookup.match.callsign ?? null,
+        matchedFlightNumber: resolveSuggestedFlightNumber(
+          identifier,
+          aeroDataBoxLookup.match.flightNumber ?? aeroDataBoxLookup.match.callsign ?? null,
+        ) || null,
         matchedDepartureTime: toTimestampMs(aeroDataBoxLookup.match.route.firstSeen),
         matchedArrivalTime: toTimestampMs(aeroDataBoxLookup.match.route.lastSeen),
         matchedDepartureAirport: normalizeAirportCode(aeroDataBoxLookup.match.route.departureAirport),
@@ -285,7 +302,7 @@ export async function POST(request: NextRequest) {
         const trackerPayload = await withConfigContext(() => searchFlights(identifier, { forceRefresh: true }));
         const liveMatch = findMatchingTrackedFlightForLeg(trackerPayload.flights ?? [], requestedLeg);
         if (liveMatch) {
-          candidates.push(buildCandidateFromLiveMatch(liveMatch));
+          candidates.push(buildCandidateFromLiveMatch(liveMatch, identifier));
         }
       } catch {
         // Keep provider-only results when the tracker search is unavailable.

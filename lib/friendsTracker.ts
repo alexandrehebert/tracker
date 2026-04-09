@@ -472,6 +472,28 @@ export function normalizeFriendFlightIdentifier(value: string | null | undefined
     : '';
 }
 
+export function resolveSuggestedFlightNumber(
+  preferredIdentifier: string | null | undefined,
+  suggestedFlightNumber: string | null | undefined,
+): string {
+  const normalizedSuggestedFlightNumber = normalizeFriendFlightIdentifier(suggestedFlightNumber);
+  if (!normalizedSuggestedFlightNumber) {
+    return '';
+  }
+
+  const normalizedPreferredIdentifier = normalizeFriendFlightIdentifier(preferredIdentifier);
+  const suggestedIsNumericSuffix = /^\d+[A-Z]?$/.test(normalizedSuggestedFlightNumber);
+  const preferredHasAirlinePrefix = /^[A-Z]{2,4}\d+[A-Z]?$/.test(normalizedPreferredIdentifier);
+
+  if (suggestedIsNumericSuffix
+    && preferredHasAirlinePrefix
+    && normalizedPreferredIdentifier.endsWith(normalizedSuggestedFlightNumber)) {
+    return normalizedPreferredIdentifier;
+  }
+
+  return normalizedSuggestedFlightNumber;
+}
+
 export function createEmptyFriendFlightLeg(): FriendFlightLeg {
   return {
     id: '',

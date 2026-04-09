@@ -8,6 +8,7 @@ import {
   getCurrentTripConfig,
   normalizeFriendFlightIdentifier,
   normalizeFriendsTrackerConfig,
+  resolveSuggestedFlightNumber,
   normalizeFriendsTrackerTripConfig,
   type FriendTravelConfig,
   type FriendsTrackerConfig,
@@ -781,7 +782,6 @@ export function FriendsConfigProvider({
     const matchedIcao24 = typeof match.matchedIcao24 === 'string' && /^[0-9A-F]{6}$/.test(match.matchedIcao24)
       ? match.matchedIcao24
       : null;
-    const matchedFlightNumber = normalizeFriendFlightIdentifier(match.matchedFlightNumber);
     const matchedDepartureTime = typeof match.matchedDepartureTime === 'number' && Number.isFinite(match.matchedDepartureTime)
       ? new Date(match.matchedDepartureTime).toISOString()
       : null;
@@ -800,6 +800,8 @@ export function FriendsConfigProvider({
         if (currentLeg.id !== legId) {
           return currentLeg;
         }
+
+        const matchedFlightNumber = resolveSuggestedFlightNumber(currentLeg.flightNumber, match.matchedFlightNumber);
 
         return {
           ...currentLeg,
@@ -868,14 +870,15 @@ export function FriendsConfigProvider({
     const { friendId, legId, identifier } = modal;
     const now = Date.now();
     const status = candidate.status === 'warning' ? 'warning' : 'matched';
-    const message = `${candidate.providerLabel} matched ${candidate.matchedFlightNumber ?? identifier}. ${candidate.message}`;
+    const resolvedFlightNumber = resolveSuggestedFlightNumber(identifier, candidate.matchedFlightNumber) || null;
+    const message = `${candidate.providerLabel} matched ${resolvedFlightNumber ?? identifier}. ${candidate.message}`;
 
     applyMatchedFlightToLeg(friendId, legId, {
       status,
       message,
       providerLabel: candidate.providerLabel,
       matchedIcao24: candidate.matchedIcao24,
-      matchedFlightNumber: candidate.matchedFlightNumber,
+      matchedFlightNumber: resolvedFlightNumber,
       matchedDepartureTime: candidate.matchedDepartureTime,
       matchedArrivalTime: candidate.matchedArrivalTime,
       matchedDepartureAirport: candidate.matchedDepartureAirport,
@@ -892,7 +895,7 @@ export function FriendsConfigProvider({
       message,
       providerLabel: candidate.providerLabel,
       matchedIcao24: candidate.matchedIcao24,
-      matchedFlightNumber: candidate.matchedFlightNumber,
+      matchedFlightNumber: resolvedFlightNumber,
       matchedDepartureTime: candidate.matchedDepartureTime,
       matchedArrivalTime: candidate.matchedArrivalTime,
       matchedDepartureAirport: candidate.matchedDepartureAirport,
