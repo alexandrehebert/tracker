@@ -20,6 +20,10 @@ const CACHE_COLLECTION_NAME = 'flight_search_cache';
 const DETAILS_CACHE_COLLECTION_NAME = 'flight_details_cache';
 const AIRPORT_DIRECTORY_CACHE_COLLECTION_NAME = 'airport_directory_cache';
 const SHARED_FLIGHT_COLLECTION_NAME = 'shared_flight_cache';
+const SHARED_FLIGHT_TIMELINE_COLLECTION_NAME = 'shared_flight_timeline';
+const SHARED_FLIGHT_FETCH_HISTORY_COLLECTION_NAME = 'shared_flight_fetch_history';
+const DEFAULT_STORED_TRACK_POINTS = 600;
+const DEFAULT_STORED_FETCH_HISTORY_ENTRIES = 2_500;
 
 type FlightSearchCacheDocument = {
   _id: string;
@@ -48,11 +52,31 @@ type SharedFlightCacheDocument = {
   updatedAt: Date;
 };
 
+type SharedFlightTimelinePointSource = 'track' | 'rawTrack';
+
+type SharedFlightTimelinePointDocument = {
+  _id: string;
+  flightKey: string;
+  source: SharedFlightTimelinePointSource;
+  payload: FlightMapPoint;
+  updatedAt: Date;
+};
+
+type SharedFlightFetchHistoryDocument = {
+  _id: string;
+  flightKey: string;
+  capturedAt: number;
+  payload: FlightFetchSnapshot;
+  updatedAt: Date;
+};
+
 let mongoClientPromise: Promise<MongoClient> | null = null;
 let flightCacheIndexesReady: Promise<void> | null = null;
 let flightDetailsCacheIndexesReady: Promise<void> | null = null;
 let airportDirectoryCacheIndexesReady: Promise<void> | null = null;
 let sharedFlightCacheIndexesReady: Promise<void> | null = null;
+let sharedFlightTimelineIndexesReady: Promise<void> | null = null;
+let sharedFlightFetchHistoryIndexesReady: Promise<void> | null = null;
 let mongoWarningLogged = false;
 
 function getCacheTtlSeconds(): number {
@@ -104,6 +128,20 @@ function logMongoWarning(error: unknown) {
 
 function normalizeHistoryIdentifier(value: string | null | undefined): string {
   return typeof value === 'string' ? value.replace(/\s+/g, '').trim().toUpperCase() : '';
+}
+
+function getConfiguredHistoryLimit(envName: string, defaultValue: number): number {
+  const configuredValue = process.env[envName]?.trim();
+  if (!configuredValue) {
+    return defaultValue;
+  }
+
+  const parsedValue = Number.parseInt(configuredValue, 10);
+  if (!Number.isFinite(parsedValue)) {
+    return defaultValue;
+  }
+
+  return parsedValue <= 0 ? Number.POSITIVE_INFINITY : parsedValue;
 }
 
 async function mergeTrackerPayloadWithHistoricalFlights(payload: TrackerApiResponse): Promise<TrackerApiResponse> {
@@ -158,10 +196,16 @@ function mergeUniqueStrings(...lists: Array<string[] | undefined>): string[] {
   );
 }
 
-const MAX_RECONCILED_TRACK_POINTS = 120;
 const TRACK_POINT_BUCKET_DECIMALS = 2;
-const MAX_FETCH_HISTORY_ENTRIES = 1_500;
 const FETCH_HISTORY_TIME_BUCKET_SECONDS = 5 * 60;
+const MAX_STORED_TRACK_POINTS = getConfiguredHistoryLimit(
+  'TRACKER_SHARED_CACHE_MAX_TRACK_POINTS',
+  DEFAULT_STORED_TRACK_POINTS,
+);
+const MAX_STORED_FETCH_HISTORY_ENTRIES = getConfiguredHistoryLimit(
+  'TRACKER_SHARED_CACHE_MAX_FETCH_HISTORY',
+  DEFAULT_STORED_FETCH_HISTORY_ENTRIES,
+);
 
 function chooseMostRecentPoint(next: FlightMapPoint | null, previous: FlightMapPoint | null): FlightMapPoint | null {
   if (!next) {
@@ -207,54 +251,40 @@ function getTrackSpatialKey(point: FlightMapPoint): string {
   return `${point.latitude.toFixed(TRACK_POINT_BUCKET_DECIMALS)}:${point.longitude.toFixed(TRACK_POINT_BUCKET_DECIMALS)}:${point.onGround ? 'g' : 'a'}`;
 }
 
-function limitTrackPoints(points: FlightMapPoint[]): FlightMapPoint[] {
-  if (points.length <= MAX_RECONCILED_TRACK_POINTS) {
+function limitTrackPoints(points: FlightMapPoint[], maxPoints = Number.POSITIVE_INFINITY): FlightMapPoint[] {
+  if (!Number.isFinite(maxPoints) || maxPoints <= 0 || points.length <= maxPoints) {
     return points;
+  }
+
+  const safeMaxPoints = Math.max(1, Math.floor(maxPoints));
+  if (safeMaxPoints === 1) {
+    return points[0] ? [points[0]] : [];
   }
 
   const lastIndex = points.length - 1;
 
-  return Array.from({ length: MAX_RECONCILED_TRACK_POINTS }, (_, sampleIndex) => {
-    const pointIndex = Math.floor((sampleIndex * lastIndex) / (MAX_RECONCILED_TRACK_POINTS - 1));
+  return Array.from({ length: safeMaxPoints }, (_, sampleIndex) => {
+    const pointIndex = Math.floor((sampleIndex * lastIndex) / (safeMaxPoints - 1));
     return points[pointIndex] ?? null;
   }).filter((point): point is FlightMapPoint => Boolean(point));
 }
 
-function mergeTrackPoints(previous: FlightMapPoint[] = [], next: FlightMapPoint[] = []): FlightMapPoint[] {
+function mergeTrackPoints(
+  previous: FlightMapPoint[] = [],
+  next: FlightMapPoint[] = [],
+  options?: { maxPoints?: number },
+): FlightMapPoint[] {
   const merged = new Map<string, FlightMapPoint>();
 
   for (const point of [...previous, ...next]) {
     const key = point.time != null
       ? `t:${point.time}`
-      : `c:${point.latitude.toFixed(4)}:${point.longitude.toFixed(4)}:${point.altitude ?? 'na'}`;
+      : `c:${point.latitude.toFixed(4)}:${point.longitude.toFixed(4)}:${point.altitude ?? 'na'}:${point.onGround ? 'g' : 'a'}`;
 
     merged.set(key, point);
   }
 
-  const sortedPoints = Array.from(merged.values())
-    .sort((first, second) => {
-      if (first.time == null && second.time == null) {
-        return 0;
-      }
-
-      if (first.time == null) {
-        return 1;
-      }
-
-      if (second.time == null) {
-        return -1;
-      }
-
-      return first.time - second.time;
-    });
-
-  const latestPointBySpatialKey = new Map<string, FlightMapPoint>();
-
-  for (const point of sortedPoints) {
-    latestPointBySpatialKey.set(getTrackSpatialKey(point), point);
-  }
-
-  const dedupedPoints = Array.from(latestPointBySpatialKey.values()).sort((first, second) => {
+  const sortedPoints = Array.from(merged.values()).sort((first, second) => {
     if (first.time == null && second.time == null) {
       return 0;
     }
@@ -270,7 +300,7 @@ function mergeTrackPoints(previous: FlightMapPoint[] = [], next: FlightMapPoint[
     return first.time - second.time;
   });
 
-  return limitTrackPoints(dedupedPoints);
+  return limitTrackPoints(sortedPoints, options?.maxPoints);
 }
 
 function mergeRouteValues(
@@ -474,6 +504,7 @@ function buildSnapshotMaterialKey(snapshot: FlightFetchSnapshot): string {
 function mergeFlightFetchHistory(
   history: FlightFetchSnapshot[] | undefined,
   snapshot: FlightFetchSnapshot,
+  options?: { maxEntries?: number },
 ): FlightFetchSnapshot[] {
   const nextHistory = [...(history ?? [])];
   const existingIndex = nextHistory.findIndex((entry) => entry.id === snapshot.id);
@@ -521,7 +552,13 @@ function mergeFlightFetchHistory(
   }
 
   nextHistory.push(snapshot);
-  return nextHistory.slice(-MAX_FETCH_HISTORY_ENTRIES);
+
+  const maxEntries = options?.maxEntries;
+  if (Number.isFinite(maxEntries) && typeof maxEntries === 'number' && maxEntries > 0) {
+    return nextHistory.slice(-Math.floor(maxEntries));
+  }
+
+  return nextHistory;
 }
 
 function mergeFetchHistoryLists(...lists: Array<FlightFetchSnapshot[] | undefined>): FlightFetchSnapshot[] {
@@ -532,6 +569,41 @@ function mergeFetchHistoryLists(...lists: Array<FlightFetchSnapshot[] | undefine
     }
     return nextMerged;
   }, []);
+}
+
+function limitFetchHistoryEntries(
+  history: FlightFetchSnapshot[] | undefined,
+  maxEntries = Number.POSITIVE_INFINITY,
+): FlightFetchSnapshot[] {
+  const safeHistory = history ?? [];
+  if (!Number.isFinite(maxEntries) || maxEntries <= 0 || safeHistory.length <= maxEntries) {
+    return safeHistory;
+  }
+
+  return safeHistory.slice(-Math.floor(maxEntries));
+}
+
+function trimTrackedFlightForStorage(flight: TrackedFlight): TrackedFlight {
+  return {
+    ...flight,
+    track: limitTrackPoints(flight.track, MAX_STORED_TRACK_POINTS),
+    rawTrack: limitTrackPoints(flight.rawTrack ?? flight.track, MAX_STORED_TRACK_POINTS),
+    fetchHistory: limitFetchHistoryEntries(flight.fetchHistory, MAX_STORED_FETCH_HISTORY_ENTRIES),
+  };
+}
+
+function trimSelectedFlightDetailsForStorage(details: SelectedFlightDetails): SelectedFlightDetails {
+  return {
+    ...details,
+    fetchHistory: limitFetchHistoryEntries(details.fetchHistory, MAX_STORED_FETCH_HISTORY_ENTRIES),
+  };
+}
+
+function trimTrackerPayloadForStorage(payload: TrackerApiResponse): TrackerApiResponse {
+  return {
+    ...payload,
+    flights: payload.flights.map((flight) => trimTrackedFlightForStorage(flight)),
+  };
 }
 
 function mergeTrackerPayloadForSharedCache(
@@ -666,6 +738,291 @@ function mergeSelectedFlightDetailsWithSharedFlight(
   };
 }
 
+function buildSharedFlightPointDocumentId(
+  flightKey: string,
+  source: SharedFlightTimelinePointSource,
+  point: FlightMapPoint,
+): string {
+  const pointKey = point.time != null
+    ? `t:${point.time}`
+    : `c:${getTrackSpatialKey(point)}:${point.altitude ?? 'na'}`;
+
+  return `${flightKey}:${source}:${pointKey}`;
+}
+
+function buildSharedFlightFetchHistoryDocumentId(flightKey: string, snapshot: FlightFetchSnapshot): string {
+  if (snapshot.id.trim()) {
+    return `${flightKey}:${snapshot.id}`;
+  }
+
+  return `${flightKey}:${snapshot.trigger}:${snapshot.capturedAt}`;
+}
+
+async function getSharedFlightTimelineCollection(): Promise<Collection<SharedFlightTimelinePointDocument> | null> {
+  const mongoUri = process.env.MONGODB_URI?.trim();
+  if (!mongoUri) {
+    return null;
+  }
+
+  try {
+    if (!mongoClientPromise) {
+      const client = new MongoClient(mongoUri);
+      mongoClientPromise = client.connect();
+    }
+
+    let client: MongoClient;
+    try {
+      client = await mongoClientPromise;
+    } catch (error) {
+      mongoClientPromise = null;
+      throw error;
+    }
+
+    const collection = client
+      .db(getMongoDbName())
+      .collection<SharedFlightTimelinePointDocument>(SHARED_FLIGHT_TIMELINE_COLLECTION_NAME);
+
+    if (!sharedFlightTimelineIndexesReady) {
+      sharedFlightTimelineIndexesReady = Promise.all([
+        collection.createIndex({ flightKey: 1, source: 1, updatedAt: -1 }),
+      ]).then(() => undefined);
+    }
+
+    try {
+      await sharedFlightTimelineIndexesReady;
+    } catch (error) {
+      sharedFlightTimelineIndexesReady = null;
+      throw error;
+    }
+
+    return collection;
+  } catch (error) {
+    logMongoWarning(error);
+    return null;
+  }
+}
+
+async function getSharedFlightFetchHistoryCollection(): Promise<Collection<SharedFlightFetchHistoryDocument> | null> {
+  const mongoUri = process.env.MONGODB_URI?.trim();
+  if (!mongoUri) {
+    return null;
+  }
+
+  try {
+    if (!mongoClientPromise) {
+      const client = new MongoClient(mongoUri);
+      mongoClientPromise = client.connect();
+    }
+
+    let client: MongoClient;
+    try {
+      client = await mongoClientPromise;
+    } catch (error) {
+      mongoClientPromise = null;
+      throw error;
+    }
+
+    const collection = client
+      .db(getMongoDbName())
+      .collection<SharedFlightFetchHistoryDocument>(SHARED_FLIGHT_FETCH_HISTORY_COLLECTION_NAME);
+
+    if (!sharedFlightFetchHistoryIndexesReady) {
+      sharedFlightFetchHistoryIndexesReady = Promise.all([
+        collection.createIndex({ flightKey: 1, capturedAt: 1 }),
+      ]).then(() => undefined);
+    }
+
+    try {
+      await sharedFlightFetchHistoryIndexesReady;
+    } catch (error) {
+      sharedFlightFetchHistoryIndexesReady = null;
+      throw error;
+    }
+
+    return collection;
+  } catch (error) {
+    logMongoWarning(error);
+    return null;
+  }
+}
+
+async function readStoredSharedFlightCachePayload(cacheKey: string): Promise<TrackedFlight | null> {
+  const collection = await getSharedFlightCollection();
+  if (!collection) {
+    return null;
+  }
+
+  try {
+    const cachedDocument = await collection.findOne({ _id: cacheKey });
+    return cachedDocument?.payload ?? null;
+  } catch (error) {
+    logMongoWarning(error);
+    return null;
+  }
+}
+
+async function readSharedFlightTimelinePoints(
+  flightKey: string,
+  source: SharedFlightTimelinePointSource,
+): Promise<FlightMapPoint[]> {
+  const collection = await getSharedFlightTimelineCollection();
+  if (!collection) {
+    return [];
+  }
+
+  try {
+    const documents = await collection.find({ flightKey, source }).toArray();
+    return documents
+      .filter((document) => document.flightKey === flightKey && document.source === source)
+      .map((document) => document.payload)
+      .sort((first, second) => {
+        if (first.time == null && second.time == null) {
+          return 0;
+        }
+
+        if (first.time == null) {
+          return 1;
+        }
+
+        if (second.time == null) {
+          return -1;
+        }
+
+        return first.time - second.time;
+      });
+  } catch (error) {
+    logMongoWarning(error);
+    return [];
+  }
+}
+
+async function readSharedFlightFetchHistoryEntries(flightKey: string): Promise<FlightFetchSnapshot[]> {
+  const collection = await getSharedFlightFetchHistoryCollection();
+  if (!collection) {
+    return [];
+  }
+
+  try {
+    const documents = await collection.find({ flightKey }).toArray();
+    return documents
+      .filter((document) => document.flightKey === flightKey)
+      .map((document) => document.payload)
+      .sort((first, second) => first.capturedAt - second.capturedAt);
+  } catch (error) {
+    logMongoWarning(error);
+    return [];
+  }
+}
+
+async function persistSharedFlightTimelinePoints(
+  flightKey: string,
+  source: SharedFlightTimelinePointSource,
+  points: FlightMapPoint[] | undefined,
+): Promise<void> {
+  const safePoints = points ?? [];
+  if (safePoints.length === 0) {
+    return;
+  }
+
+  const collection = await getSharedFlightTimelineCollection();
+  if (!collection) {
+    return;
+  }
+
+  const uniquePoints = new Map<string, FlightMapPoint>();
+  for (const point of safePoints) {
+    uniquePoints.set(buildSharedFlightPointDocumentId(flightKey, source, point), point);
+  }
+
+  try {
+    await Promise.all(
+      Array.from(uniquePoints.entries()).map(([id, point]) => collection.updateOne(
+        { _id: id },
+        {
+          $set: {
+            flightKey,
+            source,
+            payload: point,
+            updatedAt: new Date(),
+          },
+        },
+        { upsert: true },
+      )),
+    );
+  } catch (error) {
+    logMongoWarning(error);
+  }
+}
+
+async function persistSharedFlightFetchHistoryEntries(
+  flightKey: string,
+  history: FlightFetchSnapshot[] | undefined,
+): Promise<void> {
+  const safeHistory = history ?? [];
+  if (safeHistory.length === 0) {
+    return;
+  }
+
+  const collection = await getSharedFlightFetchHistoryCollection();
+  if (!collection) {
+    return;
+  }
+
+  const uniqueSnapshots = new Map<string, FlightFetchSnapshot>();
+  for (const snapshot of safeHistory) {
+    uniqueSnapshots.set(buildSharedFlightFetchHistoryDocumentId(flightKey, snapshot), snapshot);
+  }
+
+  try {
+    await Promise.all(
+      Array.from(uniqueSnapshots.entries()).map(([id, snapshot]) => collection.updateOne(
+        { _id: id },
+        {
+          $set: {
+            flightKey,
+            capturedAt: snapshot.capturedAt,
+            payload: snapshot,
+            updatedAt: new Date(),
+          },
+        },
+        { upsert: true },
+      )),
+    );
+  } catch (error) {
+    logMongoWarning(error);
+  }
+}
+
+async function persistSharedFlightArchive(flightKey: string, flight: TrackedFlight): Promise<void> {
+  await Promise.all([
+    persistSharedFlightTimelinePoints(flightKey, 'track', flight.track),
+    persistSharedFlightTimelinePoints(flightKey, 'rawTrack', flight.rawTrack ?? flight.track),
+    persistSharedFlightFetchHistoryEntries(flightKey, flight.fetchHistory),
+  ]);
+}
+
+async function hydrateSharedFlightArchive(flightKey: string, flight: TrackedFlight): Promise<TrackedFlight> {
+  const [archivedTrack, archivedRawTrack, archivedFetchHistory] = await Promise.all([
+    readSharedFlightTimelinePoints(flightKey, 'track'),
+    readSharedFlightTimelinePoints(flightKey, 'rawTrack'),
+    readSharedFlightFetchHistoryEntries(flightKey),
+  ]);
+
+  const hydratedTrack = mergeTrackPoints(archivedTrack, flight.track);
+  const hydratedRawTrack = mergeTrackPoints(archivedRawTrack, flight.rawTrack ?? flight.track);
+
+  return {
+    ...flight,
+    originPoint: chooseEarliestPoint(
+      chooseEarliestPoint(hydratedTrack[0] ?? null, hydratedRawTrack[0] ?? null),
+      flight.originPoint,
+    ) ?? flight.originPoint,
+    track: hydratedTrack,
+    rawTrack: hydratedRawTrack,
+    fetchHistory: mergeFetchHistoryLists(archivedFetchHistory, flight.fetchHistory),
+  };
+}
+
 async function getSharedFlightCollection(): Promise<Collection<SharedFlightCacheDocument> | null> {
   const mongoUri = process.env.MONGODB_URI?.trim();
   if (!mongoUri) {
@@ -714,18 +1071,12 @@ async function readSharedFlightCache(icao24: string): Promise<TrackedFlight | nu
     return null;
   }
 
-  const collection = await getSharedFlightCollection();
-  if (!collection) {
+  const storedFlight = await readStoredSharedFlightCachePayload(cacheKey);
+  if (!storedFlight) {
     return null;
   }
 
-  try {
-    const cachedDocument = await collection.findOne({ _id: cacheKey });
-    return cachedDocument?.payload ?? null;
-  } catch (error) {
-    logMongoWarning(error);
-    return null;
-  }
+  return hydrateSharedFlightArchive(cacheKey, storedFlight);
 }
 
 async function writeSharedFlightCache(flight: TrackedFlight): Promise<TrackedFlight> {
@@ -734,12 +1085,15 @@ async function writeSharedFlightCache(flight: TrackedFlight): Promise<TrackedFli
     return flight;
   }
 
-  const previousFlight = await readSharedFlightCache(cacheKey);
+  const previousFlight = await readStoredSharedFlightCachePayload(cacheKey);
   const mergedFlight = reconcileTrackedFlightForCache(previousFlight ?? undefined, flight);
+
+  await persistSharedFlightArchive(cacheKey, mergedFlight);
+  const hydratedFlight = await hydrateSharedFlightArchive(cacheKey, mergedFlight);
 
   const collection = await getSharedFlightCollection();
   if (!collection) {
-    return mergedFlight;
+    return hydratedFlight;
   }
 
   try {
@@ -747,7 +1101,7 @@ async function writeSharedFlightCache(flight: TrackedFlight): Promise<TrackedFli
       { _id: cacheKey },
       {
         $set: {
-          payload: mergedFlight,
+          payload: trimTrackedFlightForStorage(hydratedFlight),
           updatedAt: new Date(),
         },
       },
@@ -757,7 +1111,7 @@ async function writeSharedFlightCache(flight: TrackedFlight): Promise<TrackedFli
     logMongoWarning(error);
   }
 
-  return mergedFlight;
+  return hydratedFlight;
 }
 
 async function hydrateTrackerPayloadFromSharedFlights(payload: TrackerApiResponse): Promise<TrackerApiResponse> {
@@ -972,7 +1326,7 @@ export async function writeFlightSearchCache(
       { _id: cacheKey },
       {
         $set: {
-          payload: persistedPayload,
+          payload: trimTrackerPayloadForStorage(persistedPayload),
           expiresAt,
           updatedAt: new Date(persistedPayload.fetchedAt),
         },
@@ -1080,7 +1434,7 @@ export async function writeFlightDetailsCache(
       { _id: cacheKey },
       {
         $set: {
-          payload: persistedPayload,
+          payload: trimSelectedFlightDetailsForStorage(persistedPayload),
           expiresAt,
           updatedAt: new Date(persistedPayload.fetchedAt),
         },

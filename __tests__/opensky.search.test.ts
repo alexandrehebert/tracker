@@ -559,7 +559,7 @@ describe('searchFlights', () => {
 
     expect(cachedResult?.flights[0]?.originPoint?.time).toBe(initialTrack[0]?.time ?? null);
     expect(cachedResult?.flights[0]?.track[0]?.time).toBe(initialTrack[0]?.time ?? null);
-    expect(cachedResult?.flights[0]?.track).toHaveLength(120);
+    expect(cachedResult?.flights[0]?.track).toHaveLength(150);
   });
 
   it('keeps selected-flight snapshots in shared history after a cached page reload', async () => {
@@ -654,6 +654,87 @@ describe('searchFlights', () => {
     const cachedResult = await readFlightSearchCache(cacheKey);
 
     expect(cachedResult?.flights[0]?.fetchHistory).toHaveLength(3);
+  });
+
+  it('keeps month-scale Wayback history without truncating snapshots or route points by default', async () => {
+    process.env.MONGODB_URI = 'mongodb://mock:27017/tracker';
+
+    const { readFlightSearchCache, writeFlightSearchCache } = await loadFlightCache();
+    const cacheKey = 'shared-history:month-scale';
+    const track = Array.from({ length: 200 }, (_, index) => ({
+      time: 1_700_200_000 + index * 60,
+      latitude: 40 + index * 0.05,
+      longitude: -73 + index * 0.08,
+      x: index,
+      y: 200 - index,
+      altitude: 8_000 + index * 20,
+      heading: 90,
+      onGround: index === 0,
+    }));
+    const fetchHistory = Array.from({ length: 1_700 }, (_, index) => ({
+      id: `39bd24:manual-refresh:${1_700_200_000_000 + index * 60_000}`,
+      capturedAt: 1_700_200_000_000 + index * 60_000,
+      trigger: 'manual-refresh' as const,
+      dataSource: 'opensky' as const,
+      matchedBy: ['AFR123'],
+      route: {
+        departureAirport: 'LFPG',
+        arrivalAirport: 'KJFK',
+        firstSeen: 1_700_200_000,
+        lastSeen: 1_700_212_000,
+      },
+      current: track[Math.min(index % track.length, track.length - 1)] ?? null,
+      onGround: false,
+      lastContact: 1_700_200_000 + index * 60,
+      velocity: 900,
+      heading: 90,
+      geoAltitude: 10_000,
+      baroAltitude: 10_000,
+      sourceDetails: [],
+    }));
+
+    await writeFlightSearchCache(cacheKey, {
+      query: 'AFR123',
+      requestedIdentifiers: ['AFR123'],
+      matchedIdentifiers: ['AFR123'],
+      notFoundIdentifiers: [],
+      fetchedAt: 1_700_302_000_000,
+      flights: [
+        {
+          icao24: '39bd24',
+          callsign: 'AFR123',
+          originCountry: 'France',
+          matchedBy: ['AFR123'],
+          lastContact: track.at(-1)?.time ?? null,
+          current: track.at(-1) ?? null,
+          originPoint: track[0] ?? null,
+          track,
+          rawTrack: track,
+          onGround: false,
+          velocity: 905,
+          heading: 92,
+          verticalRate: 0,
+          geoAltitude: track.at(-1)?.altitude ?? null,
+          baroAltitude: track.at(-1)?.altitude ?? null,
+          squawk: '1234',
+          category: null,
+          route: {
+            departureAirport: 'LFPG',
+            arrivalAirport: 'KJFK',
+            firstSeen: 1_700_200_000,
+            lastSeen: 1_700_212_000,
+          },
+          dataSource: 'opensky',
+          sourceDetails: [],
+          fetchHistory,
+        },
+      ],
+    }, 'manual-refresh');
+
+    const cachedResult = await readFlightSearchCache(cacheKey);
+    expect(cachedResult?.flights[0]?.track).toHaveLength(200);
+    expect(cachedResult?.flights[0]?.rawTrack).toHaveLength(200);
+    expect(cachedResult?.flights[0]?.fetchHistory).toHaveLength(1_701);
   });
 
   it('bypasses the cached search result when forceRefresh is requested', async () => {
