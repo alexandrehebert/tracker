@@ -8,6 +8,7 @@ import type {
 } from '~/components/tracker/flight/types';
 import { lookupAirportDetails } from './airports';
 import { readFlightDetailsCache, writeFlightDetailsCache } from './flightCache';
+import { lookupAirlabsFlightWithReport } from './providers/airlabs';
 import { lookupAviationstackFlightWithReport } from './providers/aviationstack';
 import { lookupFlightAwareFlightWithReport } from './providers/flightaware';
 import { guessDepartureAirportFromOriginPoint, getRecentRoute, getTrackForAircraft } from './providers/opensky';
@@ -193,7 +194,7 @@ export async function getFlightSelectionDetails(
     let openSkyRouteError: string | null = null;
     let openSkyTrackError: string | null = null;
 
-    const [latestRoute, flightAwareLookup, aviationstackLookup] = await Promise.all([
+    const [latestRoute, flightAwareLookup, aviationstackLookup, airlabsLookup] = await Promise.all([
       shouldUseOpenSky
         ? getRecentRoute(normalizedIcao24, referenceTime).catch((error) => {
             openSkyRouteError = error instanceof Error ? error.message : 'OpenSky route lookup failed.';
@@ -201,7 +202,7 @@ export async function getFlightSelectionDetails(
           })
         : Promise.resolve(fallbackRoute),
       params.callsign
-        ? lookupFlightAwareFlightWithReport(params.callsign)
+        ? lookupFlightAwareFlightWithReport(params.callsign, { referenceTimeMs: referenceTime * 1000 })
         : Promise.resolve({
             match: null,
             report: createSourceDetail(
@@ -212,7 +213,7 @@ export async function getFlightSelectionDetails(
             ),
           }),
       params.callsign
-        ? lookupAviationstackFlightWithReport(params.callsign)
+        ? lookupAviationstackFlightWithReport(params.callsign, { referenceTimeMs: referenceTime * 1000 })
         : Promise.resolve({
             match: null,
             report: createSourceDetail(
@@ -222,26 +223,42 @@ export async function getFlightSelectionDetails(
               'Aviationstack lookup skipped because no callsign was available for this flight.',
             ),
           }),
+      params.callsign
+        ? lookupAirlabsFlightWithReport(params.callsign, { referenceTimeMs: referenceTime * 1000 })
+        : Promise.resolve({
+            match: null,
+            report: createSourceDetail(
+              'airlabs',
+              'skipped',
+              false,
+              'AirLabs lookup skipped because no callsign was available for this flight.',
+            ),
+          }),
     ]);
 
     const flightAwareMatch = flightAwareLookup.match;
     const aviationstackMatch = aviationstackLookup.match;
+    const airlabsMatch = airlabsLookup.match;
 
     const route = sanitizeRouteTimes({
       departureAirport: latestRoute.departureAirport
         ?? flightAwareMatch?.route.departureAirport
+        ?? airlabsMatch?.route.departureAirport
         ?? aviationstackMatch?.route.departureAirport
         ?? fallbackRoute.departureAirport,
       arrivalAirport: latestRoute.arrivalAirport
         ?? flightAwareMatch?.route.arrivalAirport
+        ?? airlabsMatch?.route.arrivalAirport
         ?? aviationstackMatch?.route.arrivalAirport
         ?? fallbackRoute.arrivalAirport,
       firstSeen: latestRoute.firstSeen
         ?? flightAwareMatch?.route.firstSeen
+        ?? airlabsMatch?.route.firstSeen
         ?? aviationstackMatch?.route.firstSeen
         ?? fallbackRoute.firstSeen,
       lastSeen: latestRoute.lastSeen
         ?? flightAwareMatch?.route.lastSeen
+        ?? airlabsMatch?.route.lastSeen
         ?? aviationstackMatch?.route.lastSeen
         ?? fallbackRoute.lastSeen,
     }, referenceTime);
@@ -267,12 +284,18 @@ export async function getFlightSelectionDetails(
     const departureAirport = mergeAirportDetails(
       resolvedDepartureAirport,
       route.departureAirport,
-      flightAwareMatch?.route.departureAirportName ?? aviationstackMatch?.route.departureAirportName ?? null,
+      flightAwareMatch?.route.departureAirportName
+        ?? airlabsMatch?.route.departureAirportName
+        ?? aviationstackMatch?.route.departureAirportName
+        ?? null,
     );
     const arrivalAirport = mergeAirportDetails(
       resolvedArrivalAirport,
       route.arrivalAirport,
-      flightAwareMatch?.route.arrivalAirportName ?? aviationstackMatch?.route.arrivalAirportName ?? null,
+      flightAwareMatch?.route.arrivalAirportName
+        ?? airlabsMatch?.route.arrivalAirportName
+        ?? aviationstackMatch?.route.arrivalAirportName
+        ?? null,
     );
 
     const openSkySourceDetail = (() => {
@@ -335,24 +358,34 @@ export async function getFlightSelectionDetails(
 
     const payload: SelectedFlightDetails = {
       icao24: normalizedIcao24,
-      callsign: params.callsign?.trim() || flightAwareMatch?.callsign || aviationstackMatch?.callsign || normalizedIcao24.toUpperCase(),
+      callsign: params.callsign?.trim()
+        || flightAwareMatch?.callsign
+        || airlabsMatch?.callsign
+        || aviationstackMatch?.callsign
+        || normalizedIcao24.toUpperCase(),
       fetchedAt: Date.now(),
       route,
       departureAirport,
       arrivalAirport,
-      flightNumber: flightAwareMatch?.flightNumber ?? aviationstackMatch?.flightNumber ?? null,
-      airline: flightAwareMatch?.airline ?? aviationstackMatch?.airline ?? null,
-      aircraft: flightAwareMatch?.aircraft ?? aviationstackMatch?.aircraft ?? null,
+      flightNumber: flightAwareMatch?.flightNumber ?? airlabsMatch?.flightNumber ?? aviationstackMatch?.flightNumber ?? null,
+      airline: flightAwareMatch?.airline ?? airlabsMatch?.airline ?? aviationstackMatch?.airline ?? null,
+      aircraft: flightAwareMatch?.aircraft ?? airlabsMatch?.aircraft ?? aviationstackMatch?.aircraft ?? null,
       dataSource: shouldUseOpenSky
-        ? (flightAwareMatch || aviationstackMatch ? 'hybrid' : 'opensky')
-        : (flightAwareMatch && aviationstackMatch
+        ? (flightAwareMatch || airlabsMatch || aviationstackMatch ? 'hybrid' : 'opensky')
+        : (flightAwareMatch && (airlabsMatch || aviationstackMatch)
             ? 'hybrid'
             : flightAwareMatch
               ? 'flightaware'
-              : aviationstackMatch
-                ? 'aviationstack'
-                : (normalizedIcao24.startsWith('fa-') ? 'flightaware' : 'aviationstack')),
-      sourceDetails: mergeSourceDetails(undefined, [openSkySourceDetail, flightAwareLookup.report, aviationstackLookup.report]),
+              : airlabsMatch
+                ? 'airlabs'
+                : aviationstackMatch
+                  ? 'aviationstack'
+                  : (normalizedIcao24.startsWith('fa-')
+                      ? 'flightaware'
+                      : normalizedIcao24.startsWith('al-')
+                        ? 'airlabs'
+                        : 'aviationstack')),
+      sourceDetails: mergeSourceDetails(undefined, [openSkySourceDetail, flightAwareLookup.report, airlabsLookup.report, aviationstackLookup.report]),
     };
 
     const trigger: FlightFetchTrigger = options.forceRefresh ? 'manual-refresh' : 'search';

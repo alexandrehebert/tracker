@@ -3,17 +3,19 @@ import { getCachedProviderOverrides } from './overrides';
 
 export type ProviderName = FlightSourceName;
 
-export const ALL_PROVIDERS = ['opensky', 'flightaware', 'aviationstack', 'aerodatabox'] as const satisfies readonly ProviderName[];
+export const ALL_PROVIDERS = ['opensky', 'flightaware', 'aviationstack', 'airlabs', 'aerodatabox'] as const satisfies readonly ProviderName[];
 const PROVIDER_DISABLE_ENV: Record<ProviderName, string> = {
   opensky: 'OPENSKY_DISABLED',
   flightaware: 'FLIGHTAWARE_DISABLED',
   aviationstack: 'AVIATIONSTACK_DISABLED',
+  airlabs: 'AIRLABS_DISABLED',
   aerodatabox: 'AERODATABOX_DISABLED',
 };
 const PROVIDER_LABELS: Record<ProviderName, string> = {
   opensky: 'OpenSky',
   flightaware: 'FlightAware',
   aviationstack: 'Aviationstack',
+  airlabs: 'AirLabs',
   aerodatabox: 'AeroDataBox',
 };
 const ENABLED_PROVIDER_ENV_KEYS = ['ENABLED_API_PROVIDERS', 'TRACKER_ENABLED_PROVIDERS'] as const;

@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { findMatchingTrackedFlightForLeg, normalizeFriendFlightIdentifier, type FriendFlightLeg } from '~/lib/friendsTracker';
 import { searchFlights } from '~/lib/server/opensky';
+import { lookupAirlabsFlightWithReport } from '~/lib/server/providers/airlabs';
 import { lookupAviationstackFlightWithReport } from '~/lib/server/providers/aviationstack';
 import { lookupAeroDataBoxFlightWithReport } from '~/lib/server/providers/aerodatabox';
 import { lookupFlightAwareFlightWithReport } from '~/lib/server/providers/flightaware';
@@ -60,6 +61,7 @@ type ValidationProviderSelection = {
   tracker: boolean;
   flightaware: boolean;
   aviationstack: boolean;
+  airlabs: boolean;
   aerodatabox: boolean;
 };
 
@@ -73,6 +75,7 @@ function buildSelectedProviders(
     tracker: hasExplicitSelection ? input?.tracker === true : true,
     flightaware: hasExplicitSelection ? input?.flightaware === true : true,
     aviationstack: hasExplicitSelection ? input?.aviationstack === true : true,
+    airlabs: hasExplicitSelection ? input?.airlabs === true : true,
     aerodatabox: hasExplicitSelection ? input?.aerodatabox === true : includeOnDemandProviders,
   };
 }
@@ -169,7 +172,7 @@ export async function POST(request: NextRequest) {
       callback,
     );
 
-    const [flightAwareLookup, aviationstackLookup, aeroDataBoxLookup] = await withConfigContext(() => Promise.all([
+    const [flightAwareLookup, aviationstackLookup, airlabsLookup, aeroDataBoxLookup] = await withConfigContext(() => Promise.all([
       selectedProviders.flightaware
         ? lookupFlightAwareFlightWithReport(identifier, {
             referenceTimeMs: Number.isFinite(departureTimeMs) ? departureTimeMs : undefined,
@@ -179,10 +182,20 @@ export async function POST(request: NextRequest) {
             report: createSkippedReport('flightaware', 'FlightAware was not selected for this validation run.'),
           }),
       selectedProviders.aviationstack
-        ? lookupAviationstackFlightWithReport(identifier)
+        ? lookupAviationstackFlightWithReport(identifier, {
+            referenceTimeMs: Number.isFinite(departureTimeMs) ? departureTimeMs : undefined,
+          })
         : Promise.resolve({
             match: null,
             report: createSkippedReport('aviationstack', 'Aviationstack was not selected for this validation run.'),
+          }),
+      selectedProviders.airlabs
+        ? lookupAirlabsFlightWithReport(identifier, {
+            referenceTimeMs: Number.isFinite(departureTimeMs) ? departureTimeMs : undefined,
+          })
+        : Promise.resolve({
+            match: null,
+            report: createSkippedReport('airlabs', 'AirLabs was not selected for this validation run.'),
           }),
       selectedProviders.aerodatabox
         ? lookupAeroDataBoxFlightWithReport(identifier, {
@@ -224,6 +237,20 @@ export async function POST(request: NextRequest) {
         matchedArrivalAirport: normalizeAirportCode(aviationstackLookup.match.route.arrivalAirport),
         message: aviationstackLookup.report.reason,
         sourceDetails: [aviationstackLookup.report],
+      });
+    }
+
+    if (airlabsLookup.match) {
+      candidates.push({
+        providerLabel: 'AirLabs',
+        matchedIcao24: sanitizeIcao24(airlabsLookup.match.aircraft?.icao24),
+        matchedFlightNumber: airlabsLookup.match.flightNumber ?? airlabsLookup.match.callsign ?? null,
+        matchedDepartureTime: toTimestampMs(airlabsLookup.match.route.firstSeen),
+        matchedArrivalTime: toTimestampMs(airlabsLookup.match.route.lastSeen),
+        matchedDepartureAirport: normalizeAirportCode(airlabsLookup.match.route.departureAirport),
+        matchedArrivalAirport: normalizeAirportCode(airlabsLookup.match.route.arrivalAirport),
+        message: airlabsLookup.report.reason,
+        sourceDetails: [airlabsLookup.report],
       });
     }
 
@@ -305,6 +332,7 @@ export async function POST(request: NextRequest) {
       const reports = [
         flightAwareLookup.report,
         aviationstackLookup.report,
+        airlabsLookup.report,
         ...(includeOnDemandProviders ? [aeroDataBoxLookup.report] : []),
       ];
       const hasError = reports.some((report) => report.status === 'error');

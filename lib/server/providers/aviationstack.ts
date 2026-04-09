@@ -158,6 +158,19 @@ function getCacheTtlMs(): number {
   return Number.isFinite(parsedValue) && parsedValue > 0 ? parsedValue * 1000 : DEFAULT_CACHE_TTL_MS;
 }
 
+function hasReferenceTimeMs(referenceTimeMs?: number | null): referenceTimeMs is number {
+  return typeof referenceTimeMs === 'number' && Number.isFinite(referenceTimeMs);
+}
+
+function buildLookupCacheKey(identifier: string, referenceTimeMs?: number | null): string {
+  const normalizedIdentifier = normalizeIdentifier(identifier);
+  if (!hasReferenceTimeMs(referenceTimeMs)) {
+    return normalizedIdentifier;
+  }
+
+  return `${normalizedIdentifier}@${new Date(referenceTimeMs).toISOString().slice(0, 10)}`;
+}
+
 function getAccessKey(): string {
   return process.env.AVIATION_STACK_API_KEY?.trim()
     || process.env.AVIATIONSTACK_ACCESS_KEY?.trim()
@@ -399,6 +412,45 @@ function getRecordMatchScore(record: AviationstackFlightRecord, identifier: stri
   return 0;
 }
 
+function getRecordTemporalScore(record: AviationstackFlightRecord, referenceTimeMs?: number | null): number {
+  if (!hasReferenceTimeMs(referenceTimeMs)) {
+    return 0;
+  }
+
+  const referenceSeconds = Math.floor(referenceTimeMs / 1000);
+  const departureTimestamp = toTimestampSeconds(record.departure?.actual)
+    ?? toTimestampSeconds(record.departure?.estimated)
+    ?? toTimestampSeconds(record.departure?.scheduled);
+  const arrivalTimestamp = toTimestampSeconds(record.arrival?.actual)
+    ?? toTimestampSeconds(record.arrival?.estimated)
+    ?? toTimestampSeconds(record.arrival?.scheduled);
+  const liveTimestamp = toTimestampSeconds(record.live?.updated);
+  const nearestDeltaSeconds = [liveTimestamp, departureTimestamp, arrivalTimestamp]
+    .filter((timestamp): timestamp is number => timestamp != null)
+    .map((timestamp) => Math.abs(timestamp - referenceSeconds))
+    .sort((left, right) => left - right)[0] ?? null;
+
+  let score = 0;
+  if (nearestDeltaSeconds != null) {
+    if (nearestDeltaSeconds <= 60 * 60) score += 40;
+    else if (nearestDeltaSeconds <= 6 * 60 * 60) score += 28;
+    else if (nearestDeltaSeconds <= 24 * 60 * 60) score += 16;
+    else if (nearestDeltaSeconds <= 3 * 24 * 60 * 60) score += 6;
+    else score -= 12;
+  }
+
+  const status = normalizeIdentifier(record.flight_status);
+  if (/(SCHEDULED|ACTIVE)/.test(status)) {
+    score += 4;
+  }
+
+  if (/(LANDED|CANCELLED|DIVERTED)/.test(status)) {
+    score -= 4;
+  }
+
+  return score;
+}
+
 function toEnrichment(record: AviationstackFlightRecord, identifier: string): AviationstackFlightEnrichment {
   const normalizedIdentifier = normalizeIdentifier(identifier);
   const flightIata = normalizeIdentifier(record.flight?.iata);
@@ -412,11 +464,11 @@ function toEnrichment(record: AviationstackFlightRecord, identifier: string): Av
     || (airlineIcao && flightNumber ? `${airlineIcao}${flightNumber}` : '')
     || normalizedIdentifier;
 
-  const departureAirport = toNullableString(record.departure?.icao)?.toUpperCase()
-    ?? toNullableString(record.departure?.iata)?.toUpperCase()
+  const departureAirport = toNullableString(record.departure?.iata)?.toUpperCase()
+    ?? toNullableString(record.departure?.icao)?.toUpperCase()
     ?? null;
-  const arrivalAirport = toNullableString(record.arrival?.icao)?.toUpperCase()
-    ?? toNullableString(record.arrival?.iata)?.toUpperCase()
+  const arrivalAirport = toNullableString(record.arrival?.iata)?.toUpperCase()
+    ?? toNullableString(record.arrival?.icao)?.toUpperCase()
     ?? null;
   const firstSeen = toTimestampSeconds(record.departure?.actual)
     ?? toTimestampSeconds(record.departure?.estimated)
@@ -474,13 +526,13 @@ function toEnrichment(record: AviationstackFlightRecord, identifier: string): Av
   };
 }
 
-async function writeToCache(identifier: string, payload: AviationstackFlightEnrichment | null): Promise<void> {
+async function writeToCache(cacheKey: string, payload: AviationstackFlightEnrichment | null): Promise<void> {
   if (isProviderHistoryConfigured()) {
-    await writeProviderHistory('aviationstack', identifier, payload);
+    await writeProviderHistory('aviationstack', cacheKey, payload);
     return;
   }
 
-  inMemoryFallbackCache.set(identifier, {
+  inMemoryFallbackCache.set(cacheKey, {
     payload,
     expiresAt: Date.now() + getCacheTtlMs(),
   });
@@ -488,6 +540,7 @@ async function writeToCache(identifier: string, payload: AviationstackFlightEnri
 
 async function recordAviationstackCacheLog(
   identifier: string,
+  cacheKey: string,
   payload: AviationstackFlightEnrichment | null,
   layer: 'memory' | 'mongo',
 ): Promise<void> {
@@ -496,15 +549,18 @@ async function recordAviationstackCacheLog(
     operation: 'lookup-flight',
     status: 'cached',
     durationMs: 0,
-    request: { identifier },
+    request: { identifier, cacheKey },
     response: payload
       ? { matched: true, match: summarizeAviationstackMatch(payload) }
       : { matched: false },
-    cache: { status: 'hit', layer, key: identifier },
+    cache: { status: 'hit', layer, key: cacheKey },
   });
 }
 
-export async function lookupAviationstackFlightWithReport(identifier: string): Promise<AviationstackLookupResult> {
+export async function lookupAviationstackFlightWithReport(
+  identifier: string,
+  options?: { referenceTimeMs?: number | null },
+): Promise<AviationstackLookupResult> {
   const normalizedIdentifier = normalizeIdentifier(identifier);
   if (!normalizedIdentifier) {
     return {
@@ -550,11 +606,13 @@ export async function lookupAviationstackFlightWithReport(identifier: string): P
     };
   }
 
+  const cacheKey = buildLookupCacheKey(normalizedIdentifier, options?.referenceTimeMs);
+
   // Synchronous in-memory cache check (preserves original scheduling behavior)
-  const memEntry = inMemoryFallbackCache.get(normalizedIdentifier);
+  const memEntry = inMemoryFallbackCache.get(cacheKey);
   if (memEntry && Date.now() < memEntry.expiresAt) {
     const cachedPayload = memEntry.payload;
-    await recordAviationstackCacheLog(normalizedIdentifier, cachedPayload, 'memory');
+    await recordAviationstackCacheLog(normalizedIdentifier, cacheKey, cachedPayload, 'memory');
     return {
       match: cachedPayload,
       report: cachedPayload
@@ -562,13 +620,13 @@ export async function lookupAviationstackFlightWithReport(identifier: string): P
             'used',
             'Aviationstack returned a cached match and its data was merged into this snapshot.',
             true,
-            { identifier: normalizedIdentifier, cached: true, match: summarizeAviationstackMatch(cachedPayload) },
+            { identifier: normalizedIdentifier, cacheKey, cached: true, match: summarizeAviationstackMatch(cachedPayload) },
           )
         : createAviationstackReport(
             'no-data',
             'Aviationstack was queried recently but no matching flight was returned.',
             false,
-            { identifier: normalizedIdentifier, cached: true },
+            { identifier: normalizedIdentifier, cacheKey, cached: true },
           ),
     };
   }
@@ -576,9 +634,9 @@ export async function lookupAviationstackFlightWithReport(identifier: string): P
   // Async MongoDB history check (only when configured)
   if (isProviderHistoryConfigured()) {
     const ttlMs = getCacheTtlMs();
-    const mongoPayload = await readLatestProviderHistory<AviationstackFlightEnrichment>('aviationstack', normalizedIdentifier, ttlMs);
+    const mongoPayload = await readLatestProviderHistory<AviationstackFlightEnrichment>('aviationstack', cacheKey, ttlMs);
     if (mongoPayload !== null) {
-      await recordAviationstackCacheLog(normalizedIdentifier, mongoPayload, 'mongo');
+      await recordAviationstackCacheLog(normalizedIdentifier, cacheKey, mongoPayload, 'mongo');
       return {
         match: mongoPayload,
         report: mongoPayload
@@ -612,7 +670,7 @@ export async function lookupAviationstackFlightWithReport(identifier: string): P
       });
 
       for (const record of records) {
-        const score = getRecordMatchScore(record, normalizedIdentifier);
+        const score = getRecordMatchScore(record, normalizedIdentifier) + getRecordTemporalScore(record, options?.referenceTimeMs);
         if (score <= bestScore) {
           continue;
         }
@@ -636,7 +694,7 @@ export async function lookupAviationstackFlightWithReport(identifier: string): P
     };
   }
 
-  await writeToCache(normalizedIdentifier, bestMatch);
+  await writeToCache(cacheKey, bestMatch);
 
   if (!bestMatch) {
     return {
@@ -668,8 +726,11 @@ export async function lookupAviationstackFlightWithReport(identifier: string): P
   };
 }
 
-export async function lookupAviationstackFlight(identifier: string): Promise<AviationstackFlightEnrichment | null> {
-  const result = await lookupAviationstackFlightWithReport(identifier);
+export async function lookupAviationstackFlight(
+  identifier: string,
+  options?: { referenceTimeMs?: number | null },
+): Promise<AviationstackFlightEnrichment | null> {
+  const result = await lookupAviationstackFlightWithReport(identifier, options);
   if (result.report.status === 'error') {
     throw new Error(result.report.reason);
   }

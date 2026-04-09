@@ -172,6 +172,19 @@ function getCacheTtlMs(): number {
   return Number.isFinite(parsedValue) && parsedValue > 0 ? parsedValue * 1000 : DEFAULT_CACHE_TTL_MS;
 }
 
+function hasReferenceTimeMs(referenceTimeMs?: number | null): referenceTimeMs is number {
+  return typeof referenceTimeMs === 'number' && Number.isFinite(referenceTimeMs);
+}
+
+function buildLookupCacheKey(identifier: string, referenceTimeMs?: number | null): string {
+  const normalizedIdentifier = normalizeIdentifier(identifier);
+  if (!hasReferenceTimeMs(referenceTimeMs)) {
+    return normalizedIdentifier;
+  }
+
+  return `${normalizedIdentifier}@${new Date(referenceTimeMs).toISOString().slice(0, 10)}`;
+}
+
 function getApiKey(): string {
   return process.env.AERODATABOX_RAPIDAPI_KEY?.trim()
     || process.env.RAPIDAPI_AERODATABOX_API_KEY?.trim()
@@ -599,13 +612,13 @@ function toEnrichment(record: AeroDataBoxFlightRecord, identifier: string): Aero
   };
 }
 
-async function writeToCache(identifier: string, payload: AeroDataBoxFlightEnrichment | null): Promise<void> {
+async function writeToCache(cacheKey: string, payload: AeroDataBoxFlightEnrichment | null): Promise<void> {
   if (isProviderHistoryConfigured()) {
-    await writeProviderHistory('aerodatabox', identifier, payload);
+    await writeProviderHistory('aerodatabox', cacheKey, payload);
     return;
   }
 
-  inMemoryFallbackCache.set(identifier, {
+  inMemoryFallbackCache.set(cacheKey, {
     payload,
     expiresAt: Date.now() + getCacheTtlMs(),
   });
@@ -613,6 +626,7 @@ async function writeToCache(identifier: string, payload: AeroDataBoxFlightEnrich
 
 async function recordAeroDataBoxCacheLog(
   identifier: string,
+  cacheKey: string,
   payload: AeroDataBoxFlightEnrichment | null,
   layer: 'memory' | 'mongo',
 ): Promise<void> {
@@ -621,11 +635,11 @@ async function recordAeroDataBoxCacheLog(
     operation: 'lookup-flight',
     status: 'cached',
     durationMs: 0,
-    request: { identifier },
+    request: { identifier, cacheKey },
     response: payload
       ? { matched: true, match: summarizeAeroDataBoxMatch(payload) }
       : { matched: false },
-    cache: { status: 'hit', layer, key: identifier },
+    cache: { status: 'hit', layer, key: cacheKey },
   });
 }
 
@@ -678,10 +692,12 @@ export async function lookupAeroDataBoxFlightWithReport(
     };
   }
 
-  const memEntry = inMemoryFallbackCache.get(normalizedIdentifier);
+  const cacheKey = buildLookupCacheKey(normalizedIdentifier, options?.referenceTimeMs);
+
+  const memEntry = inMemoryFallbackCache.get(cacheKey);
   if (memEntry && Date.now() < memEntry.expiresAt) {
     const cachedPayload = memEntry.payload;
-    await recordAeroDataBoxCacheLog(normalizedIdentifier, cachedPayload, 'memory');
+    await recordAeroDataBoxCacheLog(normalizedIdentifier, cacheKey, cachedPayload, 'memory');
     return {
       match: cachedPayload,
       report: cachedPayload
@@ -689,22 +705,22 @@ export async function lookupAeroDataBoxFlightWithReport(
             'used',
             'AeroDataBox returned a cached match and its schedule was reused for this validation.',
             true,
-            { identifier: normalizedIdentifier, cached: true, match: summarizeAeroDataBoxMatch(cachedPayload) },
+            { identifier: normalizedIdentifier, cacheKey, cached: true, match: summarizeAeroDataBoxMatch(cachedPayload) },
           )
         : createAeroDataBoxReport(
             'no-data',
             'AeroDataBox was queried recently but no matching flight was returned.',
             false,
-            { identifier: normalizedIdentifier, cached: true },
+            { identifier: normalizedIdentifier, cacheKey, cached: true },
           ),
     };
   }
 
   if (isProviderHistoryConfigured()) {
     const ttlMs = getCacheTtlMs();
-    const mongoPayload = await readLatestProviderHistory<AeroDataBoxFlightEnrichment>('aerodatabox', normalizedIdentifier, ttlMs);
+    const mongoPayload = await readLatestProviderHistory<AeroDataBoxFlightEnrichment>('aerodatabox', cacheKey, ttlMs);
     if (mongoPayload !== null) {
-      await recordAeroDataBoxCacheLog(normalizedIdentifier, mongoPayload, 'mongo');
+      await recordAeroDataBoxCacheLog(normalizedIdentifier, cacheKey, mongoPayload, 'mongo');
       return {
         match: mongoPayload,
         report: mongoPayload
@@ -756,7 +772,7 @@ export async function lookupAeroDataBoxFlightWithReport(
       bestMatch = toEnrichment(record, normalizedIdentifier);
     }
 
-    await writeToCache(normalizedIdentifier, bestMatch);
+    await writeToCache(cacheKey, bestMatch);
 
     if (bestMatch) {
       return {

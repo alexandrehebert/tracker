@@ -11,6 +11,7 @@ async function loadFlightAwareProviderWithOverride(overrideState: 'enabled' | 'd
       opensky: null,
       flightaware: overrideState,
       aviationstack: null,
+      airlabs: null,
       aerodatabox: null,
     }),
   }));
@@ -75,11 +76,84 @@ describe('provider configuration helpers', () => {
         opensky: null,
         flightaware: 'enabled',
         aviationstack: null,
+        airlabs: null,
         aerodatabox: null,
       }),
     }));
 
     const { getEnabledProvidersAsync: getEnabledProvidersWithOverride } = await import('~/lib/server/providers');
     await expect(getEnabledProvidersWithOverride()).resolves.toContain('flightaware');
+  });
+
+  it('does not reuse a cached live FlightAware match for a different validation date', async () => {
+    process.env.FLIGHT_AWARE_API_KEY = 'test-flightaware-key';
+    delete process.env.FLIGHTAWARE_DISABLED;
+
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        flights: [
+          {
+            ident: 'AF123',
+            ident_icao: 'AFR123',
+            ident_iata: 'AF123',
+            fa_flight_id: 'AF123-live',
+            operator: 'Air France',
+            operator_icao: 'AFR',
+            operator_iata: 'AF',
+            flight_number: '123',
+            origin: { code_iata: 'CDG', code_icao: 'LFPG', name: 'Paris CDG' },
+            destination: { code_iata: 'AMS', code_icao: 'EHAM', name: 'Amsterdam Schiphol' },
+            actual_out: '2026-04-08T09:35:00.000Z',
+            estimated_in: '2026-04-08T11:10:00.000Z',
+            last_position: {
+              latitude: 49.01,
+              longitude: 2.55,
+              altitude: 36000,
+              groundspeed: 430,
+              heading: 32,
+              timestamp: '2026-04-08T09:50:00.000Z',
+            },
+          },
+        ],
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        flights: [
+          {
+            ident: 'AF123',
+            ident_icao: 'AFR123',
+            ident_iata: 'AF123',
+            fa_flight_id: 'AF123-future',
+            operator: 'Air France',
+            operator_icao: 'AFR',
+            operator_iata: 'AF',
+            flight_number: '123',
+            origin: { code_iata: 'CDG', code_icao: 'LFPG', name: 'Paris CDG' },
+            destination: { code_iata: 'AMS', code_icao: 'EHAM', name: 'Amsterdam Schiphol' },
+            scheduled_out: '2026-04-14T09:35:00.000Z',
+            scheduled_in: '2026-04-14T11:10:00.000Z',
+            last_position: null,
+          },
+        ],
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }));
+
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { lookupFlightAwareFlightWithReport } = await loadFlightAwareProviderWithOverride(null);
+
+    await lookupFlightAwareFlightWithReport('AF123', {
+      referenceTimeMs: Date.parse('2026-04-08T09:35:00.000Z'),
+    });
+    const result = await lookupFlightAwareFlightWithReport('AF123', {
+      referenceTimeMs: Date.parse('2026-04-14T09:35:00.000Z'),
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(result.match?.faFlightId).toBe('AF123-future');
   });
 });

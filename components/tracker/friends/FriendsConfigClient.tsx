@@ -60,7 +60,7 @@ export function FriendsConfigClient({
   initialAirportTimezones = initialConfig.airportTimezones ?? {},
   initialFlightAwareValidationEnabled = true,
   initialFlightAwareValidationNotice = null,
-  initialEnabledValidationProviders = ['opensky', 'flightaware', 'aviationstack', 'aerodatabox'],
+  initialEnabledValidationProviders = ['opensky', 'flightaware', 'aviationstack', 'airlabs', 'aerodatabox'],
 }: {
   initialConfig: FriendsTrackerConfig;
   initialCronDashboard: TrackerCronDashboard;

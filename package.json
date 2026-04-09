@@ -3,7 +3,8 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev -p 4109",
+    "dev": "next dev --webpack -p 4109",
+    "dev:turbo": "next dev -p 4109",
     "build": "next build",
     "typecheck": "tsc --noEmit",
     "start": "next start -p 4109",

@@ -7,6 +7,7 @@ const initialOverrides: ProviderOverridesMap = {
   opensky: 'disabled',
   flightaware: null,
   aviationstack: null,
+  airlabs: null,
   aerodatabox: 'enabled',
 };
 
@@ -32,6 +33,7 @@ describe('ProviderOverrideControls', () => {
           },
           { provider: 'flightaware', name: 'FlightAware' },
           { provider: 'aviationstack', name: 'Aviationstack' },
+          { provider: 'airlabs', name: 'AirLabs' },
           { provider: 'aerodatabox', name: 'AeroDataBox' },
         ]}
         providerStatuses={{
@@ -83,6 +85,23 @@ describe('ProviderOverrideControls', () => {
             forceDisabledStatus: {
               label: 'Disabled',
               detail: 'Disabled until API credentials are configured.',
+              tone: 'disabled',
+            },
+          },
+          airlabs: {
+            defaultStatus: {
+              label: 'Enabled',
+              detail: 'Enabled with the default environment behavior.',
+              tone: 'active',
+            },
+            forceEnabledStatus: {
+              label: 'Enabled',
+              detail: 'Enabled by the admin override.',
+              tone: 'active',
+            },
+            forceDisabledStatus: {
+              label: 'Disabled',
+              detail: 'Disabled by the admin override.',
               tone: 'disabled',
             },
           },

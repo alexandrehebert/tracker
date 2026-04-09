@@ -52,6 +52,11 @@ const VALIDATION_PROVIDER_OPTIONS: Array<{
     description: 'Scheduled flight metadata and route details.',
   },
   {
+    id: 'airlabs',
+    label: 'AirLabs',
+    description: 'Live flight status, schedule, and aircraft metadata.',
+  },
+  {
     id: 'aerodatabox',
     label: 'AeroDataBox',
     description: 'On-demand RapidAPI lookup for manual validation.',

@@ -8,6 +8,11 @@ import type {
   TrackedFlightRoute,
 } from '~/components/tracker/flight/types';
 import {
+  lookupAirlabsFlightsWithReport,
+  hasAirlabsCredentials,
+  type AirlabsFlightEnrichment,
+} from './providers/airlabs';
+import {
   lookupAviationstackFlightsWithReport,
   hasAviationstackCredentials,
   type AviationstackFlightEnrichment,
@@ -1263,6 +1268,15 @@ function createRouteFromAviationstackMatch(match: AviationstackFlightEnrichment)
   };
 }
 
+function createRouteFromAirlabsMatch(match: AirlabsFlightEnrichment): TrackedFlightRoute {
+  return {
+    departureAirport: match.route.departureAirport,
+    arrivalAirport: match.route.arrivalAirport,
+    firstSeen: match.route.firstSeen,
+    lastSeen: match.route.lastSeen,
+  };
+}
+
 function createRouteFromFlightAwareMatch(match: FlightAwareFlightEnrichment): TrackedFlightRoute {
   return {
     departureAirport: match.route.departureAirport,
@@ -1385,6 +1399,43 @@ function createTrackedFlightFromAviationstack(
   };
 }
 
+function createTrackedFlightFromAirlabs(
+  identifier: string,
+  match: AirlabsFlightEnrichment,
+  sourceDetails?: FlightSourceDetail[],
+): TrackedFlight {
+  const current = match.current;
+  const routeReferenceTime = current?.time ?? Math.floor(Date.now() / 1000);
+  const route = sanitizeRouteTimes(createRouteFromAirlabsMatch(match), routeReferenceTime);
+  const icao24 = normalizeIdentifier(match.aircraft.icao24 ?? match.identifier).toLowerCase() || `al-${normalizeIdentifier(identifier).toLowerCase()}`;
+
+  return {
+    icao24,
+    callsign: match.callsign,
+    originCountry: 'Unknown',
+    matchedBy: [identifier],
+    lastContact: current?.time ?? route.lastSeen ?? route.firstSeen,
+    current,
+    originPoint: current,
+    track: current ? [current] : [],
+    rawTrack: current ? [current] : [],
+    onGround: match.onGround,
+    velocity: match.velocity,
+    heading: match.heading ?? current?.heading ?? null,
+    verticalRate: null,
+    geoAltitude: match.geoAltitude ?? current?.altitude ?? null,
+    baroAltitude: null,
+    squawk: null,
+    category: null,
+    route,
+    flightNumber: match.flightNumber,
+    airline: match.airline,
+    aircraft: match.aircraft,
+    dataSource: 'airlabs',
+    sourceDetails,
+  };
+}
+
 function createTrackedFlightFromFlightAware(
   identifier: string,
   match: FlightAwareFlightEnrichment,
@@ -1451,6 +1502,39 @@ function mergeTrackedFlightWithAviationstack(
     airline: flight.airline ?? match.airline,
     aircraft: flight.aircraft ?? match.aircraft,
     dataSource: hasOpenSkyLiveData ? 'hybrid' : 'aviationstack',
+    sourceDetails: flight.sourceDetails,
+  };
+}
+
+function mergeTrackedFlightWithAirlabs(
+  flight: TrackedFlight,
+  match: AirlabsFlightEnrichment,
+  identifier: string,
+): TrackedFlight {
+  const hasOpenSkyLiveData = flight.track.length > 0 || Boolean(flight.current);
+
+  return {
+    ...flight,
+    callsign: flight.callsign || match.callsign,
+    matchedBy: mergeMatchedIdentifiers(flight.matchedBy, identifier),
+    lastContact: flight.lastContact ?? match.current?.time ?? match.route.lastSeen,
+    current: flight.current ?? match.current,
+    originPoint: flight.originPoint ?? flight.current ?? match.current,
+    track: flight.track.length > 0 ? flight.track : (match.current ? [match.current] : []),
+    rawTrack: flight.rawTrack?.length ? flight.rawTrack : (flight.track.length > 0 ? flight.track : (match.current ? [match.current] : [])),
+    velocity: flight.velocity ?? match.velocity,
+    heading: flight.heading ?? match.heading ?? match.current?.heading ?? null,
+    geoAltitude: flight.geoAltitude ?? flight.baroAltitude ?? match.geoAltitude ?? match.current?.altitude ?? null,
+    route: sanitizeRouteTimes({
+      departureAirport: flight.route.departureAirport ?? match.route.departureAirport,
+      arrivalAirport: flight.route.arrivalAirport ?? match.route.arrivalAirport,
+      firstSeen: flight.route.firstSeen ?? match.route.firstSeen,
+      lastSeen: flight.route.lastSeen ?? match.route.lastSeen,
+    }, flight.lastContact),
+    flightNumber: flight.flightNumber ?? match.flightNumber,
+    airline: flight.airline ?? match.airline,
+    aircraft: flight.aircraft ?? match.aircraft,
+    dataSource: hasOpenSkyLiveData ? 'hybrid' : 'airlabs',
     sourceDetails: flight.sourceDetails,
   };
 }
@@ -1578,6 +1662,96 @@ async function enrichSearchResultWithFlightAware(payload: TrackerApiResponse): P
   }
 }
 
+async function enrichSearchResultWithAirlabs(payload: TrackerApiResponse): Promise<TrackerApiResponse> {
+  if (payload.requestedIdentifiers.length === 0) {
+    return payload;
+  }
+
+  try {
+    const identifiersToEnrich = payload.requestedIdentifiers;
+    const enrichments = await lookupAirlabsFlightsWithReport(identifiersToEnrich);
+    const matchedIdentifiers = new Set(payload.matchedIdentifiers);
+    const flights = [...payload.flights];
+
+    for (const identifier of identifiersToEnrich) {
+      const enrichmentResult = enrichments.get(identifier);
+      if (!enrichmentResult) {
+        continue;
+      }
+
+      const { match, report } = enrichmentResult;
+      const normalizedIdentifier = normalizeIdentifier(identifier);
+      const normalizedAircraftIcao24 = normalizeIdentifier(match?.aircraft.icao24 ?? match?.identifier ?? '').toLowerCase();
+      const existingFlightIndex = flights.findIndex((flight) => {
+        const normalizedCallsign = normalizeIdentifier(flight.callsign);
+
+        return flight.matchedBy.some((value) => normalizeIdentifier(value) === normalizedIdentifier)
+          || normalizedCallsign === normalizedIdentifier
+          || normalizeIdentifier(flight.icao24).toLowerCase() === normalizedIdentifier.toLowerCase()
+          || (normalizedAircraftIcao24.length > 0 && normalizeIdentifier(flight.icao24).toLowerCase() === normalizedAircraftIcao24);
+      });
+
+      if (existingFlightIndex >= 0) {
+        const baseFlight = flights[existingFlightIndex]!;
+        const mergedFlight = match
+          ? mergeTrackedFlightWithAirlabs(baseFlight, match, identifier)
+          : baseFlight;
+
+        flights[existingFlightIndex] = {
+          ...mergedFlight,
+          sourceDetails: mergeSourceDetails(mergedFlight.sourceDetails, [
+            {
+              ...report,
+              usedInResult: Boolean(match) || report.usedInResult,
+            },
+          ]),
+        };
+      } else if (match) {
+        flights.push(createTrackedFlightFromAirlabs(identifier, match, mergeSourceDetails(undefined, [
+          createSourceDetail(
+            'opensky',
+            'no-data',
+            false,
+            'OpenSky did not return a live or recent-history match for this identifier, so the tracker fell back to AirLabs.',
+            { identifier: normalizedIdentifier },
+          ),
+          {
+            ...report,
+            usedInResult: true,
+          },
+        ])));
+      }
+
+      if (match) {
+        matchedIdentifiers.add(identifier);
+      }
+    }
+
+    flights.sort((first, second) => first.callsign.localeCompare(second.callsign));
+
+    return {
+      ...payload,
+      matchedIdentifiers: Array.from(matchedIdentifiers),
+      notFoundIdentifiers: payload.requestedIdentifiers.filter((identifier) => !matchedIdentifiers.has(identifier)),
+      flights,
+    };
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : 'AirLabs enrichment failed unexpectedly.';
+
+    return {
+      ...payload,
+      flights: payload.flights.map((flight) => ({
+        ...flight,
+        sourceDetails: mergeSourceDetails(flight.sourceDetails, [
+          createSourceDetail('airlabs', 'error', false, reason, {
+            requestedIdentifiers: payload.requestedIdentifiers,
+          }),
+        ]),
+      })),
+    };
+  }
+}
+
 async function enrichSearchResultWithAviationstack(payload: TrackerApiResponse): Promise<TrackerApiResponse> {
   if (payload.requestedIdentifiers.length === 0) {
     return payload;
@@ -1670,7 +1844,8 @@ async function enrichSearchResultWithAviationstack(payload: TrackerApiResponse):
 
 async function enrichSearchResultWithExternalSources(payload: TrackerApiResponse): Promise<TrackerApiResponse> {
   const withFlightAware = await enrichSearchResultWithFlightAware(payload);
-  return enrichSearchResultWithAviationstack(withFlightAware);
+  const withAirlabs = await enrichSearchResultWithAirlabs(withFlightAware);
+  return enrichSearchResultWithAviationstack(withAirlabs);
 }
 
 async function searchFlightsFromExternalSourcesOnly(query: string, requestedIdentifiers: string[]): Promise<TrackerApiResponse> {
@@ -2059,7 +2234,7 @@ export async function searchFlights(query: string, options: SearchFlightsOptions
       const skipReason = openSkyDisabledReason
         ?? 'OpenSky is not configured for this deployment, so the tracker is using the external fallback providers only.';
 
-      if (!hasAviationstackCredentials() && !hasFlightAwareCredentials()) {
+      if (!hasAviationstackCredentials() && !hasFlightAwareCredentials() && !hasAirlabsCredentials()) {
         const historicalOnlyResult = await writeFlightSearchCache(
           cacheKey,
           mergeWithDemoPayload({
@@ -2120,7 +2295,7 @@ export async function searchFlights(query: string, options: SearchFlightsOptions
       );
       return mergeWithDemoPayload(cachedResult);
     } catch (error) {
-      if (!hasAviationstackCredentials() && !hasFlightAwareCredentials()) {
+      if (!hasAviationstackCredentials() && !hasFlightAwareCredentials() && !hasAirlabsCredentials()) {
         const historicalOnlyResult = await writeFlightSearchCache(
           cacheKey,
           mergeWithDemoPayload({

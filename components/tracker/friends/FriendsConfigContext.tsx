@@ -59,7 +59,7 @@ export interface FlightValidationModalCandidate {
   message: string;
 }
 
-export type FlightValidationProviderId = 'tracker' | 'flightaware' | 'aviationstack' | 'aerodatabox';
+export type FlightValidationProviderId = 'tracker' | 'flightaware' | 'aviationstack' | 'airlabs' | 'aerodatabox';
 
 export type FlightValidationProviderSelection = Record<FlightValidationProviderId, boolean>;
 
@@ -206,7 +206,7 @@ function removeDemoTrips(trips: FriendsTrackerTripConfig[]): FriendsTrackerTripC
 }
 
 const LIVE_VALIDATION_WARNING_MINUTES = 180;
-const DEFAULT_ENABLED_VALIDATION_PROVIDERS: ProviderName[] = ['opensky', 'flightaware', 'aviationstack', 'aerodatabox'];
+const DEFAULT_ENABLED_VALIDATION_PROVIDERS: ProviderName[] = ['opensky', 'flightaware', 'aviationstack', 'airlabs', 'aerodatabox'];
 
 function buildAvailableValidationProviderSelection(
   enabledProviders: readonly ProviderName[] | null | undefined,
@@ -217,6 +217,7 @@ function buildAvailableValidationProviderSelection(
     tracker: enabledSet.has('opensky'),
     flightaware: enabledSet.has('flightaware'),
     aviationstack: enabledSet.has('aviationstack'),
+    airlabs: enabledSet.has('airlabs'),
     aerodatabox: enabledSet.has('aerodatabox'),
   };
 }
@@ -228,6 +229,7 @@ function createDefaultValidationProviderSelection(
     tracker: availableProviders.tracker,
     flightaware: availableProviders.flightaware,
     aviationstack: availableProviders.aviationstack,
+    airlabs: availableProviders.airlabs,
     aerodatabox: availableProviders.aerodatabox,
   };
 }

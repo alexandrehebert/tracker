@@ -45,7 +45,7 @@ const AUTO_REFRESH_MS = 60_000;
 const MIN_MAP_LOADING_MS = 2_000;
 const STORAGE_KEY = 'tracker:last-query';
 const URL_QUERY_KEY = 'q';
-const TRACKER_SOURCES: FlightSourceName[] = ['opensky', 'aviationstack', 'flightaware', 'aerodatabox'];
+const TRACKER_SOURCES: FlightSourceName[] = ['opensky', 'aviationstack', 'flightaware', 'airlabs', 'aerodatabox'];
 
 function formatSourceLabel(source: FlightSourceName): string {
   switch (source) {
@@ -53,6 +53,8 @@ function formatSourceLabel(source: FlightSourceName): string {
       return 'FlightAware';
     case 'aviationstack':
       return 'Aviationstack';
+    case 'airlabs':
+      return 'AirLabs';
     case 'aerodatabox':
       return 'AeroDataBox';
     default:
@@ -161,6 +163,10 @@ function formatDataSourceLabel(
 
   if (dataSource === 'aerodatabox') {
     return 'AeroDataBox';
+  }
+
+  if (dataSource === 'airlabs') {
+    return 'AirLabs';
   }
 
   return dataSource === 'aviationstack' ? 'Aviationstack' : 'OpenSky';
@@ -1108,9 +1114,11 @@ function FlightFetchHistoryModal({
                 usedInResult: false,
                 reason: source === 'aviationstack'
                   ? 'No Aviationstack diagnostic data was recorded for this snapshot.'
-                  : source === 'flightaware'
-                    ? 'No FlightAware diagnostic data was recorded for this snapshot.'
-                    : 'No OpenSky diagnostic data was recorded for this snapshot.',
+                  : source === 'airlabs'
+                    ? 'No AirLabs diagnostic data was recorded for this snapshot.'
+                    : source === 'flightaware'
+                      ? 'No FlightAware diagnostic data was recorded for this snapshot.'
+                      : 'No OpenSky diagnostic data was recorded for this snapshot.',
                 raw: null,
               } satisfies FlightSourceDetail
             ));

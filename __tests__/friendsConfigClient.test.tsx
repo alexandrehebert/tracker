@@ -417,6 +417,30 @@ describe('FriendsConfigClient', () => {
     expect(options[0]).toHaveTextContent('JFK — John F. Kennedy International Airport');
   });
 
+  it('raises the active friend card above sibling sections while airport suggestions are open', async () => {
+    const user = userEvent.setup();
+
+    render(<FriendsConfigClient initialConfig={initialConfig} initialCronDashboard={initialCronDashboard} />);
+
+    await user.click(screen.getByRole('button', { name: /add friend/i }));
+
+    const aliceCard = screen.getByDisplayValue('Alice').closest('section');
+    const secondFriendCard = screen.getByPlaceholderText('Friend 2').closest('section');
+    expect(aliceCard).not.toBeNull();
+    expect(secondFriendCard).not.toBeNull();
+
+    const aliceQueries = within(aliceCard as HTMLElement);
+    const [fromInput] = aliceQueries.getAllByLabelText(/from/i) as HTMLInputElement[];
+    await user.clear(fromInput);
+    await user.type(fromInput, 'par');
+
+    await screen.findByRole('listbox', { name: /departure airport suggestions for leg 1/i });
+
+    expect(aliceCard).toHaveClass('relative');
+    expect(aliceCard).toHaveClass('z-40');
+    expect(secondFriendCard).not.toHaveClass('z-40');
+  });
+
   it('keeps the dropdown open for a unique exact airport code match so the name stays visible', async () => {
     const user = userEvent.setup();
 

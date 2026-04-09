@@ -166,6 +166,19 @@ function getCacheTtlMs(): number {
   return Number.isFinite(parsedValue) && parsedValue > 0 ? parsedValue * 1000 : DEFAULT_CACHE_TTL_MS;
 }
 
+function hasReferenceTimeMs(referenceTimeMs?: number | null): referenceTimeMs is number {
+  return typeof referenceTimeMs === 'number' && Number.isFinite(referenceTimeMs);
+}
+
+function buildLookupCacheKey(identifier: string, referenceTimeMs?: number | null): string {
+  const normalizedIdentifier = normalizeIdentifier(identifier);
+  if (!hasReferenceTimeMs(referenceTimeMs)) {
+    return normalizedIdentifier;
+  }
+
+  return `${normalizedIdentifier}@${new Date(referenceTimeMs).toISOString().slice(0, 10)}`;
+}
+
 function getApiKey(): string {
   return process.env.FLIGHT_AWARE_API_KEY?.trim()
     || process.env.FLIGHTAWARE_API_KEY?.trim()
@@ -626,13 +639,13 @@ function toEnrichment(record: FlightAwareFlightRecord, identifier: string): Flig
     callsign,
     flightNumber,
     route: {
-      departureAirport: toNullableString(record.origin?.code_icao)?.toUpperCase()
+      departureAirport: toNullableString(record.origin?.code_iata)?.toUpperCase()
+        ?? toNullableString(record.origin?.code_icao)?.toUpperCase()
         ?? toNullableString(record.origin?.code)?.toUpperCase()
-        ?? toNullableString(record.origin?.code_iata)?.toUpperCase()
         ?? null,
-      arrivalAirport: toNullableString(record.destination?.code_icao)?.toUpperCase()
+      arrivalAirport: toNullableString(record.destination?.code_iata)?.toUpperCase()
+        ?? toNullableString(record.destination?.code_icao)?.toUpperCase()
         ?? toNullableString(record.destination?.code)?.toUpperCase()
-        ?? toNullableString(record.destination?.code_iata)?.toUpperCase()
         ?? null,
       departureAirportName: toNullableString(record.origin?.name),
       arrivalAirportName: toNullableString(record.destination?.name),
@@ -662,13 +675,13 @@ function toEnrichment(record: FlightAwareFlightRecord, identifier: string): Flig
   };
 }
 
-async function writeToCache(identifier: string, payload: FlightAwareFlightEnrichment | null): Promise<void> {
+async function writeToCache(cacheKey: string, payload: FlightAwareFlightEnrichment | null): Promise<void> {
   if (isProviderHistoryConfigured()) {
-    await writeProviderHistory('flightaware', identifier, payload);
+    await writeProviderHistory('flightaware', cacheKey, payload);
     return;
   }
 
-  inMemoryFallbackCache.set(identifier, {
+  inMemoryFallbackCache.set(cacheKey, {
     payload,
     expiresAt: Date.now() + getCacheTtlMs(),
   });
@@ -676,6 +689,7 @@ async function writeToCache(identifier: string, payload: FlightAwareFlightEnrich
 
 async function recordFlightAwareCacheLog(
   identifier: string,
+  cacheKey: string,
   payload: FlightAwareFlightEnrichment | null,
   layer: 'memory' | 'mongo',
 ): Promise<void> {
@@ -684,11 +698,11 @@ async function recordFlightAwareCacheLog(
     operation: 'lookup-flight',
     status: 'cached',
     durationMs: 0,
-    request: { identifier },
+    request: { identifier, cacheKey },
     response: payload
       ? { matched: true, match: summarizeFlightAwareMatch(payload) }
       : { matched: false },
-    cache: { status: 'hit', layer, key: identifier },
+    cache: { status: 'hit', layer, key: cacheKey },
   });
 }
 
@@ -729,11 +743,13 @@ export async function lookupFlightAwareFlightWithReport(
     };
   }
 
+  const cacheKey = buildLookupCacheKey(normalizedIdentifier, options?.referenceTimeMs);
+
   // Synchronous in-memory cache check (preserves original scheduling behavior)
-  const memEntry = inMemoryFallbackCache.get(normalizedIdentifier);
+  const memEntry = inMemoryFallbackCache.get(cacheKey);
   if (memEntry && Date.now() < memEntry.expiresAt) {
     const cachedPayload = memEntry.payload;
-    await recordFlightAwareCacheLog(normalizedIdentifier, cachedPayload, 'memory');
+    await recordFlightAwareCacheLog(normalizedIdentifier, cacheKey, cachedPayload, 'memory');
     return {
       match: cachedPayload,
       report: cachedPayload
@@ -741,13 +757,13 @@ export async function lookupFlightAwareFlightWithReport(
             'used',
             'FlightAware AeroAPI returned a cached match and its data was merged into this snapshot.',
             true,
-            { identifier: normalizedIdentifier, cached: true, match: summarizeFlightAwareMatch(cachedPayload) },
+            { identifier: normalizedIdentifier, cacheKey, cached: true, match: summarizeFlightAwareMatch(cachedPayload) },
           )
         : createFlightAwareReport(
             'no-data',
             'FlightAware AeroAPI was queried recently but returned no matching flight.',
             false,
-            { identifier: normalizedIdentifier, cached: true },
+            { identifier: normalizedIdentifier, cacheKey, cached: true },
           ),
     };
   }
@@ -755,9 +771,9 @@ export async function lookupFlightAwareFlightWithReport(
   // Async MongoDB history check (only when configured)
   if (isProviderHistoryConfigured()) {
     const ttlMs = getCacheTtlMs();
-    const mongoPayload = await readLatestProviderHistory<FlightAwareFlightEnrichment>('flightaware', normalizedIdentifier, ttlMs);
+    const mongoPayload = await readLatestProviderHistory<FlightAwareFlightEnrichment>('flightaware', cacheKey, ttlMs);
     if (mongoPayload !== null) {
-      await recordFlightAwareCacheLog(normalizedIdentifier, mongoPayload, 'mongo');
+      await recordFlightAwareCacheLog(normalizedIdentifier, cacheKey, mongoPayload, 'mongo');
       return {
         match: mongoPayload,
         report: mongoPayload
@@ -832,7 +848,7 @@ export async function lookupFlightAwareFlightWithReport(
     };
   }
 
-  await writeToCache(normalizedIdentifier, bestMatch);
+  await writeToCache(cacheKey, bestMatch);
 
   if (!bestMatch) {
     return {

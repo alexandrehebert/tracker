@@ -91,7 +91,7 @@ export function FlightLegCard({ friendId, leg, legIndex, totalLegs }: FlightLegC
   return (
     <div className={`relative rounded-2xl border p-4 transition-colors ${hasAppliedValidation
       ? 'border-emerald-400/35 bg-emerald-500/10 shadow-lg shadow-emerald-950/10'
-      : 'border-white/10 bg-slate-950/70'} ${hasOpenSuggestions ? 'z-30' : 'z-0'}`}>
+      : 'border-white/10 bg-slate-950/70'} ${hasOpenSuggestions ? 'z-30' : ''}`}>
       <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
         <div className="flex items-center gap-2 text-sm font-semibold text-white">
           <PlaneTakeoff className={`h-4 w-4 ${hasAppliedValidation ? 'text-emerald-300' : 'text-sky-300'}`} />

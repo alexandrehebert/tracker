@@ -99,4 +99,72 @@ describe('lookupAeroDataBoxFlightWithReport', () => {
     expect(result.report.source).toBe('aerodatabox');
     expect(result.report.status).toBe('used');
   });
+
+  it('does not reuse a cached AeroDataBox result for a different requested day', async () => {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+
+      if (url.includes('/2026-04-14')) {
+        return new Response(JSON.stringify([
+          {
+            number: 'AF123',
+            callSign: 'AFR123',
+            status: 'Expected',
+            departure: {
+              airport: { iata: 'CDG', icao: 'LFPG' },
+              scheduledTime: { utc: '2026-04-14T09:35:00.000Z' },
+            },
+            arrival: {
+              airport: { iata: 'AMS', icao: 'EHAM' },
+              scheduledTime: { utc: '2026-04-14T11:10:00.000Z' },
+            },
+            aircraft: { modeS: '3C675A' },
+            airline: { iata: 'AF', icao: 'AFR' },
+          },
+        ]), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      if (url.includes('/2026-04-16')) {
+        return new Response(JSON.stringify([
+          {
+            number: 'AF123',
+            callSign: 'AFR123',
+            status: 'Expected',
+            departure: {
+              airport: { iata: 'CDG', icao: 'LFPG' },
+              scheduledTime: { utc: '2026-04-16T09:35:00.000Z' },
+            },
+            arrival: {
+              airport: { iata: 'AMS', icao: 'EHAM' },
+              scheduledTime: { utc: '2026-04-16T11:10:00.000Z' },
+            },
+            aircraft: { modeS: '3C675A' },
+            airline: { iata: 'AF', icao: 'AFR' },
+          },
+        ]), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      throw new Error(`Unexpected AeroDataBox test URL: ${url}`);
+    });
+
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { lookupAeroDataBoxFlightWithReport } = await loadAeroDataBoxProvider();
+
+    await lookupAeroDataBoxFlightWithReport('AF123', {
+      referenceTimeMs: Date.parse('2026-04-14T09:30:00.000Z'),
+    });
+    const result = await lookupAeroDataBoxFlightWithReport('AF123', {
+      referenceTimeMs: Date.parse('2026-04-16T09:30:00.000Z'),
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(result.match?.route.firstSeen).toBe(Math.floor(Date.parse('2026-04-16T09:35:00.000Z') / 1000));
+  });
 });

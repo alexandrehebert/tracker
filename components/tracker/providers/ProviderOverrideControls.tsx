@@ -9,10 +9,11 @@ const PROVIDER_LABELS: Record<ProviderName, string> = {
   opensky: 'OpenSky',
   flightaware: 'FlightAware',
   aviationstack: 'Aviationstack',
+  airlabs: 'AirLabs',
   aerodatabox: 'AeroDataBox',
 };
 
-const ALL_PROVIDERS: ProviderName[] = ['opensky', 'flightaware', 'aviationstack', 'aerodatabox'];
+const ALL_PROVIDERS: ProviderName[] = ['opensky', 'flightaware', 'aviationstack', 'airlabs', 'aerodatabox'];
 
 type ProviderStatusTone = 'active' | 'disabled' | 'warning';
 
@@ -74,6 +75,11 @@ const DEFAULT_PROVIDER_STATUSES: Record<ProviderName, ProviderStatusSet> = {
     forceDisabledStatus: UNKNOWN_STATUS,
   },
   aviationstack: {
+    defaultStatus: UNKNOWN_STATUS,
+    forceEnabledStatus: UNKNOWN_STATUS,
+    forceDisabledStatus: UNKNOWN_STATUS,
+  },
+  airlabs: {
     defaultStatus: UNKNOWN_STATUS,
     forceEnabledStatus: UNKNOWN_STATUS,
     forceDisabledStatus: UNKNOWN_STATUS,

@@ -18,9 +18,10 @@ interface FriendCardProps {
 }
 
 export function FriendCard({ friend, friendIndex }: FriendCardProps) {
-  const { selectedTrip, updateFriend, updateSelectedTripFriends } = useFriendsConfig();
+  const { selectedTrip, updateFriend, updateSelectedTripFriends, activeAirportField } = useFriendsConfig();
   const colorInputRef = useRef<HTMLInputElement | null>(null);
   const friendLabel = friend.name || `Friend ${friendIndex + 1}`;
+  const hasOpenAirportSuggestions = activeAirportField?.startsWith(`${friend.id}:`) ?? false;
   const accentColor = colorToHex(resolveFriendAccentColor(friend, friendIndex));
   const autoAccentColor = colorToHex(resolveAutoFriendAccentColor(friend, friendIndex));
   const hasCustomAccentColor = typeof friend.colorOverride === 'string' && friend.colorOverride.trim().length > 0;
@@ -54,7 +55,7 @@ export function FriendCard({ friend, friendIndex }: FriendCardProps) {
   ].filter((segment) => segment.route.length > 0);
 
   return (
-    <section className="rounded-3xl border border-white/10 bg-slate-950/55 p-5 backdrop-blur-sm">
+    <section className={`relative rounded-3xl border border-white/10 bg-slate-950/55 p-5 backdrop-blur-sm ${hasOpenAirportSuggestions ? 'z-40' : ''}`}>
       <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
         <div className="flex items-start gap-4">
           <div className="shrink-0">

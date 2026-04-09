@@ -5,6 +5,7 @@ import {
   type ProviderRequestLogEntry,
 } from '~/lib/server/providers/observability';
 import { hasAeroDataBoxCredentials } from '~/lib/server/providers/aerodatabox';
+import { hasAirlabsCredentials } from '~/lib/server/providers/airlabs';
 import { hasAviationstackCredentials } from '~/lib/server/providers/aviationstack';
 import { hasFlightAwareCredentials } from '~/lib/server/providers/flightaware';
 import {
@@ -155,6 +156,7 @@ export async function TrackerProvidersPageContent({ showIntro = true }: TrackerP
   const openSkyConfigured = hasOpenSkyConfiguration();
   const flightAwareConfigured = hasFlightAwareCredentials();
   const aviationstackConfigured = hasAviationstackCredentials();
+  const airlabsConfigured = hasAirlabsCredentials();
   const aeroDataBoxConfigured = hasAeroDataBoxCredentials();
 
   const providerStates = [
@@ -208,6 +210,21 @@ export async function TrackerProvidersPageContent({ showIntro = true }: TrackerP
       connectionDetail: null,
       resourceLinks: [
         { label: 'Aviationstack dashboard', href: 'https://aviationstack.com/dashboard' },
+      ],
+      connectionLinks: [],
+    },
+    {
+      provider: 'airlabs' as ProviderName,
+      name: 'AirLabs',
+      configured: airlabsConfigured,
+      overrideState: providerOverrides.airlabs,
+      baseNote: airlabsConfigured
+        ? 'AirLabs live flight data is enabled.'
+        : 'Missing `AIRLABS_API_KEY`.',
+      extra: null,
+      connectionDetail: null,
+      resourceLinks: [
+        { label: 'AirLabs dashboard', href: 'https://airlabs.co/account' },
       ],
       connectionLinks: [],
     },

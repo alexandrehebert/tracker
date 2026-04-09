@@ -940,8 +940,8 @@ describe('searchFlights', () => {
     expect(result.flights[0]).toMatchObject({
       callsign: 'AF123',
       route: {
-        departureAirport: 'LFPG',
-        arrivalAirport: 'KJFK',
+        departureAirport: 'CDG',
+        arrivalAirport: 'JFK',
       },
       airline: {
         name: 'Air France',
