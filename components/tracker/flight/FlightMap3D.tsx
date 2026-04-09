@@ -108,6 +108,7 @@ interface FlightMap3DProps {
   selectedFlightDetails?: SelectedFlightDetails | null;
   airportMarkers?: FlightMapAirportMarker[];
   onSelectFlight?: (icao24: string) => void;
+  onSelectAirport?: (airport: FlightMapAirportMarker) => void;
   onInitialZoomEnd?: () => void;
   selectionMode?: 'single' | 'all';
   flightColorIndexes?: ReadonlyMap<string, number>;
@@ -808,6 +809,7 @@ export default function FlightMap3D({
   selectedFlightDetails,
   airportMarkers = [],
   onSelectFlight,
+  onSelectAirport,
   onInitialZoomEnd,
   selectionMode = 'single',
   flightColorIndexes,
@@ -823,6 +825,7 @@ export default function FlightMap3D({
   const lastAutoFocusKeyRef = useRef<string | null>(null);
   const setGlobeRefRef = useRef(setGlobeRef);
   const onInitialZoomEndRef = useRef(onInitialZoomEnd);
+  const onSelectAirportRef = useRef(onSelectAirport);
   const [globeReady, setGlobeReady] = useState(false);
 
   useEffect(() => {
@@ -832,6 +835,10 @@ export default function FlightMap3D({
   useEffect(() => {
     onInitialZoomEndRef.current = onInitialZoomEnd;
   }, [onInitialZoomEnd]);
+
+  useEffect(() => {
+    onSelectAirportRef.current = onSelectAirport;
+  }, [onSelectAirport]);
 
   const friendIcao24Set = useMemo(() => {
     if (!flightAvatars) {
@@ -1305,6 +1312,22 @@ export default function FlightMap3D({
             badge.style.opacity = '0';
             badge.style.transform = 'translate(-50%, -100%) scale(0.96)';
           });
+          element.addEventListener('click', (event) => {
+            event.stopPropagation();
+            onSelectAirportRef.current?.({
+              id: item.id,
+              code: item.code,
+              label: item.label,
+              latitude: item.lat,
+              longitude: item.lng,
+              usage: item.usage,
+              isDestination: item.isDestination,
+            });
+          });
+
+          if (onSelectAirportRef.current) {
+            element.style.cursor = 'pointer';
+          }
 
           element.append(marker, badge);
           return element;
