@@ -536,19 +536,20 @@ function getRecordTemporalScore(record: AeroDataBoxFlightRecord, referenceTimeMs
   const referenceSeconds = Math.floor(referenceTimeMs / 1000);
   const departureTimestamp = getMovementTimestamp(record.departure);
   const arrivalTimestamp = getMovementTimestamp(record.arrival);
-  const nearestDeltaSeconds = [departureTimestamp, arrivalTimestamp]
-    .filter((timestamp): timestamp is number => timestamp != null)
-    .map((timestamp) => Math.abs(timestamp - referenceSeconds))
-    .sort((left, right) => left - right)[0] ?? null;
+  const referenceDeltaSeconds = departureTimestamp != null
+    ? Math.abs(departureTimestamp - referenceSeconds)
+    : arrivalTimestamp != null
+      ? Math.abs(arrivalTimestamp - referenceSeconds)
+      : null;
 
-  if (nearestDeltaSeconds == null) {
+  if (referenceDeltaSeconds == null) {
     return 0;
   }
 
-  if (nearestDeltaSeconds <= 60 * 60) return 45;
-  if (nearestDeltaSeconds <= 6 * 60 * 60) return 30;
-  if (nearestDeltaSeconds <= 24 * 60 * 60) return 15;
-  if (nearestDeltaSeconds <= 3 * 24 * 60 * 60) return 6;
+  if (referenceDeltaSeconds <= 60 * 60) return 45;
+  if (referenceDeltaSeconds <= 6 * 60 * 60) return 30;
+  if (referenceDeltaSeconds <= 24 * 60 * 60) return 15;
+  if (referenceDeltaSeconds <= 3 * 24 * 60 * 60) return 6;
   return -10;
 }
 

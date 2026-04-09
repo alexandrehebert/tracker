@@ -335,7 +335,7 @@ function projectPoint(params: {
   };
 }
 
-function buildSearchVariants(identifier: string): SearchVariant[] {
+function buildSearchVariants(identifier: string, referenceTimeMs?: number | null): SearchVariant[] {
   const normalizedIdentifier = normalizeIdentifier(identifier);
   if (!normalizedIdentifier) {
     return [];
@@ -344,6 +344,7 @@ function buildSearchVariants(identifier: string): SearchVariant[] {
   const encodedIdentifier = encodeURIComponent(normalizedIdentifier);
   const variants: SearchVariant[] = [];
   const seenKeys = new Set<string>();
+  const maxPages = hasReferenceTimeMs(referenceTimeMs) ? '3' : '1';
   const pushVariant = (cacheKey: string, params: Record<string, string>) => {
     if (seenKeys.has(cacheKey)) {
       return;
@@ -357,11 +358,11 @@ function buildSearchVariants(identifier: string): SearchVariant[] {
     });
   };
 
-  pushVariant(`designator:${normalizedIdentifier}`, { ident_type: 'designator', max_pages: '1' });
-  pushVariant(`default:${normalizedIdentifier}`, { max_pages: '1' });
+  pushVariant(`designator:${normalizedIdentifier}`, { ident_type: 'designator', max_pages: maxPages });
+  pushVariant(`default:${normalizedIdentifier}`, { max_pages: maxPages });
 
   if (/^[A-Z0-9-]{4,}$/.test(normalizedIdentifier)) {
-    pushVariant(`registration:${normalizedIdentifier}`, { ident_type: 'registration', max_pages: '1' });
+    pushVariant(`registration:${normalizedIdentifier}`, { ident_type: 'registration', max_pages: maxPages });
   }
 
   return variants;
@@ -549,6 +550,66 @@ function getRecordTemporalScore(record: FlightAwareFlightRecord, referenceTimeMs
   const status = normalizeIdentifier(record.status);
   let score = 0;
 
+  const referenceRouteDelta = routeFirstSeen != null
+    ? Math.abs(routeFirstSeen - referenceSeconds)
+    : routeLastSeen != null
+      ? Math.abs(routeLastSeen - referenceSeconds)
+      : liveTimestamp != null
+        ? Math.abs(liveTimestamp - referenceSeconds)
+        : null;
+  const routeDeltas = [routeFirstSeen, routeLastSeen]
+    .filter((timestamp): timestamp is number => timestamp != null)
+    .map((timestamp) => Math.abs(timestamp - referenceSeconds));
+  const nearestRouteDelta = routeDeltas.length > 0 ? Math.min(...routeDeltas) : null;
+
+  if (hasExplicitReferenceTime) {
+    if (referenceRouteDelta != null) {
+      if (referenceRouteDelta <= 30 * 60) {
+        score += 72;
+      } else if (referenceRouteDelta <= 2 * 60 * 60) {
+        score += 56;
+      } else if (referenceRouteDelta <= 6 * 60 * 60) {
+        score += 38;
+      } else if (referenceRouteDelta <= 12 * 60 * 60) {
+        score += 24;
+      } else if (referenceRouteDelta <= 24 * 60 * 60) {
+        score += 12;
+      } else if (referenceRouteDelta <= 3 * 24 * 60 * 60) {
+        score += 2;
+      } else {
+        score -= 24;
+      }
+    }
+
+    if (liveTimestamp != null) {
+      const liveAgeSeconds = Math.abs(referenceSeconds - liveTimestamp);
+
+      if (liveAgeSeconds <= 15 * 60) {
+        score += 6;
+      } else if (liveAgeSeconds <= 2 * 60 * 60) {
+        score += 4;
+      } else if (liveAgeSeconds <= 12 * 60 * 60) {
+        score += 2;
+      } else if (liveAgeSeconds > 48 * 60 * 60) {
+        score -= 4;
+      }
+    }
+
+    if (/(SCHEDULED|FILED)/.test(status)) {
+      score += 6;
+    }
+
+    if (/(ENROUTE|AIRBORNE|ACTIVE|DEPARTED|TAXI)/.test(status)) {
+      score += 4;
+    }
+
+    if (/(ARRIVED|CANCELLED|DIVERTED)/.test(status)) {
+      score -= 6;
+    }
+
+    return score;
+  }
+
   if (liveTimestamp != null) {
     const liveAgeSeconds = Math.abs(referenceSeconds - liveTimestamp);
 
@@ -557,13 +618,9 @@ function getRecordTemporalScore(record: FlightAwareFlightRecord, referenceTimeMs
     } else if (liveAgeSeconds <= 2 * 60 * 60) {
       score += 45;
     } else if (liveAgeSeconds <= 12 * 60 * 60) {
-      score += hasExplicitReferenceTime ? 25 : 30;
+      score += 30;
     } else if (liveAgeSeconds <= 24 * 60 * 60) {
-      score += hasExplicitReferenceTime ? 8 : 12;
-    } else if (hasExplicitReferenceTime && liveAgeSeconds <= 48 * 60 * 60) {
-      score -= 28;
-    } else if (hasExplicitReferenceTime && liveAgeSeconds > 48 * 60 * 60) {
-      score -= 65;
+      score += 12;
     }
   }
 
@@ -572,35 +629,28 @@ function getRecordTemporalScore(record: FlightAwareFlightRecord, referenceTimeMs
   }
 
   if (/(SCHEDULED|FILED)/.test(status)) {
-    score += hasExplicitReferenceTime ? 8 : 2;
+    score += 2;
   }
 
   if (/(ARRIVED|CANCELLED|DIVERTED)/.test(status)) {
     score -= 6;
   }
 
-  const routeDeltas = [routeFirstSeen, routeLastSeen]
-    .filter((timestamp): timestamp is number => timestamp != null)
-    .map((timestamp) => Math.abs(timestamp - referenceSeconds));
-  const nearestRouteDelta = routeDeltas.length > 0 ? Math.min(...routeDeltas) : null;
-
   if (nearestRouteDelta != null) {
     if (nearestRouteDelta <= 30 * 60) {
-      score += hasExplicitReferenceTime ? 26 : 14;
+      score += 14;
     } else if (nearestRouteDelta <= 2 * 60 * 60) {
-      score += hasExplicitReferenceTime ? 18 : 10;
+      score += 10;
     } else if (nearestRouteDelta <= 12 * 60 * 60) {
-      score += hasExplicitReferenceTime ? 8 : 4;
-    } else if (hasExplicitReferenceTime && nearestRouteDelta >= 3 * 24 * 60 * 60) {
-      score -= 18;
+      score += 4;
     }
   }
 
-  if (!hasExplicitReferenceTime && liveTimestamp == null && routeFirstSeen != null && routeFirstSeen > referenceSeconds + (6 * 60 * 60)) {
+  if (liveTimestamp == null && routeFirstSeen != null && routeFirstSeen > referenceSeconds + (6 * 60 * 60)) {
     score -= 35;
   }
 
-  if (!hasExplicitReferenceTime && liveTimestamp == null && routeLastSeen != null && routeLastSeen > referenceSeconds + (6 * 60 * 60)) {
+  if (liveTimestamp == null && routeLastSeen != null && routeLastSeen > referenceSeconds + (6 * 60 * 60)) {
     score -= 20;
   }
 
@@ -814,7 +864,7 @@ export async function lookupFlightAwareFlightWithReport(
   const attempts: Array<Record<string, unknown>> = [];
 
   try {
-    for (const variant of buildSearchVariants(normalizedIdentifier)) {
+    for (const variant of buildSearchVariants(normalizedIdentifier, options?.referenceTimeMs)) {
       const payload = await fetchFlightAware<FlightAwareFlightsResponse>(variant.pathname, variant.params);
       const records = Array.isArray(payload?.flights) ? payload.flights : [];
       attempts.push({

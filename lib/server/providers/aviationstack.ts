@@ -254,7 +254,7 @@ function projectPoint(params: {
   };
 }
 
-function buildSearchVariants(identifier: string): SearchVariant[] {
+function buildSearchVariants(identifier: string, referenceTimeMs?: number | null): SearchVariant[] {
   const normalizedIdentifier = normalizeIdentifier(identifier);
   if (!normalizedIdentifier) {
     return [];
@@ -262,13 +262,17 @@ function buildSearchVariants(identifier: string): SearchVariant[] {
 
   const variants: SearchVariant[] = [];
   const seenKeys = new Set<string>();
+  const flightDate = hasReferenceTimeMs(referenceTimeMs)
+    ? new Date(referenceTimeMs).toISOString().slice(0, 10)
+    : null;
+  const baseParams: Record<string, string> = flightDate ? { flight_date: flightDate } : {};
   const pushVariant = (cacheKey: string, params: Record<string, string>) => {
     if (seenKeys.has(cacheKey)) {
       return;
     }
 
     seenKeys.add(cacheKey);
-    variants.push({ cacheKey, params });
+    variants.push({ cacheKey, params: { ...baseParams, ...params } });
   };
 
   if (/^[A-Z]{2}\d[A-Z\d]*$/.test(normalizedIdentifier)) {
@@ -425,17 +429,20 @@ function getRecordTemporalScore(record: AviationstackFlightRecord, referenceTime
     ?? toTimestampSeconds(record.arrival?.estimated)
     ?? toTimestampSeconds(record.arrival?.scheduled);
   const liveTimestamp = toTimestampSeconds(record.live?.updated);
-  const nearestDeltaSeconds = [liveTimestamp, departureTimestamp, arrivalTimestamp]
-    .filter((timestamp): timestamp is number => timestamp != null)
-    .map((timestamp) => Math.abs(timestamp - referenceSeconds))
-    .sort((left, right) => left - right)[0] ?? null;
+  const referenceDeltaSeconds = departureTimestamp != null
+    ? Math.abs(departureTimestamp - referenceSeconds)
+    : arrivalTimestamp != null
+      ? Math.abs(arrivalTimestamp - referenceSeconds)
+      : liveTimestamp != null
+        ? Math.abs(liveTimestamp - referenceSeconds)
+        : null;
 
   let score = 0;
-  if (nearestDeltaSeconds != null) {
-    if (nearestDeltaSeconds <= 60 * 60) score += 40;
-    else if (nearestDeltaSeconds <= 6 * 60 * 60) score += 28;
-    else if (nearestDeltaSeconds <= 24 * 60 * 60) score += 16;
-    else if (nearestDeltaSeconds <= 3 * 24 * 60 * 60) score += 6;
+  if (referenceDeltaSeconds != null) {
+    if (referenceDeltaSeconds <= 60 * 60) score += 40;
+    else if (referenceDeltaSeconds <= 6 * 60 * 60) score += 28;
+    else if (referenceDeltaSeconds <= 24 * 60 * 60) score += 16;
+    else if (referenceDeltaSeconds <= 3 * 24 * 60 * 60) score += 6;
     else score -= 12;
   }
 
@@ -661,7 +668,7 @@ export async function lookupAviationstackFlightWithReport(
   const attempts: Array<Record<string, unknown>> = [];
 
   try {
-    for (const variant of buildSearchVariants(normalizedIdentifier)) {
+    for (const variant of buildSearchVariants(normalizedIdentifier, options?.referenceTimeMs)) {
       const records = await fetchFlights(variant.params);
       attempts.push({
         variant: variant.cacheKey,

@@ -501,21 +501,24 @@ function getRecordTemporalScore(record: AirlabsFlightRecord, referenceTimeMs?: n
   const status = normalizeIdentifier(record.status);
   let score = 0;
 
-  const deltas = [updated, scheduledDeparture, scheduledArrival]
-    .filter((timestamp): timestamp is number => timestamp != null)
-    .map((timestamp) => Math.abs(timestamp - referenceSeconds));
-  const nearestDelta = deltas.length > 0 ? Math.min(...deltas) : null;
+  const referenceDelta = scheduledDeparture != null
+    ? Math.abs(scheduledDeparture - referenceSeconds)
+    : scheduledArrival != null
+      ? Math.abs(scheduledArrival - referenceSeconds)
+      : updated != null
+        ? Math.abs(updated - referenceSeconds)
+        : null;
 
-  if (nearestDelta != null) {
-    if (nearestDelta <= 30 * 60) {
+  if (referenceDelta != null) {
+    if (referenceDelta <= 30 * 60) {
       score += explicitReferenceTime ? 30 : 18;
-    } else if (nearestDelta <= 2 * 60 * 60) {
+    } else if (referenceDelta <= 2 * 60 * 60) {
       score += explicitReferenceTime ? 22 : 14;
-    } else if (nearestDelta <= 12 * 60 * 60) {
+    } else if (referenceDelta <= 12 * 60 * 60) {
       score += explicitReferenceTime ? 12 : 8;
-    } else if (explicitReferenceTime && nearestDelta <= AIRLABS_REFERENCE_MATCH_WINDOW_SECONDS) {
+    } else if (explicitReferenceTime && referenceDelta <= AIRLABS_REFERENCE_MATCH_WINDOW_SECONDS) {
       score -= 12;
-    } else if (explicitReferenceTime && nearestDelta > AIRLABS_REFERENCE_MATCH_WINDOW_SECONDS) {
+    } else if (explicitReferenceTime && referenceDelta > AIRLABS_REFERENCE_MATCH_WINDOW_SECONDS) {
       score -= 80;
     }
   }

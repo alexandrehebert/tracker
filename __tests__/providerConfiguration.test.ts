@@ -156,4 +156,65 @@ describe('provider configuration helpers', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
     expect(result.match?.faFlightId).toBe('AF123-future');
   });
+
+  it('prefers the closest FlightAware schedule on either side of the typed validation date', async () => {
+    process.env.FLIGHT_AWARE_API_KEY = 'test-flightaware-key';
+    delete process.env.FLIGHTAWARE_DISABLED;
+
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
+      flights: [
+        {
+          ident: 'AF123',
+          ident_icao: 'AFR123',
+          ident_iata: 'AF123',
+          fa_flight_id: 'AF123-past-live',
+          operator: 'Air France',
+          operator_icao: 'AFR',
+          operator_iata: 'AF',
+          flight_number: '123',
+          origin: { code_iata: 'CDG', code_icao: 'LFPG', name: 'Paris CDG' },
+          destination: { code_iata: 'AMS', code_icao: 'EHAM', name: 'Amsterdam Schiphol' },
+          actual_out: '2026-04-14T08:00:00.000Z',
+          estimated_in: '2026-04-14T09:20:00.000Z',
+          last_position: {
+            latitude: 49.01,
+            longitude: 2.55,
+            altitude: 36000,
+            groundspeed: 430,
+            heading: 32,
+            timestamp: '2026-04-14T08:15:00.000Z',
+          },
+        },
+        {
+          ident: 'AF123',
+          ident_icao: 'AFR123',
+          ident_iata: 'AF123',
+          fa_flight_id: 'AF123-future-scheduled',
+          operator: 'Air France',
+          operator_icao: 'AFR',
+          operator_iata: 'AF',
+          flight_number: '123',
+          origin: { code_iata: 'CDG', code_icao: 'LFPG', name: 'Paris CDG' },
+          destination: { code_iata: 'AMS', code_icao: 'EHAM', name: 'Amsterdam Schiphol' },
+          scheduled_out: '2026-04-14T10:00:00.000Z',
+          scheduled_in: '2026-04-14T11:20:00.000Z',
+          last_position: null,
+        },
+      ],
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }));
+
+    vi.stubGlobal('fetch', fetchMock);
+
+    const { lookupFlightAwareFlightWithReport } = await loadFlightAwareProviderWithOverride(null);
+    const result = await lookupFlightAwareFlightWithReport('AF123', {
+      referenceTimeMs: Date.parse('2026-04-14T09:30:00.000Z'),
+    });
+
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(result.match?.faFlightId).toBe('AF123-future-scheduled');
+    expect(result.match?.route.firstSeen).toBe(Math.floor(Date.parse('2026-04-14T10:00:00.000Z') / 1000));
+  });
 });
