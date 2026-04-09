@@ -118,15 +118,17 @@ export function AirportDetailsModal({ airport, onClose }: AirportDetailsModalPro
             </div>
           </div>
 
-          <a
-            href={`https://www.google.com/maps/search/?api=1&query=${latitude},${longitude}`}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="flex w-full items-center justify-center gap-2 rounded-2xl border border-white/10 bg-slate-900/60 px-3 py-2.5 text-sm text-slate-200 transition hover:border-white/20 hover:bg-slate-800"
-          >
-            <MapPin className="h-4 w-4 text-purple-300" />
-            View on map
-          </a>
+          {latitude != null && longitude != null ? (
+            <a
+              href={`https://www.google.com/maps/search/?api=1&query=${latitude},${longitude}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex w-full items-center justify-center gap-2 rounded-2xl border border-white/10 bg-slate-900/60 px-3 py-2.5 text-sm text-slate-200 transition hover:border-white/20 hover:bg-slate-800"
+            >
+              <MapPin className="h-4 w-4 text-purple-300" />
+              View on map
+            </a>
+          ) : null}
         </div>
       </div>
     </div>
