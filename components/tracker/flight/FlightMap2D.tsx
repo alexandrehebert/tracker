@@ -17,6 +17,7 @@ interface FlightMap2DProps {
   selectedFlightDetails?: SelectedFlightDetails | null;
   airportMarkers?: FlightMapAirportMarker[];
   onSelectFlight?: (icao24: string) => void;
+  onSelectAirport?: (airport: FlightMapAirportMarker) => void;
   onInitialZoomEnd?: () => void;
   selectionMode?: 'single' | 'all';
   flightColorIndexes?: ReadonlyMap<string, number>;
@@ -973,6 +974,7 @@ export default function FlightMap2D({
   selectedFlightDetails,
   airportMarkers = [],
   onSelectFlight,
+  onSelectAirport,
   onInitialZoomEnd,
   selectionMode = 'single',
   flightColorIndexes,
@@ -1307,6 +1309,8 @@ export default function FlightMap2D({
                 opacity="0.98"
                 onMouseEnter={() => setHoveredAirportId(airport.id)}
                 onMouseLeave={() => setHoveredAirportId((current) => (current === airport.id ? null : current))}
+                onClick={onSelectAirport ? () => onSelectAirport(airport) : undefined}
+                style={{ cursor: onSelectAirport ? 'pointer' : 'default' }}
               >
                 <title>{airportTitle}</title>
                 <circle

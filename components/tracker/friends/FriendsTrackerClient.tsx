@@ -47,6 +47,7 @@ import type {
   TrackerApiResponse,
   TrackedFlight,
 } from '../flight/types';
+import { AirportDetailsModal } from './AirportDetailsModal';
 
 const AUTO_REFRESH_MS = 60_000;
 const MIN_MAP_LOADING_MS = 2_000;
@@ -1013,6 +1014,7 @@ function FriendsTrackerDashboard({
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [selectedTimeMs, setSelectedTimeMs] = useState<number | null>(null);
   const [isWaybackModalOpen, setIsWaybackModalOpen] = useState(false);
+  const [selectedMapAirport, setSelectedMapAirport] = useState<FlightMapAirportMarker | null>(null);
   const autoLockSignatureRef = useRef<string | null>(null);
 
   const identifiers = useMemo(() => extractFriendTrackerIdentifiers(config), [config]);
@@ -1527,6 +1529,7 @@ function FriendsTrackerDashboard({
   );
 
   return (
+    <>
     <TrackerShell
       topBar={
         <FriendsTrackerTopBar
@@ -1575,6 +1578,7 @@ function FriendsTrackerDashboard({
             airportMarkers={airportMarkers}
             emptyOverlayMessage={null}
             onSelectFlight={handleMapFlightSelect}
+            onSelectAirport={setSelectedMapAirport}
             onInitialZoomEnd={onMapReady}
           />
         </div>
@@ -1588,6 +1592,13 @@ function FriendsTrackerDashboard({
           : <MapIcon className="animate-spin text-sky-400" size={64} strokeWidth={2.5} />
       }
     />
+    {selectedMapAirport ? (
+      <AirportDetailsModal
+        airport={selectedMapAirport}
+        onClose={() => setSelectedMapAirport(null)}
+      />
+    ) : null}
+    </>
   );
 }
 
