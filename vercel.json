@@ -4,6 +4,10 @@
     {
       "path": "/api/tracker/cron",
       "schedule": "*/15 * * * *"
+    },
+    {
+      "path": "/api/tracker/cron/enrichment",
+      "schedule": "0 */6 * * *"
     }
   ]
 }

@@ -109,6 +109,8 @@ type SearchFlightsOptions = {
   preferCachedFlightAware?: boolean;
   /** Force a fresh FlightAware lookup even when the provider already has a cached match. */
   forceFlightAwareRefresh?: boolean;
+  /** Limit refreshes to OpenSky-only data and skip the slower external fallback/enrichment providers. */
+  externalDataMode?: 'full' | 'opensky-only';
 };
 
 type DemoFlightIdentifier = 'TEST1' | 'TEST2' | 'TEST3' | 'TEST4' | 'TEST5' | 'TEST6' | 'TEST7' | 'TEST8' | 'TEST9' | 'TEST10';
@@ -2236,12 +2238,15 @@ export async function searchFlights(query: string, options: SearchFlightsOptions
 
   const remainingQuery = remainingIdentifiers.join(',');
   const cacheKey = buildSearchCacheKey(requestedIdentifiers);
+  const externalDataMode = options.externalDataMode ?? 'full';
+  const allowExternalData = externalDataMode !== 'opensky-only';
   const preferCachedFlightAware = options.preferCachedFlightAware !== false && !options.forceFlightAwareRefresh;
 
   const inFlightKey = [
     cacheKey,
     options.forceRefresh ? 'force' : 'default',
     options.cacheOnly ? 'cache-only' : 'live',
+    externalDataMode,
     preferCachedFlightAware ? 'fa-reuse' : 'fa-normal',
     options.forceFlightAwareRefresh ? 'fa-force' : 'fa-cache',
   ].join(':');
@@ -2274,7 +2279,7 @@ export async function searchFlights(query: string, options: SearchFlightsOptions
       const skipReason = openSkyDisabledReason
         ?? 'OpenSky is not configured for this deployment, so the tracker is using the external fallback providers only.';
 
-      if (!hasAviationstackCredentials() && !hasFlightAwareCredentials() && !hasAirlabsCredentials()) {
+      if (!allowExternalData || (!hasAviationstackCredentials() && !hasFlightAwareCredentials() && !hasAirlabsCredentials())) {
         const historicalOnlyResult = await writeFlightSearchCache(
           cacheKey,
           mergeWithDemoPayload({
@@ -2331,19 +2336,21 @@ export async function searchFlights(query: string, options: SearchFlightsOptions
 
     try {
       const freshResult = await fetchFreshFlights(remainingQuery, remainingIdentifiers);
-      const enrichedResult = await enrichSearchResultWithExternalSources(freshResult, {
-        forceRefresh: options.forceRefresh,
-        preferCachedFlightAware,
-        forceFlightAwareRefresh: options.forceFlightAwareRefresh,
-      });
+      const resultToCache = allowExternalData
+        ? await enrichSearchResultWithExternalSources(freshResult, {
+            forceRefresh: options.forceRefresh,
+            preferCachedFlightAware,
+            forceFlightAwareRefresh: options.forceFlightAwareRefresh,
+          })
+        : freshResult;
       const cachedResult = await writeFlightSearchCache(
         cacheKey,
-        mergeWithDemoPayload(enrichedResult),
+        mergeWithDemoPayload(resultToCache),
         options.forceRefresh ? 'manual-refresh' : 'search',
       );
       return mergeWithDemoPayload(cachedResult);
     } catch (error) {
-      if (!hasAviationstackCredentials() && !hasFlightAwareCredentials() && !hasAirlabsCredentials()) {
+      if (!allowExternalData || (!hasAviationstackCredentials() && !hasFlightAwareCredentials() && !hasAirlabsCredentials())) {
         const historicalOnlyResult = await writeFlightSearchCache(
           cacheKey,
           mergeWithDemoPayload({

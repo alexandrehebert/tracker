@@ -497,6 +497,7 @@ describe('tracker cron config and history', () => {
 
     expect(searchFlightsMock).toHaveBeenNthCalledWith(1, 'AF123', {
       forceRefresh: true,
+      externalDataMode: 'opensky-only',
     });
 
     await runTrackerCronJob({
@@ -507,6 +508,48 @@ describe('tracker cron config and history', () => {
     expect(searchFlightsMock).toHaveBeenNthCalledWith(2, 'AF123', {
       forceRefresh: true,
       forceFlightAwareRefresh: true,
+    });
+  });
+
+  it('lets a dedicated scheduled enrichment run opt back into the full provider fan-out', async () => {
+    searchFlightsMock.mockResolvedValue({
+      query: 'AF123',
+      requestedIdentifiers: ['AF123'],
+      matchedIdentifiers: ['AF123'],
+      notFoundIdentifiers: [],
+      fetchedAt: 1_700_000_001_000,
+      flights: [createTrackedFlight('AF123', 'abc123')],
+    });
+
+    const { runTrackerCronJob } = await loadTrackerCronModule();
+    const { writeFriendsTrackerConfig } = await loadFriendsTrackerModule();
+
+    await writeFriendsTrackerConfig({
+      updatedBy: 'chantal config page',
+      cronEnabled: true,
+      friends: [
+        {
+          id: 'friend-1',
+          name: 'Alice',
+          flights: [
+            {
+              id: 'leg-1',
+              flightNumber: 'AF123',
+              departureTime: '2026-04-14T09:30:00.000Z',
+            },
+          ],
+        },
+      ],
+    });
+
+    await runTrackerCronJob({
+      trigger: 'vercel-cron',
+      requestedBy: 'vercel-cron-enrichment/1.0',
+      refreshMode: 'full',
+    });
+
+    expect(searchFlightsMock).toHaveBeenCalledWith('AF123', {
+      forceRefresh: true,
     });
   });
 
@@ -577,7 +620,10 @@ describe('tracker cron config and history', () => {
       forceRefresh: true,
       forceFlightAwareRefresh: true,
     });
-    expect(searchFlightsMock).toHaveBeenNthCalledWith(2, 'AF123', { forceRefresh: true });
+    expect(searchFlightsMock).toHaveBeenNthCalledWith(2, 'AF123', {
+      forceRefresh: true,
+      externalDataMode: 'opensky-only',
+    });
     expect(firstRun.status).toBe('partial');
     expect(firstRun.summary.totalIdentifiers).toBe(2);
     expect(firstRun.summary.matchedIdentifiers).toBe(1);

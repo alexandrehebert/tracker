@@ -19,7 +19,7 @@ docker compose up --build
 Open `http://localhost:4109`.
 
 This starts the app locally with Docker Compose in development mode (`next dev`) with auto-reload.
-It also starts a small `tracker-cron` sidecar that calls `/api/tracker/cron` automatically every 15 minutes so the Mongo-backed flight cache stays warm locally too.
+It also starts a small `tracker-cron` sidecar that calls `/api/tracker/cron` automatically every 15 minutes so the Mongo-backed flight cache stays warm locally too. In production, the frequent cron now stays on the fast OpenSky-only path, while a separate `/api/tracker/cron/enrichment` run handles the slower fallback providers every 6 hours.
 
 ### Optional schedule-validation providers
 
@@ -73,6 +73,7 @@ This runs the development server with source mounted for hot reload.
 ### Local cron automation
 
 - The `tracker-cron` service waits for the app to become healthy, then triggers `http://tracker:4109/api/tracker/cron` every `900` seconds by default.
+- On Vercel, `/api/tracker/cron` is scheduled every 15 minutes for the fast OpenSky refresh and `/api/tracker/cron/enrichment` runs every 6 hours for the slower fallback-provider enrichment pass.
 - Override the cadence with `TRACKER_CRON_INTERVAL_SECONDS` in your `.env`.
 - If you set `CRON_SECRET`, the cron sidecar automatically sends `Authorization: Bearer $CRON_SECRET`.
 

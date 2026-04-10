@@ -22,8 +22,10 @@ const TRACKER_CRON_OPENSKY_BATCH_DELAY_MS = Number.isFinite(parsedTrackerCronOpe
   ? parsedTrackerCronOpenSkyBatchDelayMs
   : DEFAULT_TRACKER_CRON_OPENSKY_BATCH_DELAY_MS;
 export const TRACKER_CRON_SCHEDULE = '*/15 * * * *';
+export const TRACKER_CRON_ENRICHMENT_SCHEDULE = '0 */6 * * *';
 
 export type TrackerCronTrigger = 'vercel-cron' | 'manual-admin' | 'manual-api';
+export type TrackerCronRefreshMode = 'full' | 'opensky-only';
 export type TrackerCronRunStatus = 'running' | 'success' | 'partial' | 'error' | 'skipped';
 export type TrackerCronFlightStatus = 'matched' | 'not-found' | 'error';
 
@@ -508,10 +510,22 @@ export async function getTrackerCronDashboard(limit = DEFAULT_HISTORY_LIMIT): Pr
   };
 }
 
+function resolveTrackerCronRefreshMode(
+  trigger: TrackerCronTrigger,
+  requestedMode?: TrackerCronRefreshMode,
+): TrackerCronRefreshMode {
+  if (requestedMode === 'full' || requestedMode === 'opensky-only') {
+    return requestedMode;
+  }
+
+  return trigger === 'vercel-cron' ? 'opensky-only' : 'full';
+}
+
 export async function runTrackerCronJob(options: {
   trigger?: TrackerCronTrigger;
   overrideIdentifiers?: string[];
   requestedBy?: string | null;
+  refreshMode?: TrackerCronRefreshMode;
 } = {}): Promise<TrackerCronRun> {
   const config = await readTrackerCronConfig();
   const defaultIdentifiers = Array.from(new Set([
@@ -570,6 +584,7 @@ export async function runTrackerCronJob(options: {
   const results: TrackerCronFlightResult[] = [];
   let runError: string | null = null;
   const effectiveTrigger = options.trigger ?? 'manual-api';
+  const refreshMode = resolveTrackerCronRefreshMode(effectiveTrigger, options.refreshMode);
   const isManualTrigger = effectiveTrigger === 'manual-admin' || effectiveTrigger === 'manual-api';
 
   const withCronProviderContext = <T,>(identifier: string | null, callback: () => Promise<T>) => withProviderRequestContext(
@@ -578,7 +593,8 @@ export async function runTrackerCronJob(options: {
       source: 'tracker-cron',
       metadata: {
         identifier,
-        trigger: options.trigger ?? 'manual-api',
+        trigger: effectiveTrigger,
+        refreshMode,
         requestedBy: typeof options.requestedBy === 'string' && options.requestedBy.trim()
           ? options.requestedBy.trim()
           : null,
@@ -617,6 +633,7 @@ export async function runTrackerCronJob(options: {
         batch.length === 1 ? batch[0] ?? null : batchQuery,
         () => searchFlights(batchQuery, {
           forceRefresh: true,
+          ...(refreshMode === 'opensky-only' ? { externalDataMode: 'opensky-only' as const } : {}),
           ...(isManualTrigger ? { forceFlightAwareRefresh: true } : {}),
         }),
       );
