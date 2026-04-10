@@ -778,8 +778,12 @@ export async function runTrackerCronJob(options: {
         batch.length === 1 ? batch[0] ?? null : batchQuery,
         () => searchFlights(batchQuery, {
           forceRefresh: true,
-          ...(selectiveOpenSkyHydration ? { openSkyDataMode: 'snapshot-only' as const } : {}),
-          ...(refreshMode === 'opensky-only' ? { externalDataMode: 'opensky-only' as const } : {}),
+          ...(selectiveOpenSkyHydration
+            ? {
+                openSkyDataMode: 'snapshot-only' as const,
+                externalDataMode: 'opensky-only' as const,
+              }
+            : (refreshMode === 'opensky-only' ? { externalDataMode: 'opensky-only' as const } : {})),
           ...(isManualTrigger ? { forceFlightAwareRefresh: true } : {}),
         }),
       );
@@ -812,7 +816,7 @@ export async function runTrackerCronJob(options: {
                 hydrationBatch.length === 1 ? hydrationBatch[0] ?? null : hydrationQuery,
                 () => searchFlights(hydrationQuery, {
                   forceRefresh: true,
-                  externalDataMode: 'opensky-only',
+                  ...(refreshMode === 'opensky-only' ? { externalDataMode: 'opensky-only' as const } : {}),
                 }),
               );
 

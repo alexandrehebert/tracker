@@ -523,14 +523,33 @@ describe('tracker cron config and history', () => {
   });
 
   it('keeps the dedicated scheduled enrichment run on the full provider fan-out while using the selective OpenSky snapshot first', async () => {
-    searchFlightsMock.mockResolvedValue({
-      query: 'AF123',
-      requestedIdentifiers: ['AF123'],
-      matchedIdentifiers: ['AF123'],
-      notFoundIdentifiers: [],
-      fetchedAt: 1_700_000_001_000,
-      flights: [createTrackedFlight('AF123', 'abc123')],
-    });
+    const nowMs = Date.parse('2026-04-14T09:00:00.000Z');
+    vi.useFakeTimers();
+    vi.setSystemTime(nowMs);
+
+    searchFlightsMock
+      .mockResolvedValueOnce({
+        query: 'AF123',
+        requestedIdentifiers: ['AF123'],
+        matchedIdentifiers: ['AF123'],
+        notFoundIdentifiers: [],
+        fetchedAt: nowMs,
+        flights: [createTrackedFlight('AF123', 'abc123', {
+          onGround: false,
+          lastContact: Math.floor(nowMs / 1000),
+        })],
+      })
+      .mockResolvedValueOnce({
+        query: 'AF123',
+        requestedIdentifiers: ['AF123'],
+        matchedIdentifiers: ['AF123'],
+        notFoundIdentifiers: [],
+        fetchedAt: nowMs + 60_000,
+        flights: [createTrackedFlight('AF123', 'abc123', {
+          onGround: false,
+          lastContact: Math.floor(nowMs / 1000),
+        })],
+      });
 
     const { runTrackerCronJob } = await loadTrackerCronModule();
     const { writeFriendsTrackerConfig } = await loadFriendsTrackerModule();
@@ -546,7 +565,7 @@ describe('tracker cron config and history', () => {
             {
               id: 'leg-1',
               flightNumber: 'AF123',
-              departureTime: '2026-04-14T09:30:00.000Z',
+              departureTime: new Date(nowMs + (30 * 60 * 1000)).toISOString(),
             },
           ],
         },
@@ -559,9 +578,13 @@ describe('tracker cron config and history', () => {
       refreshMode: 'full',
     });
 
-    expect(searchFlightsMock).toHaveBeenCalledWith('AF123', {
+    expect(searchFlightsMock).toHaveBeenNthCalledWith(1, 'AF123', {
       forceRefresh: true,
+      externalDataMode: 'opensky-only',
       openSkyDataMode: 'snapshot-only',
+    });
+    expect(searchFlightsMock).toHaveBeenNthCalledWith(2, 'AF123', {
+      forceRefresh: true,
     });
   });
 
@@ -631,11 +654,11 @@ describe('tracker cron config and history', () => {
 
       expect(searchFlightsMock).toHaveBeenNthCalledWith(1, 'AF123,BA117', {
         forceRefresh: true,
+        externalDataMode: 'opensky-only',
         openSkyDataMode: 'snapshot-only',
       });
       expect(searchFlightsMock).toHaveBeenNthCalledWith(2, 'AF123', {
         forceRefresh: true,
-        externalDataMode: 'opensky-only',
       });
     } finally {
       if (originalBatchSize === undefined) {
