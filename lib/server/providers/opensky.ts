@@ -598,7 +598,10 @@ function getOpenSkyRateLimitMaxWaitMs(): number {
   const context = getProviderRequestContext();
   const caller = context?.caller ?? 'on-demand';
 
-  if (caller === 'cron' && context?.metadata?.refreshMode === 'opensky-only') {
+  if (caller === 'cron' && (
+    context?.metadata?.refreshMode === 'opensky-only'
+    || context?.metadata?.selectiveOpenSkyHydration === true
+  )) {
     return 1_500;
   }
 

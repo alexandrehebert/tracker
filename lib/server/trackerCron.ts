@@ -652,6 +652,13 @@ function resolveTrackerCronRefreshMode(
   return trigger === 'vercel-cron' ? 'opensky-only' : 'full';
 }
 
+function shouldUseSelectiveOpenSkyHydration(
+  trigger: TrackerCronTrigger,
+  refreshMode: TrackerCronRefreshMode,
+): boolean {
+  return trigger === 'vercel-cron' || refreshMode === 'opensky-only';
+}
+
 export async function runTrackerCronJob(options: {
   trigger?: TrackerCronTrigger;
   overrideIdentifiers?: string[];
@@ -716,6 +723,7 @@ export async function runTrackerCronJob(options: {
   let runError: string | null = null;
   const effectiveTrigger = options.trigger ?? 'manual-api';
   const refreshMode = resolveTrackerCronRefreshMode(effectiveTrigger, options.refreshMode);
+  const selectiveOpenSkyHydration = shouldUseSelectiveOpenSkyHydration(effectiveTrigger, refreshMode);
   const isManualTrigger = effectiveTrigger === 'manual-admin' || effectiveTrigger === 'manual-api';
 
   const withCronProviderContext = <T,>(identifier: string | null, callback: () => Promise<T>) => withProviderRequestContext(
@@ -726,6 +734,7 @@ export async function runTrackerCronJob(options: {
         identifier,
         trigger: effectiveTrigger,
         refreshMode,
+        selectiveOpenSkyHydration,
         requestedBy: typeof options.requestedBy === 'string' && options.requestedBy.trim()
           ? options.requestedBy.trim()
           : null,
@@ -753,10 +762,10 @@ export async function runTrackerCronJob(options: {
     await persistProgress();
   }
 
-  const scheduledHydrationIdentifiers = refreshMode === 'opensky-only'
+  const scheduledHydrationIdentifiers = selectiveOpenSkyHydration
     ? await listTrackerCronScheduledHydrationIdentifiers(Date.now())
     : new Set<string>();
-  const identifierBatches = refreshMode === 'opensky-only'
+  const identifierBatches = selectiveOpenSkyHydration
     ? [identifiers]
     : chunkTrackerCronIdentifiers(identifiers);
 
@@ -769,12 +778,8 @@ export async function runTrackerCronJob(options: {
         batch.length === 1 ? batch[0] ?? null : batchQuery,
         () => searchFlights(batchQuery, {
           forceRefresh: true,
-          ...(refreshMode === 'opensky-only'
-            ? {
-                externalDataMode: 'opensky-only' as const,
-                openSkyDataMode: 'snapshot-only' as const,
-              }
-            : {}),
+          ...(selectiveOpenSkyHydration ? { openSkyDataMode: 'snapshot-only' as const } : {}),
+          ...(refreshMode === 'opensky-only' ? { externalDataMode: 'opensky-only' as const } : {}),
           ...(isManualTrigger ? { forceFlightAwareRefresh: true } : {}),
         }),
       );
@@ -783,7 +788,7 @@ export async function runTrackerCronJob(options: {
         results.push(buildTrackerCronFlightResult(identifier, payload));
       }
 
-      if (refreshMode === 'opensky-only') {
+      if (selectiveOpenSkyHydration) {
         const hydrationIdentifiers = resolveTrackerCronHydrationIdentifiers({
           identifiers: batch,
           payload,

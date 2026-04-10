@@ -522,7 +522,7 @@ describe('tracker cron config and history', () => {
     });
   });
 
-  it('lets a dedicated scheduled enrichment run opt back into the full provider fan-out', async () => {
+  it('keeps the dedicated scheduled enrichment run on the full provider fan-out while using the selective OpenSky snapshot first', async () => {
     searchFlightsMock.mockResolvedValue({
       query: 'AF123',
       requestedIdentifiers: ['AF123'],
@@ -561,7 +561,89 @@ describe('tracker cron config and history', () => {
 
     expect(searchFlightsMock).toHaveBeenCalledWith('AF123', {
       forceRefresh: true,
+      openSkyDataMode: 'snapshot-only',
     });
+  });
+
+  it('applies the same selective OpenSky route hydration to the 6-hour scheduled enrichment cron', async () => {
+    const originalBatchSize = process.env.TRACKER_CRON_OPENSKY_BATCH_SIZE;
+    process.env.TRACKER_CRON_OPENSKY_BATCH_SIZE = '1';
+    const nowMs = Date.parse('2026-04-14T09:00:00.000Z');
+    vi.useFakeTimers();
+    vi.setSystemTime(nowMs);
+
+    searchFlightsMock
+      .mockResolvedValueOnce({
+        query: 'AF123,BA117',
+        requestedIdentifiers: ['AF123', 'BA117'],
+        matchedIdentifiers: ['AF123'],
+        notFoundIdentifiers: ['BA117'],
+        fetchedAt: nowMs,
+        flights: [createTrackedFlight('AF123', 'abc123', {
+          onGround: true,
+          lastContact: Math.floor(nowMs / 1000),
+        })],
+      })
+      .mockResolvedValueOnce({
+        query: 'AF123',
+        requestedIdentifiers: ['AF123'],
+        matchedIdentifiers: ['AF123'],
+        notFoundIdentifiers: [],
+        fetchedAt: nowMs + 60_000,
+        flights: [createTrackedFlight('AF123', 'abc123', {
+          onGround: false,
+          lastContact: Math.floor(nowMs / 1000),
+        })],
+      });
+
+    try {
+      const { runTrackerCronJob } = await loadTrackerCronModule();
+      const { writeFriendsTrackerConfig } = await loadFriendsTrackerModule();
+
+      await writeFriendsTrackerConfig({
+        updatedBy: 'chantal config page',
+        cronEnabled: true,
+        friends: [
+          {
+            id: 'friend-1',
+            name: 'Alice',
+            flights: [
+              {
+                id: 'leg-1',
+                flightNumber: 'AF123',
+                departureTime: new Date(nowMs + (30 * 60 * 1000)).toISOString(),
+              },
+              {
+                id: 'leg-2',
+                flightNumber: 'BA117',
+                departureTime: new Date(nowMs + (2 * 24 * 60 * 60 * 1000)).toISOString(),
+              },
+            ],
+          },
+        ],
+      });
+
+      await runTrackerCronJob({
+        trigger: 'vercel-cron',
+        requestedBy: 'vercel-cron-enrichment/1.0',
+        refreshMode: 'full',
+      });
+
+      expect(searchFlightsMock).toHaveBeenNthCalledWith(1, 'AF123,BA117', {
+        forceRefresh: true,
+        openSkyDataMode: 'snapshot-only',
+      });
+      expect(searchFlightsMock).toHaveBeenNthCalledWith(2, 'AF123', {
+        forceRefresh: true,
+        externalDataMode: 'opensky-only',
+      });
+    } finally {
+      if (originalBatchSize === undefined) {
+        delete process.env.TRACKER_CRON_OPENSKY_BATCH_SIZE;
+      } else {
+        process.env.TRACKER_CRON_OPENSKY_BATCH_SIZE = originalBatchSize;
+      }
+    }
   });
 
   it('hydrates full OpenSky routes only for flights that are inside the active travel window', async () => {
