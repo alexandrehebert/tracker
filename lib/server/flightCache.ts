@@ -12,7 +12,7 @@ import type {
   TrackedFlightRoute,
 } from '~/components/tracker/flight/types';
 
-const DEFAULT_CACHE_TTL_SECONDS = 300;
+const DEFAULT_CACHE_TTL_SECONDS = 1000;
 const DEFAULT_DETAILS_CACHE_TTL_SECONDS = 1_800;
 const DEFAULT_AIRPORT_DIRECTORY_CACHE_TTL_SECONDS = 24 * 60 * 60;
 const DEFAULT_DB_NAME = 'tracker';
