@@ -675,6 +675,21 @@ function FriendTimelineCard({
 
   const initials = getFriendInitials(friend.name);
   const hasAnyMatch = friendStatuses.some((s) => s.status === 'matched');
+  const hasScheduledLeg = !hasAnyMatch && friendStatuses.some((s) => s.status === 'scheduled');
+  const statusBadge = hasAnyMatch
+    ? {
+      label: 'live',
+      className: 'bg-emerald-500/20 text-emerald-200',
+    }
+    : hasScheduledLeg
+    ? {
+      label: 'scheduled',
+      className: 'bg-sky-500/20 text-sky-200',
+    }
+    : {
+      label: 'awaiting',
+      className: 'bg-slate-700/60 text-slate-400',
+    };
   const isPinnedNonTraveler = currentTripLegs.length === 0
     && Boolean(configuredCurrentAirport)
     && !hasAnyMatch
@@ -750,8 +765,8 @@ function FriendTimelineCard({
             <span>{formatRelativeSeconds(lastContactSeconds, referenceTimeMs)}</span>
           </div>
         ) : !isPinnedNonTraveler ? (
-          <div className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold ${hasAnyMatch ? 'bg-emerald-500/20 text-emerald-200' : 'bg-slate-700/60 text-slate-400'}`}>
-            {hasAnyMatch ? 'live' : 'awaiting'}
+          <div className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-semibold ${statusBadge.className}`}>
+            {statusBadge.label}
           </div>
         ) : null}
       </div>

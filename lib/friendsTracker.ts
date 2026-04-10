@@ -515,6 +515,17 @@ function resolveFlightReferenceTimeMs(flight: TrackedFlight): number | null {
   return null;
 }
 
+function hasTrackedFlightTelemetry(flight: TrackedFlight): boolean {
+  return flight.current != null
+    || flight.originPoint != null
+    || flight.track.length > 0
+    || (flight.rawTrack?.length ?? 0) > 0
+    || (flight.fetchHistory?.length ?? 0) > 0
+    || (typeof flight.lastContact === 'number' && Number.isFinite(flight.lastContact))
+    || (typeof flight.route.firstSeen === 'number' && Number.isFinite(flight.route.firstSeen))
+    || (typeof flight.route.lastSeen === 'number' && Number.isFinite(flight.route.lastSeen));
+}
+
 function isFlightTimingPlausibleForLeg(
   flight: TrackedFlight,
   leg: FriendFlightLeg,
@@ -530,7 +541,12 @@ function isFlightTimingPlausibleForLeg(
     return true;
   }
 
-  const referenceTime = resolveFlightReferenceTimeMs(flight) ?? now;
+  const resolvedReferenceTime = resolveFlightReferenceTimeMs(flight);
+  if (!options?.isLockedMatch && resolvedReferenceTime == null && scheduledTime > now && !hasTrackedFlightTelemetry(flight)) {
+    return false;
+  }
+
+  const referenceTime = resolvedReferenceTime ?? now;
   const matchWindowHours = options?.isLockedMatch ? AUTO_LOCK_WINDOW_HOURS : FLIGHT_MATCH_WINDOW_HOURS;
   const matchWindowMs = matchWindowHours * 60 * 60 * 1000;
 

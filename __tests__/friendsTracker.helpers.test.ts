@@ -174,6 +174,67 @@ describe('friends tracker helpers', () => {
     expect(status?.canAutoLock).toBe(false);
   });
 
+  it('keeps a soon-upcoming leg scheduled when a provider match has no telemetry timing yet', () => {
+    const departureTime = Date.UTC(2026, 3, 14, 12, 0);
+    const now = departureTime - (3 * 60 * 60 * 1000);
+    const config: FriendsTrackerConfig = {
+      updatedAt: null,
+      updatedBy: null,
+      friends: [
+        {
+          id: 'friend-1',
+          name: 'Alice',
+          flights: [
+            {
+              id: 'leg-1',
+              flightNumber: 'AF123',
+              departureTime: new Date(departureTime).toISOString(),
+              from: 'CDG',
+              to: 'LIS',
+            },
+          ],
+        },
+      ],
+    };
+
+    const [status] = buildFriendFlightStatuses(
+      config,
+      [{
+        icao24: '3c675a',
+        callsign: 'AF123',
+        originCountry: 'Testland',
+        matchedBy: ['AF123'],
+        lastContact: null,
+        current: null,
+        originPoint: null,
+        track: [],
+        rawTrack: [],
+        onGround: false,
+        velocity: null,
+        heading: null,
+        verticalRate: null,
+        geoAltitude: null,
+        baroAltitude: null,
+        squawk: null,
+        category: null,
+        route: {
+          departureAirport: 'CDG',
+          arrivalAirport: 'LIS',
+          firstSeen: null,
+          lastSeen: null,
+        },
+        dataSource: 'flightaware',
+        sourceDetails: [],
+        fetchHistory: [],
+      }],
+      now,
+    );
+
+    expect(status?.flight).toBeNull();
+    expect(status?.status).toBe('scheduled');
+    expect(status?.canAutoLock).toBe(false);
+  });
+
   it('normalizes imported JSON configs with missing ids and casing differences', () => {
     const config = normalizeFriendsTrackerConfig({
       cronEnabled: false,
