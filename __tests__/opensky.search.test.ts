@@ -104,6 +104,7 @@ describe('searchFlights', () => {
   const originalAviationStackApiKey = process.env.AVIATION_STACK_API_KEY;
   const originalFlightAwareApiKey = process.env.FLIGHTAWARE_API_KEY;
   const originalFlightAwareApiKeyAlt = process.env.FLIGHT_AWARE_API_KEY;
+  const originalAirlabsApiKey = process.env.AIRLABS_API_KEY;
   const originalEnabledApiProviders = process.env.ENABLED_API_PROVIDERS;
   const originalDisabledApiProviders = process.env.DISABLED_API_PROVIDERS;
   const originalOpenSkyDisabled = process.env.OPENSKY_DISABLED;
@@ -152,6 +153,12 @@ describe('searchFlights', () => {
       delete process.env.FLIGHT_AWARE_API_KEY;
     } else {
       process.env.FLIGHT_AWARE_API_KEY = originalFlightAwareApiKeyAlt;
+    }
+
+    if (originalAirlabsApiKey === undefined) {
+      delete process.env.AIRLABS_API_KEY;
+    } else {
+      process.env.AIRLABS_API_KEY = originalAirlabsApiKey;
     }
 
     if (originalMongoDbUri === undefined) {
@@ -735,6 +742,93 @@ describe('searchFlights', () => {
     expect(cachedResult?.flights[0]?.track).toHaveLength(200);
     expect(cachedResult?.flights[0]?.rawTrack).toHaveLength(200);
     expect(cachedResult?.flights[0]?.fetchHistory).toHaveLength(1_701);
+  });
+
+  it('bypasses the cached AirLabs live snapshot when forceRefresh is requested', async () => {
+    delete process.env.OPENSKY_CLIENT_ID;
+    delete process.env.OPENSKY_CLIENT_SECRET;
+    delete process.env.AVIATION_STACK_API_KEY;
+    delete process.env.FLIGHT_AWARE_API_KEY;
+    delete process.env.FLIGHTAWARE_API_KEY;
+    process.env.AIRLABS_API_KEY = 'airlabs-key';
+    process.env.OPENSKY_CACHE_TTL_SECONDS = '300';
+    delete process.env.MONGODB_URI;
+
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        response: {
+          hex: '3C675A',
+          reg_number: 'D-AIAB',
+          aircraft_icao: 'A320',
+          airline_iata: 'AF',
+          airline_icao: 'AFR',
+          airline_name: 'Air France',
+          flight_number: '123',
+          flight_icao: 'AFR123',
+          flight_iata: 'AF123',
+          dep_iata: 'CDG',
+          dep_icao: 'LFPG',
+          dep_time_ts: 1_775_852_100,
+          dep_estimated_ts: 1_775_852_400,
+          arr_iata: 'AMS',
+          arr_icao: 'EHAM',
+          arr_time_ts: 1_775_857_800,
+          updated: 1_775_853_000,
+          lat: 49.0123,
+          lng: 2.5512,
+          alt: 10_900,
+          dir: 32,
+          speed: 820,
+          status: 'en-route',
+          model: 'Airbus A320-200',
+        },
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        response: {
+          hex: '3C675A',
+          reg_number: 'D-AIAB',
+          aircraft_icao: 'A320',
+          airline_iata: 'AF',
+          airline_icao: 'AFR',
+          airline_name: 'Air France',
+          flight_number: '123',
+          flight_icao: 'AFR123',
+          flight_iata: 'AF123',
+          dep_iata: 'CDG',
+          dep_icao: 'LFPG',
+          dep_time_ts: 1_775_852_100,
+          dep_estimated_ts: 1_775_852_400,
+          arr_iata: 'AMS',
+          arr_icao: 'EHAM',
+          arr_time_ts: 1_775_857_800,
+          updated: 1_775_853_600,
+          lat: 49.245,
+          lng: 2.91,
+          alt: 11_250,
+          dir: 41,
+          speed: 835,
+          status: 'en-route',
+          model: 'Airbus A320-200',
+        },
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }));
+
+    vi.stubGlobal('fetch', fetchMock);
+
+    const searchFlights = await loadSearchFlights();
+    const firstResult = await searchFlights('AF123');
+    const refreshedResult = await searchFlights('AF123', { forceRefresh: true });
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(firstResult.flights[0]?.dataSource).toBe('airlabs');
+    expect(firstResult.flights[0]?.lastContact).toBe(1_775_853_000);
+    expect(refreshedResult.flights[0]?.lastContact).toBe(1_775_853_600);
+    expect(refreshedResult.flights[0]?.geoAltitude).toBe(11_250);
   });
 
   it('bypasses the cached search result when forceRefresh is requested', async () => {

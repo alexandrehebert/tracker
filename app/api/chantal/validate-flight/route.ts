@@ -181,6 +181,7 @@ export async function POST(request: NextRequest) {
       selectedProviders.flightaware
         ? lookupFlightAwareFlightWithReport(identifier, {
             referenceTimeMs: Number.isFinite(departureTimeMs) ? departureTimeMs : undefined,
+            forceRefresh: true,
           })
         : Promise.resolve({
             match: null,
@@ -299,7 +300,10 @@ export async function POST(request: NextRequest) {
 
     if (selectedProviders.tracker) {
       try {
-        const trackerPayload = await withConfigContext(() => searchFlights(identifier, { forceRefresh: true }));
+        const trackerPayload = await withConfigContext(() => searchFlights(identifier, {
+          forceRefresh: true,
+          forceFlightAwareRefresh: true,
+        }));
         const liveMatch = findMatchingTrackedFlightForLeg(trackerPayload.flights ?? [], requestedLeg);
         if (liveMatch) {
           candidates.push(buildCandidateFromLiveMatch(liveMatch, identifier));

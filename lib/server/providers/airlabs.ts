@@ -113,6 +113,11 @@ export type AirlabsLookupResult = {
   report: FlightSourceDetail;
 };
 
+export type AirlabsLookupOptions = {
+  referenceTimeMs?: number | null;
+  forceRefresh?: boolean;
+};
+
 const AIRLABS_API_BASE = 'https://airlabs.co/api/v9';
 const TRACKER_MAP_VIEWBOX = { width: 1000, height: 560 };
 const PROVIDER_COOLDOWN_MS = 15 * 60 * 1000;
@@ -667,7 +672,7 @@ async function recordAirlabsCacheLog(
 
 export async function lookupAirlabsFlightWithReport(
   identifier: string,
-  options?: { referenceTimeMs?: number | null },
+  options: AirlabsLookupOptions = {},
 ): Promise<AirlabsLookupResult> {
   const normalizedIdentifier = normalizeIdentifier(identifier);
   if (!normalizedIdentifier) {
@@ -702,53 +707,55 @@ export async function lookupAirlabsFlightWithReport(
     };
   }
 
-  const cacheKey = buildLookupCacheKey(normalizedIdentifier, options?.referenceTimeMs);
+  const cacheKey = buildLookupCacheKey(normalizedIdentifier, options.referenceTimeMs);
 
-  const memEntry = inMemoryFallbackCache.get(cacheKey);
-  if (memEntry && Date.now() < memEntry.expiresAt) {
-    const cachedPayload = memEntry.payload;
-    if (cachedPayload == null || isMatchWithinReferenceWindow(cachedPayload, options?.referenceTimeMs)) {
-      await recordAirlabsCacheLog(normalizedIdentifier, cacheKey, cachedPayload, 'memory');
-      return {
-        match: cachedPayload,
-        report: cachedPayload
-          ? createAirlabsReport(
-              'used',
-              'AirLabs returned a cached match and its data was merged into this snapshot.',
-              true,
-              { identifier: normalizedIdentifier, cacheKey, cached: true, match: summarizeAirlabsMatch(cachedPayload) },
-            )
-          : createAirlabsReport(
-              'no-data',
-              'AirLabs was queried recently but returned no matching flight.',
-              false,
-              { identifier: normalizedIdentifier, cacheKey, cached: true },
-            ),
-      };
+  if (!options.forceRefresh) {
+    const memEntry = inMemoryFallbackCache.get(cacheKey);
+    if (memEntry && Date.now() < memEntry.expiresAt) {
+      const cachedPayload = memEntry.payload;
+      if (cachedPayload == null || isMatchWithinReferenceWindow(cachedPayload, options.referenceTimeMs)) {
+        await recordAirlabsCacheLog(normalizedIdentifier, cacheKey, cachedPayload, 'memory');
+        return {
+          match: cachedPayload,
+          report: cachedPayload
+            ? createAirlabsReport(
+                'used',
+                'AirLabs returned a cached match and its data was merged into this snapshot.',
+                true,
+                { identifier: normalizedIdentifier, cacheKey, cached: true, match: summarizeAirlabsMatch(cachedPayload) },
+              )
+            : createAirlabsReport(
+                'no-data',
+                'AirLabs was queried recently but returned no matching flight.',
+                false,
+                { identifier: normalizedIdentifier, cacheKey, cached: true },
+              ),
+        };
+      }
     }
-  }
 
-  if (isProviderHistoryConfigured()) {
-    const ttlMs = getCacheTtlMs();
-    const mongoPayload = await readLatestProviderHistory<AirlabsFlightEnrichment>('airlabs', cacheKey, ttlMs);
-    if (mongoPayload !== null && isMatchWithinReferenceWindow(mongoPayload, options?.referenceTimeMs)) {
-      await recordAirlabsCacheLog(normalizedIdentifier, cacheKey, mongoPayload, 'mongo');
-      return {
-        match: mongoPayload,
-        report: mongoPayload
-          ? createAirlabsReport(
-              'used',
-              'AirLabs returned a cached match and its data was merged into this snapshot.',
-              true,
-              { identifier: normalizedIdentifier, cacheKey, cached: true, match: summarizeAirlabsMatch(mongoPayload) },
-            )
-          : createAirlabsReport(
-              'no-data',
-              'AirLabs was queried recently but returned no matching flight.',
-              false,
-              { identifier: normalizedIdentifier, cacheKey, cached: true },
-            ),
-      };
+    if (isProviderHistoryConfigured()) {
+      const ttlMs = getCacheTtlMs();
+      const mongoPayload = await readLatestProviderHistory<AirlabsFlightEnrichment>('airlabs', cacheKey, ttlMs);
+      if (mongoPayload !== null && isMatchWithinReferenceWindow(mongoPayload, options.referenceTimeMs)) {
+        await recordAirlabsCacheLog(normalizedIdentifier, cacheKey, mongoPayload, 'mongo');
+        return {
+          match: mongoPayload,
+          report: mongoPayload
+            ? createAirlabsReport(
+                'used',
+                'AirLabs returned a cached match and its data was merged into this snapshot.',
+                true,
+                { identifier: normalizedIdentifier, cacheKey, cached: true, match: summarizeAirlabsMatch(mongoPayload) },
+              )
+            : createAirlabsReport(
+                'no-data',
+                'AirLabs was queried recently but returned no matching flight.',
+                false,
+                { identifier: normalizedIdentifier, cacheKey, cached: true },
+              ),
+        };
+      }
     }
   }
 
@@ -853,7 +860,7 @@ export async function lookupAirlabsFlightWithReport(
 
 export async function lookupAirlabsFlight(
   identifier: string,
-  options?: { referenceTimeMs?: number | null },
+  options?: AirlabsLookupOptions,
 ): Promise<AirlabsFlightEnrichment | null> {
   const result = await lookupAirlabsFlightWithReport(identifier, options);
   if (result.report.status === 'error') {
@@ -863,11 +870,14 @@ export async function lookupAirlabsFlight(
   return result.match;
 }
 
-export async function lookupAirlabsFlightsWithReport(identifiers: string[]): Promise<Map<string, AirlabsLookupResult>> {
+export async function lookupAirlabsFlightsWithReport(
+  identifiers: string[],
+  options?: AirlabsLookupOptions,
+): Promise<Map<string, AirlabsLookupResult>> {
   const results = await Promise.all(
     identifiers.map(async (identifier) => ({
       identifier,
-      result: await lookupAirlabsFlightWithReport(identifier),
+      result: await lookupAirlabsFlightWithReport(identifier, options),
     })),
   );
 
@@ -879,8 +889,11 @@ export async function lookupAirlabsFlightsWithReport(identifiers: string[]): Pro
   return reports;
 }
 
-export async function lookupAirlabsFlights(identifiers: string[]): Promise<Map<string, AirlabsFlightEnrichment>> {
-  const results = await lookupAirlabsFlightsWithReport(identifiers);
+export async function lookupAirlabsFlights(
+  identifiers: string[],
+  options?: AirlabsLookupOptions,
+): Promise<Map<string, AirlabsFlightEnrichment>> {
+  const results = await lookupAirlabsFlightsWithReport(identifiers, options);
   const matches = new Map<string, AirlabsFlightEnrichment>();
 
   for (const [identifier, result] of results.entries()) {

@@ -115,10 +115,17 @@ export type FlightAwareLookupResult = {
   report: FlightSourceDetail;
 };
 
+export type FlightAwareLookupOptions = {
+  referenceTimeMs?: number | null;
+  forceRefresh?: boolean;
+  allowStaleLiveReuse?: boolean;
+};
+
 const FLIGHTAWARE_API_BASE = 'https://aeroapi.flightaware.com/aeroapi';
 const TRACKER_MAP_VIEWBOX = { width: 1000, height: 560 };
 const PROVIDER_COOLDOWN_MS = 15 * 60 * 1000;
 const DEFAULT_CACHE_TTL_MS = 5 * 60 * 1000;
+const DEFAULT_LIVE_MATCH_REUSE_TTL_MS = 12 * 60 * 60 * 1000;
 const DEFAULT_MIN_REQUEST_GAP_MS = 400;
 
 const projection = geoNaturalEarth1();
@@ -166,6 +173,12 @@ function getCacheTtlMs(): number {
   return Number.isFinite(parsedValue) && parsedValue > 0 ? parsedValue * 1000 : DEFAULT_CACHE_TTL_MS;
 }
 
+function getLiveMatchReuseTtlMs(): number {
+  const configuredValue = process.env.FLIGHTAWARE_LIVE_REUSE_TTL_SECONDS?.trim();
+  const parsedValue = configuredValue ? Number.parseInt(configuredValue, 10) : NaN;
+  return Number.isFinite(parsedValue) && parsedValue > 0 ? parsedValue * 1000 : DEFAULT_LIVE_MATCH_REUSE_TTL_MS;
+}
+
 function hasReferenceTimeMs(referenceTimeMs?: number | null): referenceTimeMs is number {
   return typeof referenceTimeMs === 'number' && Number.isFinite(referenceTimeMs);
 }
@@ -177,6 +190,20 @@ function buildLookupCacheKey(identifier: string, referenceTimeMs?: number | null
   }
 
   return `${normalizedIdentifier}@${new Date(referenceTimeMs).toISOString().slice(0, 10)}`;
+}
+
+function isReusableLiveMatch(match: FlightAwareFlightEnrichment | null, referenceTimeMs?: number | null): boolean {
+  if (!match?.current || match.onGround) {
+    return false;
+  }
+
+  const candidateTimestamp = match.current.time ?? match.route.lastSeen ?? match.route.firstSeen;
+  if (candidateTimestamp == null) {
+    return false;
+  }
+
+  const referenceSeconds = Math.floor((hasReferenceTimeMs(referenceTimeMs) ? referenceTimeMs : Date.now()) / 1000);
+  return Math.abs(referenceSeconds - candidateTimestamp) * 1000 <= getLiveMatchReuseTtlMs();
 }
 
 function getApiKey(): string {
@@ -758,7 +785,7 @@ async function recordFlightAwareCacheLog(
 
 export async function lookupFlightAwareFlightWithReport(
   identifier: string,
-  options?: { referenceTimeMs?: number | null },
+  options: FlightAwareLookupOptions = {},
 ): Promise<FlightAwareLookupResult> {
   const normalizedIdentifier = normalizeIdentifier(identifier);
   if (!normalizedIdentifier) {
@@ -793,53 +820,92 @@ export async function lookupFlightAwareFlightWithReport(
     };
   }
 
-  const cacheKey = buildLookupCacheKey(normalizedIdentifier, options?.referenceTimeMs);
+  const cacheKey = buildLookupCacheKey(normalizedIdentifier, options.referenceTimeMs);
+  const allowStaleLiveReuse = Boolean(options.allowStaleLiveReuse) && !hasReferenceTimeMs(options.referenceTimeMs);
 
-  // Synchronous in-memory cache check (preserves original scheduling behavior)
-  const memEntry = inMemoryFallbackCache.get(cacheKey);
-  if (memEntry && Date.now() < memEntry.expiresAt) {
-    const cachedPayload = memEntry.payload;
-    await recordFlightAwareCacheLog(normalizedIdentifier, cacheKey, cachedPayload, 'memory');
-    return {
-      match: cachedPayload,
-      report: cachedPayload
-        ? createFlightAwareReport(
-            'used',
-            'FlightAware AeroAPI returned a cached match and its data was merged into this snapshot.',
-            true,
-            { identifier: normalizedIdentifier, cacheKey, cached: true, match: summarizeFlightAwareMatch(cachedPayload) },
-          )
-        : createFlightAwareReport(
-            'no-data',
-            'FlightAware AeroAPI was queried recently but returned no matching flight.',
-            false,
-            { identifier: normalizedIdentifier, cacheKey, cached: true },
-          ),
-    };
-  }
+  if (!options.forceRefresh) {
+    const memEntry = inMemoryFallbackCache.get(cacheKey);
+    const canUseMemoryEntry = memEntry
+      && (Date.now() < memEntry.expiresAt || (allowStaleLiveReuse && isReusableLiveMatch(memEntry.payload, options.referenceTimeMs)));
 
-  // Async MongoDB history check (only when configured)
-  if (isProviderHistoryConfigured()) {
-    const ttlMs = getCacheTtlMs();
-    const mongoPayload = await readLatestProviderHistory<FlightAwareFlightEnrichment>('flightaware', cacheKey, ttlMs);
-    if (mongoPayload !== null) {
-      await recordFlightAwareCacheLog(normalizedIdentifier, cacheKey, mongoPayload, 'mongo');
+    if (memEntry && canUseMemoryEntry) {
+      const cachedPayload = memEntry.payload;
+      const reusedLiveMatch = Date.now() >= memEntry.expiresAt && allowStaleLiveReuse && isReusableLiveMatch(cachedPayload, options.referenceTimeMs);
+      await recordFlightAwareCacheLog(normalizedIdentifier, cacheKey, cachedPayload, 'memory');
       return {
-        match: mongoPayload,
-        report: mongoPayload
+        match: cachedPayload,
+        report: cachedPayload
           ? createFlightAwareReport(
               'used',
-              'FlightAware AeroAPI returned a cached match and its data was merged into this snapshot.',
+              reusedLiveMatch
+                ? 'FlightAware AeroAPI already returned a recent live match for this flight, so the tracker reused it to conserve credits.'
+                : 'FlightAware AeroAPI returned a cached match and its data was merged into this snapshot.',
               true,
-              { identifier: normalizedIdentifier, cached: true, match: summarizeFlightAwareMatch(mongoPayload) },
+              {
+                identifier: normalizedIdentifier,
+                cacheKey,
+                cached: true,
+                liveReuse: reusedLiveMatch,
+                match: summarizeFlightAwareMatch(cachedPayload),
+              },
             )
           : createFlightAwareReport(
               'no-data',
               'FlightAware AeroAPI was queried recently but returned no matching flight.',
               false,
-              { identifier: normalizedIdentifier, cached: true },
+              { identifier: normalizedIdentifier, cacheKey, cached: true },
             ),
       };
+    }
+
+    if (isProviderHistoryConfigured()) {
+      const ttlMs = getCacheTtlMs();
+      const mongoPayload = await readLatestProviderHistory<FlightAwareFlightEnrichment>('flightaware', cacheKey, ttlMs);
+      if (mongoPayload !== null) {
+        await recordFlightAwareCacheLog(normalizedIdentifier, cacheKey, mongoPayload, 'mongo');
+        return {
+          match: mongoPayload,
+          report: mongoPayload
+            ? createFlightAwareReport(
+                'used',
+                'FlightAware AeroAPI returned a cached match and its data was merged into this snapshot.',
+                true,
+                { identifier: normalizedIdentifier, cacheKey, cached: true, match: summarizeFlightAwareMatch(mongoPayload) },
+              )
+            : createFlightAwareReport(
+                'no-data',
+                'FlightAware AeroAPI was queried recently but returned no matching flight.',
+                false,
+                { identifier: normalizedIdentifier, cacheKey, cached: true },
+              ),
+        };
+      }
+
+      if (allowStaleLiveReuse) {
+        const reusedMongoPayload = await readLatestProviderHistory<FlightAwareFlightEnrichment>(
+          'flightaware',
+          cacheKey,
+          Math.max(ttlMs, getLiveMatchReuseTtlMs()),
+        );
+        if (reusedMongoPayload !== null && isReusableLiveMatch(reusedMongoPayload, options.referenceTimeMs)) {
+          await recordFlightAwareCacheLog(normalizedIdentifier, cacheKey, reusedMongoPayload, 'mongo');
+          return {
+            match: reusedMongoPayload,
+            report: createFlightAwareReport(
+              'used',
+              'FlightAware AeroAPI already returned a recent live match for this flight, so the tracker reused it to conserve credits.',
+              true,
+              {
+                identifier: normalizedIdentifier,
+                cacheKey,
+                cached: true,
+                liveReuse: true,
+                match: summarizeFlightAwareMatch(reusedMongoPayload),
+              },
+            ),
+          };
+        }
+      }
     }
   }
 
@@ -932,7 +998,7 @@ export async function lookupFlightAwareFlightWithReport(
 
 export async function lookupFlightAwareFlight(
   identifier: string,
-  options?: { referenceTimeMs?: number | null },
+  options?: FlightAwareLookupOptions,
 ): Promise<FlightAwareFlightEnrichment | null> {
   const result = await lookupFlightAwareFlightWithReport(identifier, options);
   if (result.report.status === 'error') {
@@ -942,11 +1008,14 @@ export async function lookupFlightAwareFlight(
   return result.match;
 }
 
-export async function lookupFlightAwareFlightsWithReport(identifiers: string[]): Promise<Map<string, FlightAwareLookupResult>> {
+export async function lookupFlightAwareFlightsWithReport(
+  identifiers: string[],
+  options?: FlightAwareLookupOptions,
+): Promise<Map<string, FlightAwareLookupResult>> {
   const results = await Promise.all(
     identifiers.map(async (identifier) => ({
       identifier,
-      result: await lookupFlightAwareFlightWithReport(identifier),
+      result: await lookupFlightAwareFlightWithReport(identifier, options),
     })),
   );
 
@@ -958,8 +1027,11 @@ export async function lookupFlightAwareFlightsWithReport(identifiers: string[]):
   return reports;
 }
 
-export async function lookupFlightAwareFlights(identifiers: string[]): Promise<Map<string, FlightAwareFlightEnrichment>> {
-  const results = await lookupFlightAwareFlightsWithReport(identifiers);
+export async function lookupFlightAwareFlights(
+  identifiers: string[],
+  options?: FlightAwareLookupOptions,
+): Promise<Map<string, FlightAwareFlightEnrichment>> {
+  const results = await lookupFlightAwareFlightsWithReport(identifiers, options);
   const matches = new Map<string, FlightAwareFlightEnrichment>();
 
   for (const [identifier, result] of results.entries()) {

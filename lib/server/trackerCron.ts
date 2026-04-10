@@ -569,6 +569,8 @@ export async function runTrackerCronJob(options: {
 
   const results: TrackerCronFlightResult[] = [];
   let runError: string | null = null;
+  const effectiveTrigger = options.trigger ?? 'manual-api';
+  const isManualTrigger = effectiveTrigger === 'manual-admin' || effectiveTrigger === 'manual-api';
 
   const withCronProviderContext = <T,>(identifier: string | null, callback: () => Promise<T>) => withProviderRequestContext(
     {
@@ -613,7 +615,10 @@ export async function runTrackerCronJob(options: {
     try {
       const payload = await withCronProviderContext(
         batch.length === 1 ? batch[0] ?? null : batchQuery,
-        () => searchFlights(batchQuery, { forceRefresh: true }),
+        () => searchFlights(batchQuery, {
+          forceRefresh: true,
+          ...(isManualTrigger ? { forceFlightAwareRefresh: true } : {}),
+        }),
       );
 
       for (const identifier of batch) {

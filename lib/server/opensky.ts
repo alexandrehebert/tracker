@@ -105,6 +105,10 @@ type SearchFlightsOptions = {
   forceRefresh?: boolean;
   /** When true, return only cached data (including stale entries) without calling any provider. */
   cacheOnly?: boolean;
+  /** Reuse a recent cached FlightAware live match instead of re-calling AeroAPI. Defaults to true unless explicitly disabled. */
+  preferCachedFlightAware?: boolean;
+  /** Force a fresh FlightAware lookup even when the provider already has a cached match. */
+  forceFlightAwareRefresh?: boolean;
 };
 
 type DemoFlightIdentifier = 'TEST1' | 'TEST2' | 'TEST3' | 'TEST4' | 'TEST5' | 'TEST6' | 'TEST7' | 'TEST8' | 'TEST9' | 'TEST10';
@@ -1572,14 +1576,20 @@ function mergeTrackedFlightWithFlightAware(
   };
 }
 
-async function enrichSearchResultWithFlightAware(payload: TrackerApiResponse): Promise<TrackerApiResponse> {
+async function enrichSearchResultWithFlightAware(
+  payload: TrackerApiResponse,
+  options: { preferCachedFlightAware?: boolean; forceFlightAwareRefresh?: boolean } = {},
+): Promise<TrackerApiResponse> {
   if (payload.requestedIdentifiers.length === 0) {
     return payload;
   }
 
   try {
     const identifiersToEnrich = payload.requestedIdentifiers;
-    const enrichments = await lookupFlightAwareFlightsWithReport(identifiersToEnrich);
+    const enrichments = await lookupFlightAwareFlightsWithReport(identifiersToEnrich, {
+      allowStaleLiveReuse: options.preferCachedFlightAware,
+      forceRefresh: options.forceFlightAwareRefresh,
+    });
     const matchedIdentifiers = new Set(payload.matchedIdentifiers);
     const flights = [...payload.flights];
 
@@ -1662,14 +1672,19 @@ async function enrichSearchResultWithFlightAware(payload: TrackerApiResponse): P
   }
 }
 
-async function enrichSearchResultWithAirlabs(payload: TrackerApiResponse): Promise<TrackerApiResponse> {
+async function enrichSearchResultWithAirlabs(
+  payload: TrackerApiResponse,
+  options: { forceRefresh?: boolean } = {},
+): Promise<TrackerApiResponse> {
   if (payload.requestedIdentifiers.length === 0) {
     return payload;
   }
 
   try {
     const identifiersToEnrich = payload.requestedIdentifiers;
-    const enrichments = await lookupAirlabsFlightsWithReport(identifiersToEnrich);
+    const enrichments = await lookupAirlabsFlightsWithReport(identifiersToEnrich, {
+      forceRefresh: options.forceRefresh,
+    });
     const matchedIdentifiers = new Set(payload.matchedIdentifiers);
     const flights = [...payload.flights];
 
@@ -1842,13 +1857,31 @@ async function enrichSearchResultWithAviationstack(payload: TrackerApiResponse):
   }
 }
 
-async function enrichSearchResultWithExternalSources(payload: TrackerApiResponse): Promise<TrackerApiResponse> {
-  const withFlightAware = await enrichSearchResultWithFlightAware(payload);
-  const withAirlabs = await enrichSearchResultWithAirlabs(withFlightAware);
+async function enrichSearchResultWithExternalSources(
+  payload: TrackerApiResponse,
+  options: {
+    forceRefresh?: boolean;
+    preferCachedFlightAware?: boolean;
+    forceFlightAwareRefresh?: boolean;
+  } = {},
+): Promise<TrackerApiResponse> {
+  const withFlightAware = await enrichSearchResultWithFlightAware(payload, {
+    preferCachedFlightAware: options.preferCachedFlightAware,
+    forceFlightAwareRefresh: options.forceFlightAwareRefresh,
+  });
+  const withAirlabs = await enrichSearchResultWithAirlabs(withFlightAware, options);
   return enrichSearchResultWithAviationstack(withAirlabs);
 }
 
-async function searchFlightsFromExternalSourcesOnly(query: string, requestedIdentifiers: string[]): Promise<TrackerApiResponse> {
+async function searchFlightsFromExternalSourcesOnly(
+  query: string,
+  requestedIdentifiers: string[],
+  options: {
+    forceRefresh?: boolean;
+    preferCachedFlightAware?: boolean;
+    forceFlightAwareRefresh?: boolean;
+  } = {},
+): Promise<TrackerApiResponse> {
   return enrichSearchResultWithExternalSources({
     query,
     requestedIdentifiers,
@@ -1856,7 +1889,7 @@ async function searchFlightsFromExternalSourcesOnly(query: string, requestedIden
     notFoundIdentifiers: requestedIdentifiers,
     fetchedAt: Date.now(),
     flights: [],
-  });
+  }, options);
 }
 
 function getAirportLookupCode(airport: AirportDetails | null): string | null {
@@ -2203,8 +2236,15 @@ export async function searchFlights(query: string, options: SearchFlightsOptions
 
   const remainingQuery = remainingIdentifiers.join(',');
   const cacheKey = buildSearchCacheKey(requestedIdentifiers);
+  const preferCachedFlightAware = options.preferCachedFlightAware !== false && !options.forceFlightAwareRefresh;
 
-  const inFlightKey = options.forceRefresh ? `${cacheKey}:force` : cacheKey;
+  const inFlightKey = [
+    cacheKey,
+    options.forceRefresh ? 'force' : 'default',
+    options.cacheOnly ? 'cache-only' : 'live',
+    preferCachedFlightAware ? 'fa-reuse' : 'fa-normal',
+    options.forceFlightAwareRefresh ? 'fa-force' : 'fa-cache',
+  ].join(':');
   const cachedResult = options.forceRefresh ? null : await readFlightSearchCache(cacheKey, options.cacheOnly);
   if (cachedResult && payloadHasRawTrackData(cachedResult)) {
     return mergeWithDemoPayload(cachedResult);
@@ -2255,7 +2295,11 @@ export async function searchFlights(query: string, options: SearchFlightsOptions
         throw new Error(skipReason);
       }
 
-      const fallbackResult = await searchFlightsFromExternalSourcesOnly(remainingQuery, remainingIdentifiers);
+      const fallbackResult = await searchFlightsFromExternalSourcesOnly(remainingQuery, remainingIdentifiers, {
+        forceRefresh: options.forceRefresh,
+        preferCachedFlightAware,
+        forceFlightAwareRefresh: options.forceFlightAwareRefresh,
+      });
       const fallbackWithDiagnostics = mergeWithDemoPayload({
         ...fallbackResult,
         query: trimmedQuery,
@@ -2287,7 +2331,11 @@ export async function searchFlights(query: string, options: SearchFlightsOptions
 
     try {
       const freshResult = await fetchFreshFlights(remainingQuery, remainingIdentifiers);
-      const enrichedResult = await enrichSearchResultWithExternalSources(freshResult);
+      const enrichedResult = await enrichSearchResultWithExternalSources(freshResult, {
+        forceRefresh: options.forceRefresh,
+        preferCachedFlightAware,
+        forceFlightAwareRefresh: options.forceFlightAwareRefresh,
+      });
       const cachedResult = await writeFlightSearchCache(
         cacheKey,
         mergeWithDemoPayload(enrichedResult),
@@ -2316,7 +2364,11 @@ export async function searchFlights(query: string, options: SearchFlightsOptions
         throw error;
       }
 
-      const fallbackResult = await searchFlightsFromExternalSourcesOnly(remainingQuery, remainingIdentifiers);
+      const fallbackResult = await searchFlightsFromExternalSourcesOnly(remainingQuery, remainingIdentifiers, {
+        forceRefresh: options.forceRefresh,
+        preferCachedFlightAware,
+        forceFlightAwareRefresh: options.forceFlightAwareRefresh,
+      });
       const openSkyErrorReason = error instanceof Error ? error.message : 'OpenSky search failed unexpectedly.';
       const openSkyDiagnostics = getOpenSkyErrorDiagnostics(error);
 

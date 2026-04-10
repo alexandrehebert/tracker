@@ -202,7 +202,10 @@ export async function getFlightSelectionDetails(
           })
         : Promise.resolve(fallbackRoute),
       params.callsign
-        ? lookupFlightAwareFlightWithReport(params.callsign, { referenceTimeMs: referenceTime * 1000 })
+        ? lookupFlightAwareFlightWithReport(params.callsign, {
+            referenceTimeMs: referenceTime * 1000,
+            allowStaleLiveReuse: true,
+          })
         : Promise.resolve({
             match: null,
             report: createSourceDetail(
@@ -224,7 +227,10 @@ export async function getFlightSelectionDetails(
             ),
           }),
       params.callsign
-        ? lookupAirlabsFlightWithReport(params.callsign, { referenceTimeMs: referenceTime * 1000 })
+        ? lookupAirlabsFlightWithReport(params.callsign, {
+            referenceTimeMs: referenceTime * 1000,
+            forceRefresh: options.forceRefresh,
+          })
         : Promise.resolve({
             match: null,
             report: createSourceDetail(

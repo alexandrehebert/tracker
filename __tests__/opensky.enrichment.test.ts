@@ -116,6 +116,8 @@ describe('searchFlights', () => {
   const originalAviationstackDisabled = process.env.AVIATIONSTACK_DISABLED;
   const originalMongoDbUri = process.env.MONGODB_URI;
   const originalCacheTtl = process.env.OPENSKY_CACHE_TTL_SECONDS;
+  const originalFlightAwareCacheTtl = process.env.FLIGHTAWARE_CACHE_TTL_SECONDS;
+  const originalFlightAwareMinRequestGapMs = process.env.FLIGHTAWARE_MIN_REQUEST_GAP_MS;
   const originalOpenSkyProxyUrl = process.env.OPENSKY_PROXY_URL;
   const originalOpenSkyProxySecret = process.env.OPENSKY_PROXY_SECRET;
 
@@ -169,6 +171,18 @@ describe('searchFlights', () => {
       delete process.env.OPENSKY_CACHE_TTL_SECONDS;
     } else {
       process.env.OPENSKY_CACHE_TTL_SECONDS = originalCacheTtl;
+    }
+
+    if (originalFlightAwareCacheTtl === undefined) {
+      delete process.env.FLIGHTAWARE_CACHE_TTL_SECONDS;
+    } else {
+      process.env.FLIGHTAWARE_CACHE_TTL_SECONDS = originalFlightAwareCacheTtl;
+    }
+
+    if (originalFlightAwareMinRequestGapMs === undefined) {
+      delete process.env.FLIGHTAWARE_MIN_REQUEST_GAP_MS;
+    } else {
+      process.env.FLIGHTAWARE_MIN_REQUEST_GAP_MS = originalFlightAwareMinRequestGapMs;
     }
 
     if (originalOpenSkyProxyUrl === undefined) {
@@ -464,6 +478,92 @@ describe('searchFlights', () => {
     expect(result.flights[0]?.callsign).toBe('ETH575');
     expect(result.flights[0]?.current?.time).toBe(now - 120);
     expect(result.flights[0]?.flightNumber).toBe('575');
+  });
+
+  it('reuses a cached FlightAware live match for Chantal-style refreshes and only re-calls it on explicit manual refresh', async () => {
+    process.env.OPENSKY_DISABLED = 'true';
+    delete process.env.OPENSKY_CLIENT_ID;
+    delete process.env.OPENSKY_CLIENT_SECRET;
+    process.env.FLIGHT_AWARE_API_KEY = 'flightaware-key';
+    delete process.env.FLIGHTAWARE_API_KEY;
+    delete process.env.AVIATION_STACK_API_KEY;
+    delete process.env.ENABLED_API_PROVIDERS;
+    delete process.env.DISABLED_API_PROVIDERS;
+    delete process.env.FLIGHTAWARE_DISABLED;
+    delete process.env.MONGODB_URI;
+    process.env.FLIGHTAWARE_CACHE_TTL_SECONDS = '1';
+    process.env.FLIGHTAWARE_MIN_REQUEST_GAP_MS = '0';
+
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date('2026-04-10T10:00:00.000Z'));
+
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
+      links: {},
+      num_pages: 1,
+      flights: [
+        {
+          ident: 'ETH575',
+          ident_icao: 'ETH575',
+          ident_iata: 'ET575',
+          fa_flight_id: 'ETH575-live',
+          operator: 'Ethiopian Airlines',
+          operator_icao: 'ETH',
+          operator_iata: 'ET',
+          flight_number: '575',
+          aircraft_type: 'B788',
+          origin: {
+            code: 'KORD',
+            code_icao: 'KORD',
+            code_iata: 'ORD',
+            name: "Chicago O'Hare Intl",
+          },
+          destination: {
+            code: 'HAAB',
+            code_icao: 'HAAB',
+            code_iata: 'ADD',
+            name: "Bole Int'l",
+          },
+          actual_out: '2026-04-10T08:00:00.000Z',
+          last_position: {
+            latitude: 46.4141,
+            longitude: 0.762,
+            altitude: 39450,
+            groundspeed: 460,
+            heading: 117,
+            timestamp: '2026-04-10T09:58:00.000Z',
+          },
+        },
+      ],
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }));
+
+    vi.stubGlobal('fetch', fetchMock);
+
+    try {
+      const searchFlights = await loadSearchFlights();
+      const firstResult = await searchFlights('ETH575', {
+        forceRefresh: true,
+      });
+
+      vi.setSystemTime(new Date('2026-04-10T10:20:00.000Z'));
+
+      const reusedResult = await searchFlights('ETH575', {
+        forceRefresh: true,
+      });
+      const manualResult = await searchFlights('ETH575', {
+        forceRefresh: true,
+        forceFlightAwareRefresh: true,
+      });
+
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(firstResult.flights[0]?.dataSource).toBe('flightaware');
+      expect(reusedResult.flights[0]?.current?.time).toBe(firstResult.flights[0]?.current?.time ?? null);
+      expect(manualResult.flights[0]?.dataSource).toBe('flightaware');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('skips OpenSky live requests when the provider is disabled and falls back directly to Aviationstack', async () => {

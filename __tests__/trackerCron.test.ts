@@ -453,7 +453,61 @@ describe('tracker cron config and history', () => {
 
     expect(run.status).toBe('success');
     expect(run.identifiers).toEqual(['AF123']);
-    expect(searchFlightsMock).toHaveBeenCalledWith('AF123', { forceRefresh: true });
+    expect(searchFlightsMock).toHaveBeenCalledWith('AF123', {
+      forceRefresh: true,
+      forceFlightAwareRefresh: true,
+    });
+  });
+
+  it('reuses cached FlightAware live data for scheduled Chantal cron runs but still allows manual cron refreshes', async () => {
+    searchFlightsMock.mockResolvedValue({
+      query: 'AF123',
+      requestedIdentifiers: ['AF123'],
+      matchedIdentifiers: ['AF123'],
+      notFoundIdentifiers: [],
+      fetchedAt: 1_700_000_001_000,
+      flights: [createTrackedFlight('AF123', 'abc123')],
+    });
+
+    const { runTrackerCronJob } = await loadTrackerCronModule();
+    const { writeFriendsTrackerConfig } = await loadFriendsTrackerModule();
+
+    await writeFriendsTrackerConfig({
+      updatedBy: 'chantal config page',
+      cronEnabled: true,
+      friends: [
+        {
+          id: 'friend-1',
+          name: 'Alice',
+          flights: [
+            {
+              id: 'leg-1',
+              flightNumber: 'AF123',
+              departureTime: '2026-04-14T09:30:00.000Z',
+            },
+          ],
+        },
+      ],
+    });
+
+    await runTrackerCronJob({
+      trigger: 'vercel-cron',
+      requestedBy: 'vercel-cron/1.0',
+    });
+
+    expect(searchFlightsMock).toHaveBeenNthCalledWith(1, 'AF123', {
+      forceRefresh: true,
+    });
+
+    await runTrackerCronJob({
+      trigger: 'manual-admin',
+      requestedBy: 'chantal config page',
+    });
+
+    expect(searchFlightsMock).toHaveBeenNthCalledWith(2, 'AF123', {
+      forceRefresh: true,
+      forceFlightAwareRefresh: true,
+    });
   });
 
   it('batches cron OpenSky refreshes so multiple identifiers are queried more gently', async () => {
@@ -476,7 +530,10 @@ describe('tracker cron config and history', () => {
       const run = await runTrackerCronJob({ trigger: 'manual-admin', requestedBy: 'dashboard' });
 
       expect(searchFlightsMock).toHaveBeenCalledTimes(1);
-      expect(searchFlightsMock).toHaveBeenCalledWith('AF123,BA117', { forceRefresh: true });
+      expect(searchFlightsMock).toHaveBeenCalledWith('AF123,BA117', {
+        forceRefresh: true,
+        forceFlightAwareRefresh: true,
+      });
       expect(run.results).toEqual(expect.arrayContaining([
         expect.objectContaining({ identifier: 'AF123', status: 'matched', flightCount: 1 }),
         expect.objectContaining({ identifier: 'BA117', status: 'not-found', flightCount: 0 }),
@@ -516,7 +573,10 @@ describe('tracker cron config and history', () => {
     const firstRun = await runTrackerCronJob({ trigger: 'manual-admin', requestedBy: 'dashboard' });
     const secondRun = await runTrackerCronJob({ trigger: 'vercel-cron', overrideIdentifiers: ['AF123'] });
 
-    expect(searchFlightsMock).toHaveBeenNthCalledWith(1, 'AF123,BA117', { forceRefresh: true });
+    expect(searchFlightsMock).toHaveBeenNthCalledWith(1, 'AF123,BA117', {
+      forceRefresh: true,
+      forceFlightAwareRefresh: true,
+    });
     expect(searchFlightsMock).toHaveBeenNthCalledWith(2, 'AF123', { forceRefresh: true });
     expect(firstRun.status).toBe('partial');
     expect(firstRun.summary.totalIdentifiers).toBe(2);
