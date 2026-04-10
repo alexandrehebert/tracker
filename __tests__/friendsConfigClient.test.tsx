@@ -22,6 +22,15 @@ const initialConfig: FriendsTrackerConfig = {
   updatedBy: null,
   cronEnabled: true,
   currentTripId: 'trip-1',
+  airportTimezones: {
+    SJC: 'America/Los_Angeles',
+    CDG: 'Europe/Paris',
+    AMS: 'Europe/Amsterdam',
+    LIS: 'Europe/Lisbon',
+    JFK: 'America/New_York',
+    SIN: 'Asia/Singapore',
+    HND: 'Asia/Tokyo',
+  },
   friends: [],
   trips: [
     {
