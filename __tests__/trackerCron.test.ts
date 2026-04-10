@@ -374,6 +374,29 @@ describe('tracker cron config and history', () => {
     expect(disabledBatchDashboard.config.chantalIdentifiers).toEqual([]);
   });
 
+  it('removes legacy Chantal flights from the manual cron list when the Chantal batch syncs', async () => {
+    const legacyCollection = getMockMongoCollection('tracker-test', 'tracker_cron_config');
+    legacyCollection.set('default', {
+      _id: 'default',
+      enabled: true,
+      identifiers: ['BA117', 'AF123'],
+      updatedAt: 1_700_000_000_000,
+      updatedBy: 'legacy-config',
+    });
+
+    const { getTrackerCronDashboard, writeTrackerCronConfig } = await loadTrackerCronModule();
+
+    await writeTrackerCronConfig({
+      chantalIdentifiers: ['AF123'],
+      updatedBy: 'chantal config page',
+    });
+
+    const dashboard = await getTrackerCronDashboard();
+    expect(dashboard.config.identifiers).toEqual(['BA117', 'AF123']);
+    expect(dashboard.config.manualIdentifiers).toEqual(['BA117']);
+    expect(dashboard.config.chantalIdentifiers).toEqual(['AF123']);
+  });
+
   it('preserves the saved friends when the Chantal cron toggle is saved on its own', async () => {
     const { readFriendsTrackerConfig, writeFriendsTrackerConfig } = await loadFriendsTrackerModule();
     const { PUT } = await loadChantalConfigRouteModule();

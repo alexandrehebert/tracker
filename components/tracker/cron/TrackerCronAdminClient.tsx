@@ -158,12 +158,12 @@ function getChantalIdentifiers(config: TrackerCronDashboard['config']): string[]
 }
 
 function getManualIdentifiers(config: TrackerCronDashboard['config']): string[] {
-  if (Array.isArray(config.manualIdentifiers)) {
-    return config.manualIdentifiers;
-  }
-
   const chantalIdentifiers = new Set(getChantalIdentifiers(config));
-  return config.identifiers.filter((identifier) => !chantalIdentifiers.has(identifier));
+  const sourceIdentifiers = Array.isArray(config.manualIdentifiers)
+    ? config.manualIdentifiers
+    : config.identifiers;
+
+  return sourceIdentifiers.filter((identifier) => !chantalIdentifiers.has(identifier));
 }
 
 function getChantalCronEnabled(dashboard: TrackerCronDashboard): boolean {

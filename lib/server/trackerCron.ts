@@ -324,11 +324,13 @@ function buildTrackerCronFlightResult(
 function normalizeTrackerCronConfig(config: Partial<TrackerCronConfig> | null | undefined): TrackerCronConfig {
   const mergedIdentifiers = normalizeTrackerCronIdentifiers(config?.identifiers ?? []);
   const chantalIdentifiers = normalizeTrackerCronIdentifiers(config?.chantalIdentifiers ?? []);
-  const manualIdentifiers = normalizeTrackerCronIdentifiers(
-    config?.manualIdentifiers?.length
+  const chantalIdentifierSet = new Set(chantalIdentifiers);
+  const rawManualIdentifiers = normalizeTrackerCronIdentifiers(
+    Array.isArray(config?.manualIdentifiers)
       ? config.manualIdentifiers
-      : mergedIdentifiers.filter((identifier) => !chantalIdentifiers.includes(identifier)),
+      : mergedIdentifiers.filter((identifier) => !chantalIdentifierSet.has(identifier)),
   );
+  const manualIdentifiers = rawManualIdentifiers.filter((identifier) => !chantalIdentifierSet.has(identifier));
 
   return {
     enabled: config?.enabled ?? DEFAULT_CONFIG.enabled,

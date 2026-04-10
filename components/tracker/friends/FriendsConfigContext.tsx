@@ -95,12 +95,12 @@ function getCronDashboardChantalIdentifiers(dashboard: TrackerCronDashboard): st
 }
 
 function getCronDashboardManualIdentifiers(dashboard: TrackerCronDashboard): string[] {
-  if (Array.isArray(dashboard.config.manualIdentifiers)) {
-    return dashboard.config.manualIdentifiers;
-  }
-
   const chantalIdentifiers = new Set(getCronDashboardChantalIdentifiers(dashboard));
-  return dashboard.config.identifiers.filter((identifier) => !chantalIdentifiers.has(identifier));
+  const sourceIdentifiers = Array.isArray(dashboard.config.manualIdentifiers)
+    ? dashboard.config.manualIdentifiers
+    : dashboard.config.identifiers;
+
+  return sourceIdentifiers.filter((identifier) => !chantalIdentifiers.has(identifier));
 }
 
 function normalizeFriendMergeKey(friend: FriendTravelConfig): string {
