@@ -15,6 +15,7 @@ import {
   Settings2,
   Users,
 } from 'lucide-react';
+import { useGlobalRouteLoading } from '~/components/GlobalRouteLoadingProvider';
 import { Link } from '~/i18n/navigation';
 import {
   applyAutoLockedFriendFlights,
@@ -1106,6 +1107,7 @@ function FriendsTrackerDashboard({
   const [selectedMapAirport, setSelectedMapAirport] = useState<FlightMapAirportMarker | null>(null);
   const [selectedFriendId, setSelectedFriendId] = useState<string | null>(null);
   const autoLockSignatureRef = useRef<string | null>(null);
+  const { startRouteLoading, stopRouteLoading } = useGlobalRouteLoading();
 
   const identifiers = useMemo(() => extractFriendTrackerIdentifiers(config), [config]);
   const identifiersQuery = identifiers.join(',');
@@ -1348,6 +1350,17 @@ function FriendsTrackerDashboard({
   );
 
   const selectedIcao24 = getRenderableMapFlight(selectedMapStatus)?.icao24 ?? null;
+
+  useEffect(() => {
+    if (!isRefreshing) {
+      return undefined;
+    }
+
+    startRouteLoading();
+    return () => {
+      stopRouteLoading();
+    };
+  }, [isRefreshing, startRouteLoading, stopRouteLoading]);
 
   const selectedFriendMarker = useMemo(
     () => selectedFriendId ? staticFriendMarkers.find((marker) => marker.id === selectedFriendId) ?? null : null,

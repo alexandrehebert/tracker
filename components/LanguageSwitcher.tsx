@@ -1,5 +1,6 @@
 'use client';
 
+import { useGlobalRouteLoading } from '~/components/GlobalRouteLoadingProvider';
 import { Link, usePathname, useRouter } from '~/i18n/navigation';
 import { routing } from '~/i18n/routing';
 
@@ -10,10 +11,16 @@ interface LanguageSwitcherProps {
 export default function LanguageSwitcher({ currentLocale }: LanguageSwitcherProps) {
   const pathname = usePathname();
   const router = useRouter();
+  const { startRouteLoading } = useGlobalRouteLoading();
   const locales = routing.locales;
   const currentPath = pathname || '/';
 
   function handleLocaleChange(locale: string) {
+    if (locale === currentLocale) {
+      return;
+    }
+
+    startRouteLoading();
     router.replace(currentPath, { locale });
   }
 

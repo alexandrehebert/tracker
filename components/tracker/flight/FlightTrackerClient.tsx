@@ -19,6 +19,7 @@ import {
   Search,
   X,
 } from 'lucide-react';
+import { useGlobalRouteLoading } from '~/components/GlobalRouteLoadingProvider';
 import type { WorldMapPayload } from '~/lib/server/worldMap';
 import TrackerShell from '../TrackerShell';
 import TrackerZoomControls from '../TrackerZoomControls';
@@ -1288,6 +1289,7 @@ function FlightTrackerDashboard({
   const [error, setError] = useState<string | null>(null);
   const [staleMatchNotice, setStaleMatchNotice] = useState<string | null>(null);
   const dataRef = useRef<TrackerApiResponse | null>(null);
+  const { startRouteLoading, stopRouteLoading } = useGlobalRouteLoading();
   const selectedFlightDetailsCacheRef = useRef<Map<string, SelectedFlightDetailsPayload>>(new Map());
   const flightFetchHistoryRef = useRef<Map<string, FlightFetchSnapshot[]>>(new Map());
 
@@ -1344,6 +1346,17 @@ function FlightTrackerDashboard({
   useEffect(() => {
     dataRef.current = data;
   }, [data]);
+
+  useEffect(() => {
+    if (!isRefreshing) {
+      return undefined;
+    }
+
+    startRouteLoading();
+    return () => {
+      stopRouteLoading();
+    };
+  }, [isRefreshing, startRouteLoading, stopRouteLoading]);
 
   useEffect(() => {
     if (!selectedFlight) {

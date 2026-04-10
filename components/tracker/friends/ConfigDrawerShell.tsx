@@ -1,7 +1,8 @@
 'use client';
 
 import { useCallback, useEffect, type ReactNode } from 'react';
-import { Link, useRouter } from '~/i18n/navigation';
+import { useGlobalRouteLoading } from '~/components/GlobalRouteLoadingProvider';
+import { useRouter } from '~/i18n/navigation';
 
 interface ConfigDrawerShellProps {
   badge: string;
@@ -19,6 +20,7 @@ export function ConfigDrawerShell({
   children,
 }: ConfigDrawerShellProps) {
   const router = useRouter();
+  const { startRouteLoading } = useGlobalRouteLoading();
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -47,6 +49,8 @@ export function ConfigDrawerShell({
   }, []);
 
   const closeDrawer = useCallback(() => {
+    startRouteLoading();
+
     if (typeof window === 'undefined') {
       router.replace('/chantal/config', { scroll: false });
       return;
@@ -62,7 +66,7 @@ export function ConfigDrawerShell({
         router.replace('/chantal/config', { scroll: false });
       }
     }, 120);
-  }, [router]);
+  }, [router, startRouteLoading]);
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end bg-slate-950/45 backdrop-blur-[1px]">
