@@ -148,34 +148,42 @@ async function loadChantalConfigRouteModule() {
   return await import('~/app/api/chantal/config/route');
 }
 
-function createTrackedFlight(identifier: string, icao24: string): TrackedFlight {
+function createTrackedFlight(identifier: string, icao24: string, overrides: Partial<TrackedFlight> = {}): TrackedFlight {
+  const defaultRoute = {
+    departureAirport: null,
+    arrivalAirport: null,
+    firstSeen: null,
+    lastSeen: null,
+  };
+
   return {
     icao24,
     callsign: identifier,
     originCountry: 'Testland',
-    matchedBy: [identifier],
-    lastContact: 1_700_000_000,
-    current: null,
-    originPoint: null,
-    track: [],
-    rawTrack: [],
-    onGround: false,
-    velocity: null,
-    heading: null,
-    verticalRate: null,
-    geoAltitude: null,
-    baroAltitude: null,
-    squawk: null,
-    category: null,
+    matchedBy: overrides.matchedBy ?? [identifier],
+    lastContact: overrides.lastContact ?? 1_700_000_000,
+    current: overrides.current ?? null,
+    originPoint: overrides.originPoint ?? null,
+    track: overrides.track ?? [],
+    rawTrack: overrides.rawTrack ?? overrides.track ?? [],
+    onGround: overrides.onGround ?? false,
+    velocity: overrides.velocity ?? null,
+    heading: overrides.heading ?? null,
+    verticalRate: overrides.verticalRate ?? null,
+    geoAltitude: overrides.geoAltitude ?? null,
+    baroAltitude: overrides.baroAltitude ?? null,
+    squawk: overrides.squawk ?? null,
+    category: overrides.category ?? null,
     route: {
-      departureAirport: null,
-      arrivalAirport: null,
-      firstSeen: null,
-      lastSeen: null,
+      ...defaultRoute,
+      ...(overrides.route ?? {}),
     },
-    dataSource: 'opensky',
-    sourceDetails: [],
-    fetchHistory: [],
+    flightNumber: overrides.flightNumber,
+    airline: overrides.airline,
+    aircraft: overrides.aircraft,
+    dataSource: overrides.dataSource ?? 'opensky',
+    sourceDetails: overrides.sourceDetails ?? [],
+    fetchHistory: overrides.fetchHistory ?? [],
   };
 }
 
@@ -192,6 +200,8 @@ describe('tracker cron config and history', () => {
   });
 
   afterEach(() => {
+    vi.useRealTimers();
+
     if (originalMongoDbUri === undefined) {
       delete process.env.MONGODB_URI;
     } else {
@@ -498,6 +508,7 @@ describe('tracker cron config and history', () => {
     expect(searchFlightsMock).toHaveBeenNthCalledWith(1, 'AF123', {
       forceRefresh: true,
       externalDataMode: 'opensky-only',
+      openSkyDataMode: 'snapshot-only',
     });
 
     await runTrackerCronJob({
@@ -551,6 +562,84 @@ describe('tracker cron config and history', () => {
     expect(searchFlightsMock).toHaveBeenCalledWith('AF123', {
       forceRefresh: true,
     });
+  });
+
+  it('hydrates full OpenSky routes only for flights that are inside the active travel window', async () => {
+    const originalBatchSize = process.env.TRACKER_CRON_OPENSKY_BATCH_SIZE;
+    process.env.TRACKER_CRON_OPENSKY_BATCH_SIZE = '1';
+    const nowMs = Date.parse('2026-04-14T09:00:00.000Z');
+    vi.useFakeTimers();
+    vi.setSystemTime(nowMs);
+
+    searchFlightsMock
+      .mockResolvedValueOnce({
+        query: 'AF123,BA117',
+        requestedIdentifiers: ['AF123', 'BA117'],
+        matchedIdentifiers: ['AF123'],
+        notFoundIdentifiers: ['BA117'],
+        fetchedAt: nowMs,
+        flights: [createTrackedFlight('AF123', 'abc123', {
+          onGround: true,
+          lastContact: Math.floor(nowMs / 1000),
+        })],
+      })
+      .mockResolvedValueOnce({
+        query: 'AF123',
+        requestedIdentifiers: ['AF123'],
+        matchedIdentifiers: ['AF123'],
+        notFoundIdentifiers: [],
+        fetchedAt: nowMs + 60_000,
+        flights: [createTrackedFlight('AF123', 'abc123', {
+          onGround: false,
+          lastContact: Math.floor(nowMs / 1000),
+        })],
+      });
+
+    try {
+      const { runTrackerCronJob } = await loadTrackerCronModule();
+      const { writeFriendsTrackerConfig } = await loadFriendsTrackerModule();
+
+      await writeFriendsTrackerConfig({
+        updatedBy: 'chantal config page',
+        cronEnabled: true,
+        friends: [
+          {
+            id: 'friend-1',
+            name: 'Alice',
+            flights: [
+              {
+                id: 'leg-1',
+                flightNumber: 'AF123',
+                departureTime: new Date(nowMs + (30 * 60 * 1000)).toISOString(),
+              },
+              {
+                id: 'leg-2',
+                flightNumber: 'BA117',
+                departureTime: new Date(nowMs + (2 * 24 * 60 * 60 * 1000)).toISOString(),
+              },
+            ],
+          },
+        ],
+      });
+
+      await runTrackerCronJob({ trigger: 'vercel-cron', requestedBy: 'vercel-cron/1.0' });
+
+      expect(searchFlightsMock).toHaveBeenNthCalledWith(1, 'AF123,BA117', {
+        forceRefresh: true,
+        externalDataMode: 'opensky-only',
+        openSkyDataMode: 'snapshot-only',
+      });
+      expect(searchFlightsMock).toHaveBeenNthCalledWith(2, 'AF123', {
+        forceRefresh: true,
+        externalDataMode: 'opensky-only',
+      });
+    } finally {
+      if (originalBatchSize === undefined) {
+        delete process.env.TRACKER_CRON_OPENSKY_BATCH_SIZE;
+      } else {
+        process.env.TRACKER_CRON_OPENSKY_BATCH_SIZE = originalBatchSize;
+      }
+    }
   });
 
   it('batches cron OpenSky refreshes so multiple identifiers are queried more gently', async () => {
@@ -623,6 +712,7 @@ describe('tracker cron config and history', () => {
     expect(searchFlightsMock).toHaveBeenNthCalledWith(2, 'AF123', {
       forceRefresh: true,
       externalDataMode: 'opensky-only',
+      openSkyDataMode: 'snapshot-only',
     });
     expect(firstRun.status).toBe('partial');
     expect(firstRun.summary.totalIdentifiers).toBe(2);

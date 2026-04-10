@@ -1,4 +1,6 @@
 import { MongoClient, type Collection } from 'mongodb';
+import type { TrackedFlight } from '~/components/tracker/flight/types';
+import type { FriendFlightLeg } from '~/lib/friendsTracker';
 import { ensureOpenSkyAccessToken, getOpenSkyTokenStatus, searchFlights, type OpenSkyTokenStatus } from './opensky';
 import { withProviderRequestContext } from './providers/observability';
 
@@ -21,6 +23,11 @@ const parsedTrackerCronOpenSkyBatchDelayMs = Number.parseInt(process.env.TRACKER
 const TRACKER_CRON_OPENSKY_BATCH_DELAY_MS = Number.isFinite(parsedTrackerCronOpenSkyBatchDelayMs) && parsedTrackerCronOpenSkyBatchDelayMs >= 0
   ? parsedTrackerCronOpenSkyBatchDelayMs
   : DEFAULT_TRACKER_CRON_OPENSKY_BATCH_DELAY_MS;
+const TRACKER_CRON_ROUTE_PREFLIGHT_WINDOW_MS = 90 * 60 * 1000;
+const TRACKER_CRON_ROUTE_POST_ARRIVAL_WINDOW_MS = 90 * 60 * 1000;
+const TRACKER_CRON_ROUTE_FALLBACK_DURATION_MS = 14 * 60 * 60 * 1000;
+const TRACKER_CRON_ACTIVE_ROUTE_LOOKBACK_MS = 4 * 60 * 60 * 1000;
+const TRACKER_CRON_ROUTE_HYDRATION_BUDGET_MS = 20_000;
 export const TRACKER_CRON_SCHEDULE = '*/15 * * * *';
 export const TRACKER_CRON_ENRICHMENT_SCHEDULE = '0 */6 * * *';
 
@@ -152,6 +159,130 @@ function chunkTrackerCronIdentifiers(values: string[]): string[][] {
   }
 
   return chunks;
+}
+
+function toTrackerCronEpochMs(value: number | null | undefined): number | null {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return null;
+  }
+
+  return value > 1_000_000_000_000 ? value : value * 1000;
+}
+
+function getTrackerCronMostRecentActivityMs(flight: TrackedFlight): number | null {
+  const candidates = [
+    toTrackerCronEpochMs(flight.lastContact),
+    toTrackerCronEpochMs(flight.route.firstSeen),
+    toTrackerCronEpochMs(flight.route.lastSeen),
+    toTrackerCronEpochMs(flight.current?.time ?? null),
+    toTrackerCronEpochMs(flight.originPoint?.time ?? null),
+    ...flight.track.map((point) => toTrackerCronEpochMs(point.time)),
+    ...(flight.rawTrack ?? []).map((point) => toTrackerCronEpochMs(point.time)),
+  ].filter((value): value is number => value != null);
+
+  return candidates.length > 0 ? Math.max(...candidates) : null;
+}
+
+function shouldHydrateTrackerCronFlight(flight: TrackedFlight, nowMs: number): boolean {
+  const mostRecentActivityMs = getTrackerCronMostRecentActivityMs(flight);
+  if (mostRecentActivityMs == null) {
+    return false;
+  }
+
+  const ageMs = Math.abs(nowMs - mostRecentActivityMs);
+  if (!flight.onGround) {
+    return ageMs <= TRACKER_CRON_ACTIVE_ROUTE_LOOKBACK_MS;
+  }
+
+  return ageMs <= TRACKER_CRON_ROUTE_POST_ARRIVAL_WINDOW_MS;
+}
+
+function isTrackerCronLegInActiveWindow(leg: FriendFlightLeg, nowMs: number): boolean {
+  const departureMs = Date.parse(leg.departureTime);
+  if (!Number.isFinite(departureMs)) {
+    return false;
+  }
+
+  const parsedArrivalMs = typeof leg.arrivalTime === 'string' ? Date.parse(leg.arrivalTime) : Number.NaN;
+  const arrivalMs = Number.isFinite(parsedArrivalMs) ? parsedArrivalMs : null;
+  const startMs = departureMs - TRACKER_CRON_ROUTE_PREFLIGHT_WINDOW_MS;
+  const endMs = arrivalMs != null
+    ? arrivalMs + TRACKER_CRON_ROUTE_POST_ARRIVAL_WINDOW_MS
+    : departureMs + TRACKER_CRON_ROUTE_FALLBACK_DURATION_MS;
+
+  return nowMs >= startMs && nowMs <= endMs;
+}
+
+async function listTrackerCronScheduledHydrationIdentifiers(nowMs: number): Promise<Set<string>> {
+  try {
+    const [{ readFriendsTrackerConfig }, { getCurrentTripConfig }] = await Promise.all([
+      import('./friendsTracker'),
+      import('~/lib/friendsTracker'),
+    ]);
+    const config = await readFriendsTrackerConfig();
+    if (config.cronEnabled === false) {
+      return new Set<string>();
+    }
+
+    const friends = getCurrentTripConfig(config)?.friends ?? config.friends ?? [];
+    const identifiers = new Set<string>();
+
+    for (const friend of friends) {
+      for (const leg of friend.flights ?? []) {
+        if (!isTrackerCronLegInActiveWindow(leg, nowMs)) {
+          continue;
+        }
+
+        for (const candidate of [leg.flightNumber, leg.resolvedIcao24]) {
+          const normalized = normalizeTrackerCronIdentifier(candidate);
+          if (normalized) {
+            identifiers.add(normalized);
+          }
+        }
+      }
+    }
+
+    return identifiers;
+  } catch {
+    return new Set<string>();
+  }
+}
+
+function resolveTrackerCronHydrationIdentifiers(params: {
+  identifiers: string[];
+  payload: Awaited<ReturnType<typeof searchFlights>>;
+  scheduledIdentifiers: Set<string>;
+  nowMs: number;
+}): string[] {
+  const batchIdentifiers = new Set(params.identifiers.map((identifier) => normalizeTrackerCronIdentifier(identifier)));
+  const hydrationIdentifiers = new Set<string>();
+
+  for (const identifier of params.identifiers) {
+    const normalizedIdentifier = normalizeTrackerCronIdentifier(identifier);
+    if (params.scheduledIdentifiers.has(normalizedIdentifier)) {
+      hydrationIdentifiers.add(normalizedIdentifier);
+    }
+  }
+
+  for (const flight of params.payload.flights) {
+    if (!shouldHydrateTrackerCronFlight(flight, params.nowMs)) {
+      continue;
+    }
+
+    const candidateValues = [
+      ...(flight.matchedBy ?? []),
+      flight.callsign,
+      flight.icao24,
+    ].map((value) => normalizeTrackerCronIdentifier(value)).filter(Boolean);
+
+    for (const candidate of candidateValues) {
+      if (batchIdentifiers.has(candidate)) {
+        hydrationIdentifiers.add(candidate);
+      }
+    }
+  }
+
+  return params.identifiers.filter((identifier) => hydrationIdentifiers.has(normalizeTrackerCronIdentifier(identifier)));
 }
 
 function buildTrackerCronFlightResult(
@@ -622,7 +753,12 @@ export async function runTrackerCronJob(options: {
     await persistProgress();
   }
 
-  const identifierBatches = chunkTrackerCronIdentifiers(identifiers);
+  const scheduledHydrationIdentifiers = refreshMode === 'opensky-only'
+    ? await listTrackerCronScheduledHydrationIdentifiers(Date.now())
+    : new Set<string>();
+  const identifierBatches = refreshMode === 'opensky-only'
+    ? [identifiers]
+    : chunkTrackerCronIdentifiers(identifiers);
 
   for (let batchIndex = 0; batchIndex < identifierBatches.length; batchIndex += 1) {
     const batch = identifierBatches[batchIndex]!;
@@ -633,13 +769,56 @@ export async function runTrackerCronJob(options: {
         batch.length === 1 ? batch[0] ?? null : batchQuery,
         () => searchFlights(batchQuery, {
           forceRefresh: true,
-          ...(refreshMode === 'opensky-only' ? { externalDataMode: 'opensky-only' as const } : {}),
+          ...(refreshMode === 'opensky-only'
+            ? {
+                externalDataMode: 'opensky-only' as const,
+                openSkyDataMode: 'snapshot-only' as const,
+              }
+            : {}),
           ...(isManualTrigger ? { forceFlightAwareRefresh: true } : {}),
         }),
       );
 
       for (const identifier of batch) {
         results.push(buildTrackerCronFlightResult(identifier, payload));
+      }
+
+      if (refreshMode === 'opensky-only') {
+        const hydrationIdentifiers = resolveTrackerCronHydrationIdentifiers({
+          identifiers: batch,
+          payload,
+          scheduledIdentifiers: scheduledHydrationIdentifiers,
+          nowMs: Date.now(),
+        });
+
+        if (hydrationIdentifiers.length > 0) {
+          const hydrationBatches = chunkTrackerCronIdentifiers(hydrationIdentifiers);
+
+          try {
+            for (let hydrationBatchIndex = 0; hydrationBatchIndex < hydrationBatches.length; hydrationBatchIndex += 1) {
+              if ((Date.now() - startedAt) >= TRACKER_CRON_ROUTE_HYDRATION_BUDGET_MS) {
+                break;
+              }
+
+              const hydrationBatch = hydrationBatches[hydrationBatchIndex]!;
+              const hydrationQuery = hydrationBatch.join(',');
+
+              await withCronProviderContext(
+                hydrationBatch.length === 1 ? hydrationBatch[0] ?? null : hydrationQuery,
+                () => searchFlights(hydrationQuery, {
+                  forceRefresh: true,
+                  externalDataMode: 'opensky-only',
+                }),
+              );
+
+              if (hydrationBatchIndex < hydrationBatches.length - 1 && TRACKER_CRON_OPENSKY_BATCH_DELAY_MS > 0) {
+                await wait(TRACKER_CRON_OPENSKY_BATCH_DELAY_MS);
+              }
+            }
+          } catch (hydrationError) {
+            console.warn('Tracker cron skipped part of the full OpenSky route hydration pass.', hydrationError);
+          }
+        }
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Tracker cron fetch failed unexpectedly.';

@@ -595,7 +595,13 @@ function readOpenSkyRateLimitHeaders(response: Response): {
 }
 
 function getOpenSkyRateLimitMaxWaitMs(): number {
-  const caller = getProviderRequestContext()?.caller ?? 'on-demand';
+  const context = getProviderRequestContext();
+  const caller = context?.caller ?? 'on-demand';
+
+  if (caller === 'cron' && context?.metadata?.refreshMode === 'opensky-only') {
+    return 1_500;
+  }
+
   return MAX_OPENSKY_RATE_LIMIT_WAIT_MS_BY_CALLER[caller] ?? MAX_OPENSKY_RATE_LIMIT_WAIT_MS_BY_CALLER['on-demand'];
 }
 

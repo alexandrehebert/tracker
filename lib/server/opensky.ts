@@ -111,6 +111,8 @@ type SearchFlightsOptions = {
   forceFlightAwareRefresh?: boolean;
   /** Limit refreshes to OpenSky-only data and skip the slower external fallback/enrichment providers. */
   externalDataMode?: 'full' | 'opensky-only';
+  /** Use a lighter OpenSky snapshot that skips the per-aircraft track/route calls during tight cron windows. */
+  openSkyDataMode?: 'full' | 'snapshot-only';
 };
 
 type DemoFlightIdentifier = 'TEST1' | 'TEST2' | 'TEST3' | 'TEST4' | 'TEST5' | 'TEST6' | 'TEST7' | 'TEST8' | 'TEST9' | 'TEST10';
@@ -2028,8 +2030,13 @@ async function getRecentFlightsSnapshot(): Promise<OpenSkyRecentFlight[]> {
   return flights;
 }
 
-async function fetchFreshFlights(query: string, requestedIdentifiers: string[]): Promise<TrackerApiResponse> {
+async function fetchFreshFlights(
+  query: string,
+  requestedIdentifiers: string[],
+  options: { openSkyDataMode?: 'full' | 'snapshot-only' } = {},
+): Promise<TrackerApiResponse> {
   const fetchedAt = Date.now();
+  const useSnapshotOnly = options.openSkyDataMode === 'snapshot-only';
   const stateResponse = await fetchOpenSky<OpenSkyStatesResponse>('/states/all', { extended: 1 });
   const parsedStates = (stateResponse.states ?? [])
     .map((row) => (Array.isArray(row) ? parseStateVector(row) : null))
@@ -2102,10 +2109,15 @@ async function fetchFreshFlights(query: string, requestedIdentifiers: string[]):
   const flights = await Promise.all(
     Array.from(matchesByAircraft.entries()).map(async ([icao24, { state, recentFlight, matchedBy }]) => {
       const referenceTime = state?.lastContact ?? recentFlight?.lastSeen ?? Math.floor(Date.now() / 1000);
-      const [trackHistory, routeResult] = await Promise.all([
-        getTrackForAircraft(icao24, referenceTime).catch(() => ({ track: [], rawTrack: [] } satisfies OpenSkyTrackHistory)),
-        getRecentRoute(icao24, referenceTime).catch(() => createEmptyRoute()),
-      ]);
+      const [trackHistory, routeResult] = useSnapshotOnly
+        ? [
+            { track: [], rawTrack: [] } satisfies OpenSkyTrackHistory,
+            createEmptyRoute(),
+          ] as const
+        : await Promise.all([
+            getTrackForAircraft(icao24, referenceTime).catch(() => ({ track: [], rawTrack: [] } satisfies OpenSkyTrackHistory)),
+            getRecentRoute(icao24, referenceTime).catch(() => createEmptyRoute()),
+          ]);
 
       const track = trackHistory.track;
       const rawTrack = trackHistory.rawTrack;
@@ -2123,9 +2135,9 @@ async function fetchFreshFlights(query: string, requestedIdentifiers: string[]):
 
       const originPoint = track[0] ?? current;
       const isOnGround = state?.onGround ?? current?.onGround ?? false;
-      const guessedDepartureAirport = !routeResult.departureAirport && !recentFlight?.estDepartureAirport
-        ? await guessDepartureAirportFromOriginPoint(track[0] ?? null)
-        : null;
+      const guessedDepartureAirport = useSnapshotOnly || routeResult.departureAirport || recentFlight?.estDepartureAirport
+        ? null
+        : await guessDepartureAirportFromOriginPoint(track[0] ?? null);
 
       const route = {
         departureAirport: routeResult.departureAirport
@@ -2140,9 +2152,11 @@ async function fetchFreshFlights(query: string, requestedIdentifiers: string[]):
         'opensky',
         'used',
         true,
-        state
-          ? 'OpenSky matched this flight from live state vectors and recent route history.'
-          : 'OpenSky live state was unavailable, but recent flight history kept the last known route visible.',
+        useSnapshotOnly
+          ? 'OpenSky matched this flight from the lightweight cron snapshot; deeper track and route history will be filled in on a later refresh when available.'
+          : state
+            ? 'OpenSky matched this flight from live state vectors and recent route history.'
+            : 'OpenSky live state was unavailable, but recent flight history kept the last known route visible.',
         {
           icao24,
           matchedBy: Array.from(matchedBy),
@@ -2239,6 +2253,7 @@ export async function searchFlights(query: string, options: SearchFlightsOptions
   const remainingQuery = remainingIdentifiers.join(',');
   const cacheKey = buildSearchCacheKey(requestedIdentifiers);
   const externalDataMode = options.externalDataMode ?? 'full';
+  const openSkyDataMode = options.openSkyDataMode ?? 'full';
   const allowExternalData = externalDataMode !== 'opensky-only';
   const preferCachedFlightAware = options.preferCachedFlightAware !== false && !options.forceFlightAwareRefresh;
 
@@ -2247,6 +2262,7 @@ export async function searchFlights(query: string, options: SearchFlightsOptions
     options.forceRefresh ? 'force' : 'default',
     options.cacheOnly ? 'cache-only' : 'live',
     externalDataMode,
+    openSkyDataMode,
     preferCachedFlightAware ? 'fa-reuse' : 'fa-normal',
     options.forceFlightAwareRefresh ? 'fa-force' : 'fa-cache',
   ].join(':');
@@ -2335,7 +2351,9 @@ export async function searchFlights(query: string, options: SearchFlightsOptions
     }
 
     try {
-      const freshResult = await fetchFreshFlights(remainingQuery, remainingIdentifiers);
+      const freshResult = await fetchFreshFlights(remainingQuery, remainingIdentifiers, {
+        openSkyDataMode,
+      });
       const resultToCache = allowExternalData
         ? await enrichSearchResultWithExternalSources(freshResult, {
             forceRefresh: options.forceRefresh,
