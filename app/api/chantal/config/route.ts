@@ -56,7 +56,7 @@ export async function PUT(request: Request) {
       friends: Array.isArray(body.friends) ? body.friends : undefined,
     });
 
-    return buildJsonResponse(await withFriendsTrackerAirportTimezones(payload));
+    return buildJsonResponse(await withFriendsTrackerAirportTimezones(payload, { allowRemoteLookup: false }));
   } catch (error) {
     return buildJsonResponse({
       error: error instanceof Error ? error.message : 'Unable to save the Chantal tracker config.',

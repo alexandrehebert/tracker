@@ -27,6 +27,7 @@ import {
   clearStoredOpenSkyAccessToken,
   ensureOpenSkyAccessToken,
   fetchOpenSky,
+  getOpenSkyConnectionConfig,
   getOpenSkyErrorDiagnostics,
   getOpenSkyTokenStatus,
   getTrackForAircraft,
@@ -2293,7 +2294,9 @@ export async function searchFlights(query: string, options: SearchFlightsOptions
 
     if (!openSkyAvailable) {
       const skipReason = openSkyDisabledReason
-        ?? 'OpenSky is not configured for this deployment, so the tracker is using the external fallback providers only.';
+        ?? (getOpenSkyConnectionConfig().proxyEnabled
+          ? 'OpenSky is not configured for this deployment, so the tracker is using the external fallback providers only.'
+          : 'Missing OpenSky client credentials. Set OPENSKY_CLIENT_ID and OPENSKY_CLIENT_SECRET in your environment, or configure OPENSKY_PROXY_URL for an external proxy.');
 
       if (!allowExternalData || (!hasAviationstackCredentials() && !hasFlightAwareCredentials() && !hasAirlabsCredentials())) {
         const historicalOnlyResult = await writeFlightSearchCache(

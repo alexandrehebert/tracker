@@ -101,34 +101,27 @@ async function syncFriendsTrackerCron(config: FriendsTrackerConfig): Promise<voi
   }
 }
 
-function collectFriendsTrackerAirportCodes(config: FriendsTrackerConfig): string[] {
+function collectFriendsTrackerAirportCodes(
+  config: FriendsTrackerConfig,
+  existingLookup: Record<string, string> = {},
+): string[] {
   return Array.from(new Set(
-    (config.trips ?? []).flatMap((trip) => trip.friends.flatMap((friend) => friend.flights.flatMap((leg) => [
-      typeof leg.from === 'string' ? leg.from.trim().toUpperCase() : '',
-      typeof leg.to === 'string' ? leg.to.trim().toUpperCase() : '',
-    ]))),
+    (config.trips ?? []).flatMap((trip) => trip.friends.flatMap((friend) => friend.flights.flatMap((leg) => {
+      const normalizedFrom = typeof leg.from === 'string' ? leg.from.trim().toUpperCase() : ''
+      const normalizedTo = typeof leg.to === 'string' ? leg.to.trim().toUpperCase() : ''
+
+      return [
+        normalizedFrom && !existingLookup[normalizedFrom] ? normalizedFrom : '',
+        normalizedTo && !existingLookup[normalizedTo] ? normalizedTo : '',
+      ]
+    }))),
   )).filter(Boolean)
 }
 
-export async function withFriendsTrackerAirportTimezones(config: FriendsTrackerConfig): Promise<FriendsTrackerConfig> {
-  const airportCodes = collectFriendsTrackerAirportCodes(config)
-  const existingLookup = config.airportTimezones ?? {}
-
-  if (airportCodes.length === 0) {
-    return {
-      ...config,
-      airportTimezones: existingLookup,
-    }
-  }
-
-  const airports = (await Promise.all(airportCodes.map((code) => lookupAirportDetails(code))))
-    .filter((airport): airport is NonNullable<typeof airport> => Boolean(airport))
-
-  const airportTimezones = {
-    ...existingLookup,
-    ...buildAirportTimezoneLookup(airports),
-  }
-
+function applyFriendsTrackerAirportTimezones(
+  config: FriendsTrackerConfig,
+  airportTimezones: Record<string, string>,
+): FriendsTrackerConfig {
   return {
     ...config,
     airportTimezones,
@@ -150,6 +143,28 @@ export async function withFriendsTrackerAirportTimezones(config: FriendsTrackerC
       })),
     })),
   }
+}
+
+export async function withFriendsTrackerAirportTimezones(
+  config: FriendsTrackerConfig,
+  options: { allowRemoteLookup?: boolean } = {},
+): Promise<FriendsTrackerConfig> {
+  const existingLookup = config.airportTimezones ?? {}
+  const airportCodes = collectFriendsTrackerAirportCodes(config, existingLookup)
+
+  if (airportCodes.length === 0 || options.allowRemoteLookup === false) {
+    return applyFriendsTrackerAirportTimezones(config, existingLookup)
+  }
+
+  const airports = (await Promise.all(airportCodes.map((code) => lookupAirportDetails(code))))
+    .filter((airport): airport is NonNullable<typeof airport> => Boolean(airport))
+
+  const airportTimezones = {
+    ...existingLookup,
+    ...buildAirportTimezoneLookup(airports),
+  }
+
+  return applyFriendsTrackerAirportTimezones(config, airportTimezones)
 }
 
 export async function readFriendsTrackerConfig(): Promise<FriendsTrackerConfig> {
@@ -225,7 +240,7 @@ export async function writeFriendsTrackerConfig(input: Partial<FriendsTrackerCon
     trips: nextTrips,
     updatedAt: Date.now(),
   });
-  const enrichedNextConfig = await withFriendsTrackerAirportTimezones(nextConfig);
+  const enrichedNextConfig = await withFriendsTrackerAirportTimezones(nextConfig, { allowRemoteLookup: false });
 
   const collection = await getFriendsTrackerConfigCollection();
   if (collection) {
