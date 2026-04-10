@@ -108,6 +108,7 @@ interface FlightMap3DProps {
   selectedFlightDetails?: SelectedFlightDetails | null;
   airportMarkers?: FlightMapAirportMarker[];
   onSelectFlight?: (icao24: string) => void;
+  onSelectFriend?: (friendId: string) => void;
   onSelectAirport?: (airport: FlightMapAirportMarker) => void;
   onInitialZoomEnd?: () => void;
   selectionMode?: 'single' | 'all';
@@ -116,6 +117,7 @@ interface FlightMap3DProps {
   flightLabels?: Record<string, string>;
   flightAvatars?: Record<string, FriendAvatarInfo[]>;
   staticFriendMarkers?: FriendAvatarMarker[];
+  selectedFriendMarker?: FriendAvatarMarker | null;
 }
 
 interface GlobePointDatum {
@@ -809,6 +811,7 @@ export default function FlightMap3D({
   selectedFlightDetails,
   airportMarkers = [],
   onSelectFlight,
+  onSelectFriend,
   onSelectAirport,
   onInitialZoomEnd,
   selectionMode = 'single',
@@ -817,6 +820,7 @@ export default function FlightMap3D({
   flightLabels,
   flightAvatars,
   staticFriendMarkers,
+  selectedFriendMarker,
 }: FlightMap3DProps) {
   const { isMobile } = useTrackerLayout();
   const { setGlobeRef } = useTrackerMap();
@@ -914,6 +918,10 @@ export default function FlightMap3D({
   }, [flightAvatars, flights, staticFriendMarkers]);
 
   const pointData = useMemo(() => {
+    const fallbackSelectedIcao24 = selectionMode === 'single'
+      ? (selectedIcao24 ?? flights[0]?.icao24 ?? null)
+      : selectedIcao24;
+
     return flights
       .map((flight, index) => {
         const currentPoint = flight.current ?? flight.track.at(-1) ?? flight.originPoint;
@@ -921,7 +929,7 @@ export default function FlightMap3D({
           return null;
         }
 
-        const selected = selectionMode === 'single' && flight.icao24 === selectedIcao24;
+        const selected = fallbackSelectedIcao24 != null && flight.icao24 === fallbackSelectedIcao24;
         const highlighted = selectionMode === 'all' || selected;
         const flightAltitude = getFlightDisplayAltitude(currentPoint, highlighted);
         const colorIndex = flightColorIndexes?.get(flight.icao24) ?? index;
@@ -1600,6 +1608,12 @@ export default function FlightMap3D({
           });
           element.addEventListener('click', (event) => {
             event.stopPropagation();
+
+            if (onSelectFriend) {
+              onSelectFriend(firstMember.friendId);
+              return;
+            }
+
             if (item.onSelect) {
               onSelectFlight?.(item.onSelect);
             }
@@ -1629,12 +1643,26 @@ export default function FlightMap3D({
       return;
     }
 
-    const focusPoint = selectionMode === 'single'
-      ? pointData.find((point) => point.selected) ?? pointData[0] ?? null
+    const explicitlySelectedPoint = selectedIcao24
+      ? pointData.find((point) => point.icao24 === selectedIcao24) ?? null
+      : null;
+    const fallbackPoint = selectionMode === 'single'
+      ? explicitlySelectedPoint ?? pointData[0] ?? null
       : pointData[0] ?? null;
-    const autoFocusKey = selectionMode === 'single'
-      ? `single:${selectedIcao24 ?? focusPoint?.icao24 ?? 'none'}:${isMobile ? 'mobile' : 'desktop'}`
-      : `all:${focusPoint ? 'ready' : 'empty'}:${isMobile ? 'mobile' : 'desktop'}`;
+    const focusTarget = explicitlySelectedPoint
+      ? { lat: explicitlySelectedPoint.lat, lng: explicitlySelectedPoint.lng, focused: true }
+      : selectedFriendMarker
+        ? { lat: selectedFriendMarker.latitude, lng: selectedFriendMarker.longitude, focused: true }
+        : fallbackPoint
+          ? { lat: fallbackPoint.lat, lng: fallbackPoint.lng, focused: selectionMode === 'single' && fallbackPoint.selected }
+          : null;
+    const autoFocusKey = explicitlySelectedPoint
+      ? `flight:${explicitlySelectedPoint.icao24}:${isMobile ? 'mobile' : 'desktop'}`
+      : selectedFriendMarker
+        ? `friend:${selectedFriendMarker.id}:${isMobile ? 'mobile' : 'desktop'}`
+        : selectionMode === 'single'
+          ? `single:${fallbackPoint?.icao24 ?? 'none'}:${isMobile ? 'mobile' : 'desktop'}`
+          : `all:${fallbackPoint ? 'ready' : 'empty'}:${isMobile ? 'mobile' : 'desktop'}`;
 
     if (lastAutoFocusKeyRef.current === autoFocusKey) {
       return;
@@ -1643,20 +1671,20 @@ export default function FlightMap3D({
     lastAutoFocusKeyRef.current = autoFocusKey;
     const globe = globeRef.current as any;
 
-    if (!focusPoint) {
+    if (!focusTarget) {
       globe.pointOfView({ lat: INITIAL_LAT, lng: INITIAL_LNG, altitude: isMobile ? MOBILE_ALT : DEFAULT_ALT }, 500);
       return;
     }
 
     globe.pointOfView(
       {
-        lat: focusPoint.lat,
-        lng: focusPoint.lng,
-        altitude: selectionMode === 'single' && focusPoint.selected ? FOCUS_ALT : (isMobile ? MOBILE_ALT : DEFAULT_ALT),
+        lat: focusTarget.lat,
+        lng: focusTarget.lng,
+        altitude: focusTarget.focused ? FOCUS_ALT : (isMobile ? MOBILE_ALT : DEFAULT_ALT),
       },
       800,
     );
-  }, [globeReady, isMobile, pointData, selectedIcao24, selectionMode]);
+  }, [globeReady, isMobile, pointData, selectedFriendMarker, selectedIcao24, selectionMode]);
 
   return (
     <div className="absolute inset-0 z-10">

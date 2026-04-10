@@ -17,6 +17,7 @@ interface FlightMap2DProps {
   selectedFlightDetails?: SelectedFlightDetails | null;
   airportMarkers?: FlightMapAirportMarker[];
   onSelectFlight?: (icao24: string) => void;
+  onSelectFriend?: (friendId: string) => void;
   onSelectAirport?: (airport: FlightMapAirportMarker) => void;
   onInitialZoomEnd?: () => void;
   selectionMode?: 'single' | 'all';
@@ -25,6 +26,7 @@ interface FlightMap2DProps {
   flightLabels?: Record<string, string>;
   flightAvatars?: Record<string, FriendAvatarInfo[]>;
   staticFriendMarkers?: FriendAvatarMarker[];
+  selectedFriendMarker?: FriendAvatarMarker | null;
   emptyOverlayMessage?: string | null;
 }
 
@@ -550,6 +552,15 @@ function getRouteBounds(points: FlightMapPoint[]) {
   };
 }
 
+function getPointBounds(point: FlightMapPoint, padding = 64) {
+  return {
+    x: point.x - padding,
+    y: point.y - padding,
+    width: padding * 2,
+    height: padding * 2,
+  };
+}
+
 function getFixedSizeTransform(point: FlightMapPoint, zoomScale: number): string {
   const safeScale = zoomScale > 0 ? 1 / zoomScale : 1;
   return `translate(${point.x} ${point.y}) scale(${safeScale})`;
@@ -974,6 +985,7 @@ export default function FlightMap2D({
   selectedFlightDetails,
   airportMarkers = [],
   onSelectFlight,
+  onSelectFriend,
   onSelectAirport,
   onInitialZoomEnd,
   selectionMode = 'single',
@@ -982,6 +994,7 @@ export default function FlightMap2D({
   flightLabels,
   flightAvatars,
   staticFriendMarkers,
+  selectedFriendMarker,
   emptyOverlayMessage = 'Search one or more live flight identifiers to draw their route, origin, and current position on the map.',
 }: FlightMap2DProps) {
   const { isMobile } = useTrackerLayout();
@@ -1002,11 +1015,19 @@ export default function FlightMap2D({
   );
 
   const selectedFlight = useMemo(() => {
+    const explicitlySelectedFlight = selectedIcao24
+      ? projectedFlights.find((flight) => flight.icao24 === selectedIcao24) ?? null
+      : null;
+
+    if (explicitlySelectedFlight) {
+      return explicitlySelectedFlight;
+    }
+
     if (selectionMode !== 'single') {
       return null;
     }
 
-    return projectedFlights.find((flight) => flight.icao24 === selectedIcao24) ?? projectedFlights[0] ?? null;
+    return projectedFlights[0] ?? null;
   }, [projectedFlights, selectedIcao24, selectionMode]);
 
   const selectedRoutePoints = useMemo(() => {
@@ -1033,6 +1054,21 @@ export default function FlightMap2D({
       return point ? [{ ...airport, point }] : [];
     });
   }, [airportMarkers, projectPoint]);
+
+  const projectedSelectedFriendMarker = useMemo(() => {
+    if (!selectedFriendMarker) {
+      return null;
+    }
+
+    const point = projectPoint({
+      latitude: selectedFriendMarker.latitude,
+      longitude: selectedFriendMarker.longitude,
+      altitude: 0,
+      onGround: true,
+    });
+
+    return point ? { ...selectedFriendMarker, point } : null;
+  }, [projectPoint, selectedFriendMarker]);
 
   const hoveredAirport = useMemo(
     () => projectedAirportMarkers.find((airport) => airport.id === hoveredAirportId) ?? null,
@@ -1177,23 +1213,41 @@ export default function FlightMap2D({
   }, [onInitialZoomEnd]);
 
   useEffect(() => {
-    if (selectionMode !== 'single' || !selectedFlight || !focusBounds) {
+    if (!focusBounds) {
       lastAutoFocusedFlightRef.current = null;
       return;
     }
 
-    if (lastAutoFocusedFlightRef.current === selectedFlight.icao24) {
+    const autoFocusKey = selectedFlight?.icao24
+      ? `flight:${selectedFlight.icao24}`
+      : projectedSelectedFriendMarker?.id
+        ? `friend:${projectedSelectedFriendMarker.id}`
+        : null;
+
+    if (!autoFocusKey) {
+      if (selectionMode === 'single') {
+        lastAutoFocusedFlightRef.current = null;
+      }
       return;
     }
 
-    const bounds = getRouteBounds(selectedRoutePoints);
+    if (lastAutoFocusedFlightRef.current === autoFocusKey) {
+      return;
+    }
+
+    const bounds = selectedFlight
+      ? getRouteBounds(selectedRoutePoints.length > 0 ? selectedRoutePoints : getVisibleRoutePoints(selectedFlight))
+      : projectedSelectedFriendMarker
+        ? getPointBounds(projectedSelectedFriendMarker.point)
+        : null;
+
     if (!bounds) {
       return;
     }
 
     focusBounds(bounds);
-    lastAutoFocusedFlightRef.current = selectedFlight.icao24;
-  }, [focusBounds, selectedFlight, selectedRoutePoints, selectionMode]);
+    lastAutoFocusedFlightRef.current = autoFocusKey;
+  }, [focusBounds, projectedSelectedFriendMarker, selectedFlight, selectedRoutePoints, selectionMode]);
 
   const gridSize = isMobile ? 22 : 26;
   const gridOverscan = Math.max(map.viewBox.width, map.viewBox.height) * 6;
@@ -1345,9 +1399,9 @@ export default function FlightMap2D({
               ?? routeStartPoint;
             const colorIndex = resolvedFlightColorIndexes.get(flight.icao24) ?? index;
             const baseStrokeColor = flightColors?.get(flight.icao24) ?? getFlightMapColor(colorIndex, false);
-            const strokeColor = selectionMode === 'all'
-              ? baseStrokeColor
-              : (isSelected ? getFlightMapColor(colorIndex, true) : baseStrokeColor);
+            const strokeColor = isSelected
+              ? getFlightMapColor(colorIndex, true)
+              : baseStrokeColor;
             const activeSelectedFlightDetails = isHighlighted && selectedFlightDetails?.icao24 === flight.icao24
               ? selectedFlightDetails
               : null;
@@ -1807,10 +1861,15 @@ export default function FlightMap2D({
                   cy="0"
                   r={outerRadius + 4}
                   fill="transparent"
-                  style={{ cursor: firstMember.icao24 ? 'pointer' : 'default' }}
+                  style={{ cursor: onSelectFriend || firstMember.icao24 ? 'pointer' : 'default' }}
                   onMouseEnter={() => setHoveredClusterKey(clusterKey)}
                   onMouseLeave={() => setHoveredClusterKey(null)}
                   onClick={() => {
+                    if (onSelectFriend) {
+                      onSelectFriend(firstMember.friendId);
+                      return;
+                    }
+
                     const icao24 = firstMember.icao24;
                     if (icao24) {
                       onSelectFlight?.(icao24);

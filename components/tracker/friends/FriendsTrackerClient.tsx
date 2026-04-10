@@ -1,5 +1,6 @@
 'use client';
 
+import { useSearchParams } from 'next/navigation';
 import { useLocale } from 'next-intl';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
@@ -432,6 +433,36 @@ function normalizeAirportCode(value: string | null | undefined): string | null {
     : null;
 }
 
+function normalizeFriendFocusValue(value: string | null | undefined): string | null {
+  return typeof value === 'string' && value.trim()
+    ? value.trim().toLowerCase()
+    : null;
+}
+
+function findFocusedFriendId(
+  friends: FriendTravelConfig[],
+  queryValue: string | null | undefined,
+): string | null {
+  const normalizedQueryValue = normalizeFriendFocusValue(queryValue);
+  if (!normalizedQueryValue) {
+    return null;
+  }
+
+  return friends.find((friend) => {
+    return normalizeFriendFocusValue(friend.name) === normalizedQueryValue
+      || normalizeFriendFocusValue(friend.id) === normalizedQueryValue;
+  })?.id ?? null;
+}
+
+function getFocusedFriendQueryValue(friend: FriendTravelConfig | null): string | null {
+  if (!friend) {
+    return null;
+  }
+
+  const preferredLabel = friend.name.trim();
+  return preferredLabel || friend.id || null;
+}
+
 function hasLikelyReachedArrivalAirport(
   status: FriendFlightStatus,
   now: number,
@@ -499,6 +530,8 @@ function FriendTimelineCard({
   referenceTimeMs,
   airportMarkers,
   accentColor,
+  isSelected = false,
+  onSelect,
   onOpenFlightLink,
 }: {
   friend: FriendTravelConfig;
@@ -507,6 +540,8 @@ function FriendTimelineCard({
   referenceTimeMs: number;
   airportMarkers: FlightMapAirportMarker[];
   accentColor: string;
+  isSelected?: boolean;
+  onSelect?: (friendId: string) => void;
   onOpenFlightLink?: (flightNumber: string | null | undefined) => void;
 }) {
   const currentTripLegs = getCurrentTripLegs(friend, friendStatuses, destinationAirport, referenceTimeMs);
@@ -591,6 +626,19 @@ function FriendTimelineCard({
     : activeLegFlightNumber;
   const cursorFlightRadarUrl = buildFlightRadarUrl(cursorFlightNumber);
 
+  const cardRef = useRef<HTMLElement | null>(null);
+
+  useEffect(() => {
+    if (!isSelected) {
+      return;
+    }
+
+    cardRef.current?.scrollIntoView?.({
+      block: 'nearest',
+      behavior: 'smooth',
+    });
+  }, [isSelected]);
+
   const destinationAirports = parseDestinationAirportCodes(destinationAirport);
   const hasConfiguredDestinationAirports = destinationAirports.length > 0;
   const configuredCurrentAirport = normalizeAirportCode(friend.currentAirport);
@@ -627,7 +675,23 @@ function FriendTimelineCard({
     && lastContactSeconds == null;
 
   return (
-    <article className="rounded-2xl border border-white/10 bg-slate-950/55 p-3">
+    <article
+      ref={cardRef}
+      role="button"
+      tabIndex={0}
+      aria-pressed={isSelected ? 'true' : 'false'}
+      aria-label={`Focus ${friend.name} on map`}
+      onClick={() => onSelect?.(friend.id)}
+      onKeyDown={(event) => {
+        if (event.key === 'Enter' || event.key === ' ') {
+          event.preventDefault();
+          onSelect?.(friend.id);
+        }
+      }}
+      className={`rounded-2xl border p-3 transition focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/60 ${isSelected
+        ? 'border-cyan-400/60 bg-cyan-500/10 shadow-[0_0_0_1px_rgba(34,211,238,0.18)]'
+        : 'border-white/10 bg-slate-950/55 hover:border-white/20 hover:bg-slate-950/70'}`}
+    >
       {/* Header row: avatar + name + last seen */}
       <div className="flex items-center gap-3">
         <div
@@ -787,7 +851,10 @@ function FriendTimelineCard({
                   type="button"
                   aria-label={`Open ${normalizeFlightRadarFlightNumber(cursorFlightNumber) ?? 'flight'} on Flightradar24`}
                   title={`Open ${normalizeFlightRadarFlightNumber(cursorFlightNumber) ?? 'flight'} on Flightradar24`}
-                  onClick={() => onOpenFlightLink?.(cursorFlightNumber)}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onOpenFlightLink?.(cursorFlightNumber);
+                  }}
                   className="absolute z-10 flex h-5 w-5 items-center justify-center rounded-full border border-cyan-300/80 bg-slate-950/90 shadow-[0_0_0_2px_rgba(8,47,73,0.45)] transition-colors hover:border-cyan-100 hover:bg-slate-900 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-400/60"
                   style={{
                     left: cursorLeft,
@@ -1010,11 +1077,13 @@ function FriendsTrackerDashboard({
   const [data, setData] = useState<TrackerApiResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const locale = useLocale();
+  const searchParams = useSearchParams();
   const [isLoading, setIsLoading] = useState(false);
   const [isRefreshing, setIsRefreshing] = useState(false);
   const [selectedTimeMs, setSelectedTimeMs] = useState<number | null>(null);
   const [isWaybackModalOpen, setIsWaybackModalOpen] = useState(false);
   const [selectedMapAirport, setSelectedMapAirport] = useState<FlightMapAirportMarker | null>(null);
+  const [selectedFriendId, setSelectedFriendId] = useState<string | null>(null);
   const autoLockSignatureRef = useRef<string | null>(null);
 
   const identifiers = useMemo(() => extractFriendTrackerIdentifiers(config), [config]);
@@ -1169,16 +1238,16 @@ function FriendsTrackerDashboard({
     openFlightRadarUrl(flightNumber);
   }, []);
 
+  const handleSelectFriend = useCallback((friendId: string) => {
+    setSelectedFriendId((current) => current === friendId ? current : friendId);
+  }, []);
+
   const handleMapFlightSelect = useCallback((icao24: string) => {
     const matchingStatus = mapStatuses.find((status) => status.flight?.icao24 === icao24);
-    const matchingFlight = visibleFlights.find((flight) => flight.icao24 === icao24);
-    const flightNumber = matchingStatus?.leg.flightNumber
-      ?? matchingFlight?.flightNumber
-      ?? matchingFlight?.callsign
-      ?? null;
-
-    openFlightRadarUrl(flightNumber);
-  }, [mapStatuses, visibleFlights]);
+    if (matchingStatus) {
+      handleSelectFriend(matchingStatus.friend.id);
+    }
+  }, [handleSelectFriend, mapStatuses]);
 
   const staticFriendMarkers = useMemo<FriendAvatarMarker[]>(() => {
     const airportMarkerByCode = new Map(
@@ -1241,6 +1310,69 @@ function FriendsTrackerDashboard({
       ] as const),
     );
   }, [config.friends, friendColorMap]);
+
+  const selectedFriend = useMemo(
+    () => config.friends.find((friend) => friend.id === selectedFriendId) ?? null,
+    [config.friends, selectedFriendId],
+  );
+
+  const selectedMapStatus = useMemo(
+    () => selectedFriendId ? mapStatuses.find((status) => status.friend.id === selectedFriendId) ?? null : null,
+    [mapStatuses, selectedFriendId],
+  );
+
+  const selectedIcao24 = selectedMapStatus?.flight?.icao24 ?? null;
+
+  const selectedFriendMarker = useMemo(
+    () => selectedFriendId ? staticFriendMarkers.find((marker) => marker.id === selectedFriendId) ?? null : null,
+    [selectedFriendId, staticFriendMarkers],
+  );
+
+  useEffect(() => {
+    if (!selectedFriendId) {
+      return;
+    }
+
+    const friendStillExists = config.friends.some((friend) => friend.id === selectedFriendId);
+    if (!friendStillExists) {
+      setSelectedFriendId(null);
+    }
+  }, [config.friends, selectedFriendId]);
+
+  useEffect(() => {
+    const requestedFriendId = findFocusedFriendId(config.friends, searchParams.get('friend'));
+    if (!requestedFriendId) {
+      return;
+    }
+
+    setSelectedFriendId((current) => current === requestedFriendId ? current : requestedFriendId);
+  }, [config.friends, searchParams]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+
+    if (!selectedFriend && searchParams.get('friend')) {
+      return;
+    }
+
+    const nextUrl = new URL(window.location.href);
+    const focusedFriendQueryValue = getFocusedFriendQueryValue(selectedFriend);
+
+    if (focusedFriendQueryValue) {
+      nextUrl.searchParams.set('friend', focusedFriendQueryValue);
+    } else {
+      nextUrl.searchParams.delete('friend');
+    }
+
+    const nextRelativeUrl = `${nextUrl.pathname}${nextUrl.search}${nextUrl.hash}`;
+    const currentRelativeUrl = `${window.location.pathname}${window.location.search}${window.location.hash}`;
+
+    if (nextRelativeUrl !== currentRelativeUrl) {
+      window.history.replaceState(window.history.state, '', nextRelativeUrl);
+    }
+  }, [searchParams, selectedFriend]);
 
   const runSearch = useCallback(async (
     options: {
@@ -1521,6 +1653,8 @@ function FriendsTrackerDashboard({
             referenceTimeMs={referenceTimeMs}
             airportMarkers={airportMarkers}
             accentColor={friendAccentColors.get(friend.id) ?? resolveFriendAccentColor(friend, index)}
+            isSelected={selectedFriendId === friend.id}
+            onSelect={handleSelectFriend}
             onOpenFlightLink={handleOpenFlightLink}
           />
         );
@@ -1568,16 +1702,18 @@ function FriendsTrackerDashboard({
             map={map}
             flights={visibleFlights}
             mapView={mapView}
-            selectedIcao24={null}
+            selectedIcao24={selectedIcao24}
             selectionMode="all"
             flightColorIndexes={flightColorIndexMap}
             flightColors={flightColorMap}
             flightLabels={flightLabels}
             flightAvatars={flightAvatars}
             staticFriendMarkers={staticFriendMarkers}
+            selectedFriendMarker={selectedFriendMarker}
             airportMarkers={airportMarkers}
             emptyOverlayMessage={null}
             onSelectFlight={handleMapFlightSelect}
+            onSelectFriend={handleSelectFriend}
             onSelectAirport={setSelectedMapAirport}
             onInitialZoomEnd={onMapReady}
           />

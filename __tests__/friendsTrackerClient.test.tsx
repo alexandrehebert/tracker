@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { useEffect, type ReactNode } from 'react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -7,9 +7,14 @@ import type { FriendsTrackerConfig } from '~/lib/friendsTracker';
 import type { WorldMapPayload } from '~/lib/server/worldMap';
 
 let latestFlightMapProps: Record<string, unknown> | null = null;
+let mockSearchParams = '';
 
 vi.mock('next-intl', () => ({
   useLocale: () => 'en',
+}));
+
+vi.mock('next/navigation', () => ({
+  useSearchParams: () => new URLSearchParams(mockSearchParams),
 }));
 
 vi.mock('~/i18n/navigation', () => ({
@@ -61,6 +66,8 @@ const initialConfig: FriendsTrackerConfig = {
 describe('FriendsTrackerClient', () => {
   beforeEach(() => {
     latestFlightMapProps = null;
+    mockSearchParams = '';
+    window.history.replaceState({}, '', '/en/chantal');
 
     vi.stubGlobal(
       'matchMedia',
@@ -99,9 +106,8 @@ describe('FriendsTrackerClient', () => {
     vi.unstubAllGlobals();
   });
 
-  it('opens the matching Flightradar24 page when a map flight bubble or route is selected', async () => {
+  it('selects and shares a focused friend when a map marker is chosen', async () => {
     const nowSeconds = Math.floor(Date.now() / 1000);
-    const openSpy = vi.spyOn(window, 'open').mockImplementation(() => null);
 
     vi.spyOn(window, 'fetch').mockResolvedValue(
       new Response(
@@ -195,21 +201,61 @@ describe('FriendsTrackerClient', () => {
       />,
     );
 
-    expect(await screen.findByText(/chantal crew tracker/i)).toBeInTheDocument();
+    const aliceCard = await screen.findByRole('button', { name: /focus alice on map/i });
 
     await waitFor(() => {
-      expect(typeof latestFlightMapProps?.onSelectFlight).toBe('function');
-      const flights = latestFlightMapProps?.flights as Array<{ icao24: string }> | undefined;
-      expect(flights?.map((flight) => flight.icao24)).toContain('abc123');
+      expect(typeof latestFlightMapProps?.onSelectFriend).toBe('function');
     });
 
-    (latestFlightMapProps?.onSelectFlight as ((icao24: string) => void))('abc123');
+    await act(async () => {
+      (latestFlightMapProps?.onSelectFriend as ((friendId: string) => void))('friend-1');
+    });
 
-    expect(openSpy).toHaveBeenCalledWith(
-      'https://www.flightradar24.com/AF123',
-      '_blank',
-      'noopener,noreferrer',
+    await waitFor(() => {
+      expect(latestFlightMapProps?.selectedIcao24).toBe('abc123');
+    });
+
+    expect(aliceCard).toHaveAttribute('aria-pressed', 'true');
+    expect(window.location.search).toContain('friend=Alice');
+  });
+
+  it('hydrates a focused friend from the query string and keeps a pinned friend selected', async () => {
+    mockSearchParams = 'friend=Maya';
+    window.history.replaceState({}, '', '/en/chantal?friend=Maya');
+
+    render(
+      <FriendsTrackerClient
+        map={map}
+        initialConfig={{
+          ...initialConfig,
+          friends: [
+            {
+              id: 'friend-quiet',
+              name: 'Maya',
+              currentAirport: 'JFK',
+              flights: [],
+            },
+          ],
+        }}
+        airportMarkers={[
+          { id: 'jfk', code: 'JFK', label: 'New York JFK', latitude: 40.6413, longitude: -73.7781, usage: 'both' },
+        ]}
+      />,
     );
+
+    const mayaCard = await screen.findByRole('button', { name: /focus maya on map/i });
+
+    await waitFor(() => {
+      expect(mayaCard).toHaveAttribute('aria-pressed', 'true');
+      expect(latestFlightMapProps?.selectedIcao24).toBe(null);
+      expect(latestFlightMapProps?.selectedFriendMarker).toEqual(
+        expect.objectContaining({
+          id: 'friend-quiet',
+          latitude: 40.6413,
+          longitude: -73.7781,
+        }),
+      );
+    });
   });
 
   it('opens Flightradar24 from the timeline plane icon', async () => {

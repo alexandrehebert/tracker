@@ -21,6 +21,7 @@ interface FlightMapProps {
   selectedFlightDetails?: SelectedFlightDetails | null;
   airportMarkers?: FlightMapAirportMarker[];
   onSelectFlight?: (icao24: string) => void;
+  onSelectFriend?: (friendId: string) => void;
   onSelectAirport?: (airport: FlightMapAirportMarker) => void;
   onInitialZoomEnd?: () => void;
   selectionMode?: 'single' | 'all';
@@ -29,6 +30,7 @@ interface FlightMapProps {
   flightLabels?: Record<string, string>;
   flightAvatars?: Record<string, FriendAvatarInfo[]>;
   staticFriendMarkers?: FriendAvatarMarker[];
+  selectedFriendMarker?: FriendAvatarMarker | null;
   emptyOverlayMessage?: string | null;
 }
 
@@ -40,6 +42,7 @@ export default function FlightMap({
   selectedFlightDetails,
   airportMarkers = [],
   onSelectFlight,
+  onSelectFriend,
   onSelectAirport,
   onInitialZoomEnd,
   selectionMode = 'single',
@@ -48,6 +51,7 @@ export default function FlightMap({
   flightLabels,
   flightAvatars,
   staticFriendMarkers,
+  selectedFriendMarker,
   emptyOverlayMessage,
 }: FlightMapProps) {
   const [renderedMapView, setRenderedMapView] = useState(mapView);
@@ -103,6 +107,7 @@ export default function FlightMap({
         selectedFlightDetails={selectedFlightDetails}
         airportMarkers={airportMarkers}
         onSelectFlight={onSelectFlight}
+        onSelectFriend={onSelectFriend}
         onSelectAirport={onSelectAirport}
         onInitialZoomEnd={handleMapReady}
         selectionMode={selectionMode}
@@ -111,6 +116,7 @@ export default function FlightMap({
         flightLabels={flightLabels}
         flightAvatars={flightAvatars}
         staticFriendMarkers={staticFriendMarkers}
+        selectedFriendMarker={selectedFriendMarker}
         emptyOverlayMessage={emptyOverlayMessage}
       />
     );
@@ -123,6 +129,7 @@ export default function FlightMap({
       selectedFlightDetails={selectedFlightDetails}
       airportMarkers={airportMarkers}
       onSelectFlight={onSelectFlight}
+      onSelectFriend={onSelectFriend}
       onSelectAirport={onSelectAirport}
       onInitialZoomEnd={handleMapReady}
       selectionMode={selectionMode}
@@ -131,6 +138,7 @@ export default function FlightMap({
       flightLabels={flightLabels}
       flightAvatars={flightAvatars}
       staticFriendMarkers={staticFriendMarkers}
+      selectedFriendMarker={selectedFriendMarker}
     />
   );
 }
