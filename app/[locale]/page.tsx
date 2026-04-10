@@ -1,6 +1,6 @@
 import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
-import { Globe2, Plane, Radar, Route, Sparkles } from 'lucide-react';
+import { Globe2, Plane, Radar, Route, Sparkles, Users } from 'lucide-react';
 import LanguageSwitcher from '~/components/LanguageSwitcher';
 import { HeroSection } from '~/components/landing/HeroSection';
 import { StatsSection } from '~/components/landing/StatsSection';
@@ -22,6 +22,7 @@ function getCopy(locale: string) {
       heroDescription: 'Entrez un callsign ou un ICAO24 pour afficher la route, la position actuelle, l’historique recent et les principales informations de vol dans une interface reutilisant toute la qualite visuelle du stack existant.',
       primaryCta: 'Ouvrir le tracker',
       secondaryCta: 'Explorer les aeroports',
+      chantalCta: 'Carte Chantal',
       metrics: [
         { label: 'Carte', value: '2D', helper: 'zoomable et pinchable' },
         { label: 'Refresh', value: '60s', helper: 'mise a jour auto' },
@@ -52,6 +53,7 @@ function getCopy(locale: string) {
     heroDescription: 'Enter a callsign or ICAO24 to display the route, current position, recent history, and flight details in a polished interface built on the same strong visual stack.',
     primaryCta: 'Open tracker',
     secondaryCta: 'Browse airports',
+    chantalCta: "Chantal's map",
     metrics: [
       { label: 'Map', value: '2D', helper: 'zoomable and pinchable' },
       { label: 'Refresh', value: '60s', helper: 'automatic polling' },
@@ -195,6 +197,14 @@ export default async function HomePage({ params }: HomePageProps) {
                 className="rounded-full border border-white/10 bg-white/5 px-3 py-2 text-sm text-slate-300 backdrop-blur-sm transition hover:border-cyan-300/40 hover:text-cyan-100"
               >
                 {copy.secondaryCta}
+              </Link>
+              <Link
+                href="/chantal"
+                locale={locale}
+                className="inline-flex items-center gap-2 rounded-full border border-white/10 bg-white/5 px-3 py-2 text-sm text-slate-300 backdrop-blur-sm transition hover:border-amber-300/40 hover:text-amber-100"
+              >
+                <Users className="h-4 w-4" />
+                {copy.chantalCta}
               </Link>
             </div>
           }
