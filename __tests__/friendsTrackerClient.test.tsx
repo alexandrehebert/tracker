@@ -875,6 +875,108 @@ describe('FriendsTrackerClient', () => {
     });
   });
 
+  it('keeps a just-departing live friend pinned to the departure airport when no map point is available yet', async () => {
+    const nowMs = Date.now();
+    const nowSeconds = Math.floor(nowMs / 1000);
+
+    vi.spyOn(window, 'fetch').mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          query: 'AF123',
+          requestedIdentifiers: ['AF123'],
+          matchedIdentifiers: ['AF123'],
+          notFoundIdentifiers: [],
+          fetchedAt: nowMs,
+          flights: [
+            {
+              icao24: 'air-france-pretrack',
+              callsign: 'AFR123',
+              flightNumber: 'AF123',
+              originCountry: 'France',
+              matchedBy: ['AF123'],
+              lastContact: nowSeconds - 45,
+              current: null,
+              originPoint: null,
+              track: [],
+              rawTrack: [],
+              onGround: false,
+              velocity: null,
+              heading: null,
+              verticalRate: null,
+              geoAltitude: null,
+              baroAltitude: null,
+              squawk: null,
+              category: null,
+              route: {
+                departureAirport: 'CDG',
+                arrivalAirport: 'JFK',
+                firstSeen: nowSeconds - 45,
+                lastSeen: null,
+              },
+              dataSource: 'opensky',
+              sourceDetails: [],
+            },
+          ],
+        }),
+        {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        },
+      ),
+    );
+
+    render(
+      <FriendsTrackerClient
+        map={map}
+        initialConfig={{
+          ...initialConfig,
+          destinationAirport: 'JFK',
+          friends: [
+            {
+              id: 'friend-alex',
+              name: 'Alex',
+              flights: [
+                {
+                  id: 'leg-alex-1',
+                  flightNumber: 'AF123',
+                  departureTime: new Date(nowMs - 15 * 60 * 1000).toISOString(),
+                  from: 'CDG',
+                  to: 'JFK',
+                },
+              ],
+            },
+          ],
+        }}
+        airportMarkers={[
+          { id: 'cdg', code: 'CDG', label: 'Paris Charles de Gaulle', latitude: 49.0097, longitude: 2.5479, usage: 'both' },
+          { id: 'jfk', code: 'JFK', label: 'New York JFK', latitude: 40.6413, longitude: -73.7781, usage: 'both' },
+        ]}
+      />,
+    );
+
+    expect(await screen.findByText(/^alex$/i)).toBeInTheDocument();
+
+    await waitFor(() => {
+      const visibleFlights = latestFlightMapProps?.flights as Array<{ icao24: string }> | undefined;
+      const staticFriendMarkers = latestFlightMapProps?.staticFriendMarkers as Array<{
+        id: string;
+        latitude: number;
+        longitude: number;
+      }> | undefined;
+
+      expect(visibleFlights?.map((flight) => flight.icao24) ?? []).not.toContain('air-france-pretrack');
+      expect(staticFriendMarkers).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            id: 'friend-alex',
+            latitude: 49.0097,
+            longitude: 2.5479,
+          }),
+        ]),
+      );
+    });
+  });
+
   it('marks last-known map avatars as stale after extended silence in live mode', async () => {
     const nowMs = Date.now();
     const nowSeconds = Math.floor(nowMs / 1000);

@@ -720,6 +720,7 @@ export async function runTrackerCronJob(options: {
   }
 
   const results: TrackerCronFlightResult[] = [];
+  const collectedFlights: TrackedFlight[] = [];
   let runError: string | null = null;
   const effectiveTrigger = options.trigger ?? 'manual-api';
   const refreshMode = resolveTrackerCronRefreshMode(effectiveTrigger, options.refreshMode);
@@ -788,6 +789,10 @@ export async function runTrackerCronJob(options: {
         }),
       );
 
+      if (refreshMode === 'full') {
+        collectedFlights.push(...payload.flights);
+      }
+
       for (const identifier of batch) {
         results.push(buildTrackerCronFlightResult(identifier, payload));
       }
@@ -812,13 +817,17 @@ export async function runTrackerCronJob(options: {
               const hydrationBatch = hydrationBatches[hydrationBatchIndex]!;
               const hydrationQuery = hydrationBatch.join(',');
 
-              await withCronProviderContext(
+              const hydrationPayload = await withCronProviderContext(
                 hydrationBatch.length === 1 ? hydrationBatch[0] ?? null : hydrationQuery,
                 () => searchFlights(hydrationQuery, {
                   forceRefresh: true,
                   ...(refreshMode === 'opensky-only' ? { externalDataMode: 'opensky-only' as const } : {}),
                 }),
               );
+
+              if (refreshMode === 'full') {
+                collectedFlights.push(...hydrationPayload.flights);
+              }
 
               if (hydrationBatchIndex < hydrationBatches.length - 1 && TRACKER_CRON_OPENSKY_BATCH_DELAY_MS > 0) {
                 await wait(TRACKER_CRON_OPENSKY_BATCH_DELAY_MS);
@@ -867,5 +876,26 @@ export async function runTrackerCronJob(options: {
   };
 
   await persistTrackerCronRun(completedRun);
+
+  if (refreshMode === 'full' && collectedFlights.length > 0) {
+    try {
+      const [{ readFriendsTrackerConfig, writeFriendsTrackerConfig }, { applyAutoValidatedFriendFlights }] = await Promise.all([
+        import('./friendsTracker'),
+        import('~/lib/friendsTracker'),
+      ]);
+      const friendsConfig = await readFriendsTrackerConfig();
+      const autoValidatedState = applyAutoValidatedFriendFlights(friendsConfig, collectedFlights, finishedAt);
+
+      if (autoValidatedState.changed) {
+        await writeFriendsTrackerConfig({
+          ...autoValidatedState.config,
+          updatedBy: baseRun.requestedBy ?? 'tracker cron auto-validation',
+        });
+      }
+    } catch (error) {
+      console.warn('Tracker cron could not persist automatic Chantal leg validations.', error);
+    }
+  }
+
   return completedRun;
 }

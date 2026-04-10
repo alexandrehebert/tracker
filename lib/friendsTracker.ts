@@ -1,4 +1,4 @@
-import type { TrackedFlight } from '~/components/tracker/flight/types';
+import type { FlightSourceDetail, TrackedFlight } from '~/components/tracker/flight/types';
 import { getFlightPointTimeMs } from '~/lib/flightHistory';
 
 const AUTO_LOCK_WINDOW_HOURS = 36;
@@ -6,8 +6,10 @@ const AUTO_LOCK_LOOKBACK_DAYS = 7;
 const FLIGHT_MATCH_WINDOW_HOURS = 6;
 const DEMO_REFERENCE_BUCKET_MS = 15 * 60 * 1000;
 
-export interface FriendFlightValidationSnapshot {
-  status?: 'matched' | 'warning' | 'not-found' | 'error' | 'skipped' | null;
+export type FriendFlightValidationStatus = 'matched' | 'warning' | 'not-found' | 'error' | 'skipped';
+
+export interface FriendFlightValidationProviderSnapshot {
+  status?: FriendFlightValidationStatus | null;
   providerLabel?: string | null;
   message?: string | null;
   matchedIcao24?: string | null;
@@ -19,6 +21,10 @@ export interface FriendFlightValidationSnapshot {
   matchedRoute?: string | null;
   departureDeltaMinutes?: number | null;
   lastCheckedAt?: number | null;
+}
+
+export interface FriendFlightValidationSnapshot extends FriendFlightValidationProviderSnapshot {
+  providerMatches?: FriendFlightValidationProviderSnapshot[] | null;
 }
 
 export interface FriendFlightLeg {
@@ -161,6 +167,26 @@ function isMatchedStatusActiveAtTime(status: FriendFlightStatus | undefined, ref
 
 function normalizeOptionalText(value: unknown): string | null {
   return typeof value === 'string' && value.trim() ? value.trim() : null;
+}
+
+const VALIDATION_PROVIDER_LABELS: Record<FlightSourceDetail['source'], string> = {
+  opensky: 'OpenSky',
+  aviationstack: 'Aviationstack',
+  flightaware: 'FlightAware',
+  airlabs: 'AirLabs',
+  aerodatabox: 'AeroDataBox',
+};
+
+function isFriendFlightValidationStatus(value: unknown): value is FriendFlightValidationStatus {
+  return value === 'matched'
+    || value === 'warning'
+    || value === 'not-found'
+    || value === 'error'
+    || value === 'skipped';
+}
+
+function resolveValidationProviderLabel(source: FlightSourceDetail['source'] | null | undefined): string | null {
+  return source ? VALIDATION_PROVIDER_LABELS[source] ?? source : null;
 }
 
 const CSS_HEX_COLOR_PATTERN = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i;
@@ -355,20 +381,14 @@ function normalizeDateTime(value: unknown): string {
   return Number.isNaN(parsedTime) ? trimmedValue : new Date(parsedTime).toISOString();
 }
 
-function normalizeFriendFlightValidationSnapshot(
-  input: Partial<FriendFlightValidationSnapshot> | null | undefined,
-): FriendFlightValidationSnapshot | null {
+function normalizeFriendFlightValidationProviderSnapshot(
+  input: Partial<FriendFlightValidationProviderSnapshot> | null | undefined,
+): FriendFlightValidationProviderSnapshot | null {
   if (!input) {
     return null;
   }
 
-  const status = input.status === 'matched'
-    || input.status === 'warning'
-    || input.status === 'not-found'
-    || input.status === 'error'
-    || input.status === 'skipped'
-    ? input.status
-    : null;
+  const status = isFriendFlightValidationStatus(input.status) ? input.status : null;
   const providerLabel = normalizeOptionalText(input.providerLabel);
   const message = normalizeOptionalText(input.message);
   const matchedIcao24 = normalizeFriendFlightIdentifier(input.matchedIcao24 ?? null) || null;
@@ -415,6 +435,61 @@ function normalizeFriendFlightValidationSnapshot(
     matchedRoute,
     departureDeltaMinutes,
     lastCheckedAt,
+  };
+}
+
+function dedupeFriendFlightValidationProviderSnapshots(
+  snapshots: Array<Partial<FriendFlightValidationProviderSnapshot> | null | undefined>,
+): FriendFlightValidationProviderSnapshot[] {
+  const deduped: FriendFlightValidationProviderSnapshot[] = [];
+  const seenKeys = new Set<string>();
+
+  for (const snapshot of snapshots) {
+    const normalizedSnapshot = normalizeFriendFlightValidationProviderSnapshot(snapshot);
+    if (!normalizedSnapshot) {
+      continue;
+    }
+
+    const key = [
+      normalizedSnapshot.providerLabel ?? '',
+      normalizedSnapshot.matchedIcao24 ?? '',
+      normalizedSnapshot.matchedFlightNumber ?? '',
+      normalizedSnapshot.matchedDepartureTime ?? '',
+      normalizedSnapshot.matchedArrivalTime ?? '',
+      normalizedSnapshot.matchedDepartureAirport ?? '',
+      normalizedSnapshot.matchedArrivalAirport ?? '',
+    ].join('|');
+
+    if (seenKeys.has(key)) {
+      continue;
+    }
+
+    seenKeys.add(key);
+    deduped.push(normalizedSnapshot);
+  }
+
+  return deduped;
+}
+
+function normalizeFriendFlightValidationSnapshot(
+  input: Partial<FriendFlightValidationSnapshot> | null | undefined,
+): FriendFlightValidationSnapshot | null {
+  if (!input) {
+    return null;
+  }
+
+  const normalizedSnapshot = normalizeFriendFlightValidationProviderSnapshot(input);
+  const providerMatches = dedupeFriendFlightValidationProviderSnapshots(
+    Array.isArray(input.providerMatches) ? input.providerMatches : [],
+  );
+
+  if (!normalizedSnapshot && providerMatches.length === 0) {
+    return null;
+  }
+
+  return {
+    ...(normalizedSnapshot ?? {}),
+    providerMatches: providerMatches.length > 0 ? providerMatches : null,
   };
 }
 
@@ -929,48 +1004,327 @@ function doesFlightMatchIdentifier(flight: TrackedFlight, identifier: string): b
     || normalizedMatchedBy.includes(identifier);
 }
 
-export function findMatchingTrackedFlightForLeg(
+export function findMatchingTrackedFlightsForLeg(
   flights: TrackedFlight[],
   leg: FriendFlightLeg,
   now = Date.now(),
-): TrackedFlight | null {
+): TrackedFlight[] {
   const lockedIcao24 = normalizeFriendFlightIdentifier(leg.resolvedIcao24);
   if (lockedIcao24) {
-    const lockedMatch = flights.find((flight) => normalizeFriendFlightIdentifier(flight.icao24) === lockedIcao24) ?? null;
-    return lockedMatch && isFlightTimingPlausibleForLeg(lockedMatch, leg, now, { isLockedMatch: true })
-      ? lockedMatch
-      : null;
+    return flights
+      .filter((flight) => normalizeFriendFlightIdentifier(flight.icao24) === lockedIcao24)
+      .filter((flight) => isFlightTimingPlausibleForLeg(flight, leg, now, { isLockedMatch: true }));
   }
 
   const normalizedFlightNumber = normalizeFriendFlightIdentifier(leg.flightNumber);
   if (!normalizedFlightNumber) {
-    return null;
+    return [];
   }
 
   const scheduledTime = Date.parse(leg.departureTime);
   const matchingFlights = flights
     .filter((flight) => doesFlightMatchIdentifier(flight, normalizedFlightNumber))
     .filter((flight) => isFlightTimingPlausibleForLeg(flight, leg, now));
-  if (matchingFlights.length <= 1) {
-    return matchingFlights[0] ?? null;
+
+  return [...matchingFlights].sort((left, right) => {
+    const leftReferenceTime = resolveFlightReferenceTimeMs(left);
+    const rightReferenceTime = resolveFlightReferenceTimeMs(right);
+    const leftPenalty = Number.isFinite(scheduledTime) && leftReferenceTime != null
+      ? Math.abs(leftReferenceTime - scheduledTime)
+      : Number.POSITIVE_INFINITY;
+    const rightPenalty = Number.isFinite(scheduledTime) && rightReferenceTime != null
+      ? Math.abs(rightReferenceTime - scheduledTime)
+      : Number.POSITIVE_INFINITY;
+
+    if (leftPenalty !== rightPenalty) {
+      return leftPenalty - rightPenalty;
+    }
+
+    const leftUsedSources = (left.sourceDetails ?? []).filter((detail) => detail.usedInResult).length;
+    const rightUsedSources = (right.sourceDetails ?? []).filter((detail) => detail.usedInResult).length;
+    return rightUsedSources - leftUsedSources;
+  });
+}
+
+export function findMatchingTrackedFlightForLeg(
+  flights: TrackedFlight[],
+  leg: FriendFlightLeg,
+  now = Date.now(),
+): TrackedFlight | null {
+  return findMatchingTrackedFlightsForLeg(flights, leg, now)[0] ?? null;
+}
+
+function toValidationSnapshotDateTime(value: number | null | undefined): string | null {
+  if (typeof value !== 'number' || !Number.isFinite(value)) {
+    return null;
   }
 
-  let bestMatch: TrackedFlight | null = matchingFlights[0] ?? null;
-  let bestPenalty = Number.POSITIVE_INFINITY;
+  const timestampMs = value > 1_000_000_000_000 ? value : value * 1000;
+  return new Date(timestampMs).toISOString();
+}
 
-  for (const flight of matchingFlights) {
-    const referenceTime = resolveFlightReferenceTimeMs(flight);
-    const timePenalty = Number.isFinite(scheduledTime) && referenceTime != null
-      ? Math.abs(referenceTime - scheduledTime) / (1000 * 60 * 60)
-      : 0;
+function buildValidationRouteSummary(
+  departureAirport: string | null,
+  arrivalAirport: string | null,
+): string | null {
+  return departureAirport || arrivalAirport
+    ? `${departureAirport ?? '???'} → ${arrivalAirport ?? '???'}`
+    : null;
+}
 
-    if (timePenalty < bestPenalty) {
-      bestPenalty = timePenalty;
-      bestMatch = flight;
+function choosePreferredValidationProviderSnapshot(
+  snapshots: FriendFlightValidationProviderSnapshot[],
+): FriendFlightValidationProviderSnapshot | null {
+  let preferredSnapshot: FriendFlightValidationProviderSnapshot | null = null;
+  let preferredScore = Number.NEGATIVE_INFINITY;
+
+  for (const snapshot of snapshots) {
+    let score = snapshot.status === 'matched' ? 100 : snapshot.status === 'warning' ? 80 : 0;
+    if (snapshot.matchedIcao24) {
+      score += 20;
+    }
+    if (snapshot.matchedFlightNumber) {
+      score += 10;
+    }
+    if (snapshot.departureDeltaMinutes != null) {
+      score += Math.max(0, 30 - Math.abs(snapshot.departureDeltaMinutes));
+    }
+
+    if (score > preferredScore) {
+      preferredScore = score;
+      preferredSnapshot = snapshot;
     }
   }
 
-  return bestMatch;
+  return preferredSnapshot;
+}
+
+function buildValidationProviderSnapshotsForFlight(
+  leg: FriendFlightLeg,
+  flight: TrackedFlight,
+  lastCheckedAt: number,
+): FriendFlightValidationProviderSnapshot[] {
+  const matchedIcao24 = normalizeFriendFlightIdentifier(flight.aircraft?.icao24 ?? flight.icao24) || null;
+  const matchedFlightNumber = resolveSuggestedFlightNumber(
+    leg.resolvedIcao24 || leg.flightNumber,
+    flight.flightNumber ?? flight.callsign ?? null,
+  ) || null;
+  const matchedDepartureTime = toValidationSnapshotDateTime(flight.route.firstSeen);
+  const matchedArrivalTime = toValidationSnapshotDateTime(flight.route.lastSeen);
+  const matchedDepartureAirport = normalizeOptionalText(flight.route.departureAirport)?.toUpperCase() ?? null;
+  const matchedArrivalAirport = normalizeOptionalText(flight.route.arrivalAirport)?.toUpperCase() ?? null;
+  const matchedRoute = buildValidationRouteSummary(matchedDepartureAirport, matchedArrivalAirport);
+  const scheduledDepartureTimeMs = Date.parse(leg.departureTime);
+  const matchedDepartureTimeMs = matchedDepartureTime ? Date.parse(matchedDepartureTime) : Number.NaN;
+  const departureDeltaMinutes = Number.isFinite(scheduledDepartureTimeMs) && Number.isFinite(matchedDepartureTimeMs)
+    ? Math.round((matchedDepartureTimeMs - scheduledDepartureTimeMs) / (1000 * 60))
+    : null;
+  const status: FriendFlightValidationStatus = departureDeltaMinutes != null && Math.abs(departureDeltaMinutes) > 180
+    ? 'warning'
+    : 'matched';
+
+  const sharedFields = {
+    status,
+    matchedIcao24,
+    matchedFlightNumber,
+    matchedDepartureTime,
+    matchedArrivalTime,
+    matchedDepartureAirport,
+    matchedArrivalAirport,
+    matchedRoute,
+    departureDeltaMinutes,
+    lastCheckedAt,
+  } satisfies FriendFlightValidationProviderSnapshot;
+
+  const usedSourceDetails = (flight.sourceDetails ?? []).filter((detail) => detail.usedInResult && detail.status === 'used');
+
+  if (usedSourceDetails.length === 0) {
+    const fallbackProviderLabel = flight.dataSource === 'hybrid'
+      ? 'Tracker search'
+      : (flight.dataSource === 'opensky'
+          || flight.dataSource === 'flightaware'
+          || flight.dataSource === 'aviationstack'
+          || flight.dataSource === 'airlabs'
+          || flight.dataSource === 'aerodatabox')
+        ? resolveValidationProviderLabel(flight.dataSource)
+        : null;
+
+    return [{
+      ...sharedFields,
+      providerLabel: fallbackProviderLabel ?? 'Tracker search',
+      message: 'Tracker search confirmed a matching flight for this leg during the scheduled enrichment run.',
+    }];
+  }
+
+  return usedSourceDetails.map((detail) => ({
+    ...sharedFields,
+    providerLabel: resolveValidationProviderLabel(detail.source) ?? 'Tracker search',
+    message: normalizeOptionalText(detail.reason) ?? 'Provider matched this scheduled leg.',
+  }));
+}
+
+function extractPersistedValidationProviderMatches(
+  snapshot: FriendFlightValidationSnapshot | null | undefined,
+): FriendFlightValidationProviderSnapshot[] {
+  const normalizedSnapshot = normalizeFriendFlightValidationSnapshot(snapshot);
+  if (!normalizedSnapshot) {
+    return [];
+  }
+
+  if (Array.isArray(normalizedSnapshot.providerMatches) && normalizedSnapshot.providerMatches.length > 0) {
+    return normalizedSnapshot.providerMatches;
+  }
+
+  const fallbackSnapshot = normalizeFriendFlightValidationProviderSnapshot(normalizedSnapshot);
+  return fallbackSnapshot ? [fallbackSnapshot] : [];
+}
+
+function buildAutoValidationSnapshotForLeg(
+  leg: FriendFlightLeg,
+  matchingFlights: TrackedFlight[],
+  now = Date.now(),
+): FriendFlightValidationSnapshot | null {
+  const providerMatches = dedupeFriendFlightValidationProviderSnapshots(
+    matchingFlights.flatMap((flight) => buildValidationProviderSnapshotsForFlight(leg, flight, now)),
+  );
+  const preferredSnapshot = choosePreferredValidationProviderSnapshot(providerMatches);
+
+  if (!preferredSnapshot) {
+    return null;
+  }
+
+  const providerLabels = Array.from(new Set(
+    providerMatches
+      .map((snapshot) => normalizeOptionalText(snapshot.providerLabel))
+      .filter((value): value is string => Boolean(value)),
+  ));
+  const providerLabel = providerLabels.join(' + ') || preferredSnapshot.providerLabel || null;
+  const resolvedIdentifier = resolveSuggestedFlightNumber(leg.flightNumber, preferredSnapshot.matchedFlightNumber) || null;
+
+  return {
+    ...preferredSnapshot,
+    status: providerMatches.some((snapshot) => snapshot.status === 'matched') ? 'matched' : preferredSnapshot.status,
+    providerLabel,
+    message: providerMatches.length > 1
+      ? `${providerLabel ?? 'Tracker search'} matched ${(resolvedIdentifier || normalizeFriendFlightIdentifier(leg.flightNumber) || 'this leg')}. ${providerMatches.length} providers confirmed this leg.`
+      : preferredSnapshot.message,
+    matchedFlightNumber: resolvedIdentifier,
+    providerMatches,
+    lastCheckedAt: preferredSnapshot.lastCheckedAt ?? now,
+  };
+}
+
+function mergeValidationSnapshots(
+  existingSnapshot: FriendFlightValidationSnapshot | null | undefined,
+  incomingSnapshot: FriendFlightValidationSnapshot,
+  identifier: string,
+): FriendFlightValidationSnapshot {
+  const mergedProviderMatches = dedupeFriendFlightValidationProviderSnapshots([
+    ...extractPersistedValidationProviderMatches(existingSnapshot),
+    ...(incomingSnapshot.providerMatches ?? []),
+  ]);
+  const preferredSnapshot = choosePreferredValidationProviderSnapshot(mergedProviderMatches)
+    ?? normalizeFriendFlightValidationProviderSnapshot(incomingSnapshot)
+    ?? normalizeFriendFlightValidationProviderSnapshot(existingSnapshot)
+    ?? incomingSnapshot;
+  const providerLabels = Array.from(new Set(
+    mergedProviderMatches
+      .map((snapshot) => normalizeOptionalText(snapshot.providerLabel))
+      .filter((value): value is string => Boolean(value)),
+  ));
+  const providerLabel = providerLabels.join(' + ')
+    || normalizeOptionalText(incomingSnapshot.providerLabel)
+    || normalizeOptionalText(existingSnapshot?.providerLabel)
+    || null;
+  const matchedFlightNumber = resolveSuggestedFlightNumber(
+    identifier,
+    preferredSnapshot.matchedFlightNumber ?? incomingSnapshot.matchedFlightNumber ?? existingSnapshot?.matchedFlightNumber ?? null,
+  ) || null;
+
+  return normalizeFriendFlightValidationSnapshot({
+    ...existingSnapshot,
+    ...incomingSnapshot,
+    ...preferredSnapshot,
+    status: preferredSnapshot.status ?? incomingSnapshot.status ?? existingSnapshot?.status ?? null,
+    providerLabel,
+    message: mergedProviderMatches.length > 1
+      ? `${providerLabel ?? 'Tracker search'} matched ${(matchedFlightNumber || normalizeFriendFlightIdentifier(identifier) || 'this leg')}. ${mergedProviderMatches.length} providers confirmed this leg.`
+      : preferredSnapshot.message ?? incomingSnapshot.message ?? existingSnapshot?.message ?? null,
+    matchedFlightNumber,
+    providerMatches: mergedProviderMatches,
+    lastCheckedAt: incomingSnapshot.lastCheckedAt ?? existingSnapshot?.lastCheckedAt ?? Date.now(),
+  }) ?? incomingSnapshot;
+}
+
+export function applyAutoValidatedFriendFlights(
+  config: FriendsTrackerConfig,
+  flights: TrackedFlight[],
+  now = Date.now(),
+): { config: NormalizedFriendsTrackerConfig; changed: boolean } {
+  if (flights.length === 0) {
+    return { config: normalizeFriendsTrackerConfig(config), changed: false };
+  }
+
+  const airportTimezones = config.airportTimezones ?? {};
+  let changed = false;
+  const nextConfig = updateCurrentTripInConfig(config, (trip) => ({
+    ...trip,
+    friends: trip.friends.map((friend) => ({
+      ...friend,
+      flights: friend.flights.map((leg) => {
+        const matchingFlights = findMatchingTrackedFlightsForLeg(flights, leg, now);
+        if (matchingFlights.length === 0) {
+          return leg;
+        }
+
+        const autoValidationSnapshot = buildAutoValidationSnapshotForLeg(leg, matchingFlights, now);
+        if (!autoValidationSnapshot) {
+          return leg;
+        }
+
+        const mergedValidation = mergeValidationSnapshots(leg.validatedFlight ?? null, autoValidationSnapshot, leg.flightNumber);
+        const matchedFlightNumber = resolveSuggestedFlightNumber(leg.flightNumber, mergedValidation.matchedFlightNumber);
+        const nextLeg: FriendFlightLeg = {
+          ...leg,
+          flightNumber: matchedFlightNumber || leg.flightNumber,
+          departureTime: mergedValidation.matchedDepartureTime || leg.departureTime,
+          arrivalTime: mergedValidation.matchedArrivalTime ?? leg.arrivalTime ?? null,
+          departureTimezone: mergedValidation.matchedDepartureAirport
+            ? airportTimezones[mergedValidation.matchedDepartureAirport] ?? leg.departureTimezone ?? null
+            : leg.departureTimezone ?? null,
+          from: mergedValidation.matchedDepartureAirport ?? leg.from ?? null,
+          to: mergedValidation.matchedArrivalAirport ?? leg.to ?? null,
+          resolvedIcao24: mergedValidation.matchedIcao24 ?? leg.resolvedIcao24 ?? null,
+          lastResolvedAt: mergedValidation.matchedIcao24
+            ? mergedValidation.lastCheckedAt ?? now
+            : leg.lastResolvedAt ?? null,
+          validatedFlight: mergedValidation,
+        };
+
+        const currentSnapshot = normalizeFriendFlightValidationSnapshot(leg.validatedFlight ?? null);
+        const currentFingerprint = JSON.stringify({
+          ...leg,
+          validatedFlight: currentSnapshot,
+        });
+        const nextFingerprint = JSON.stringify({
+          ...nextLeg,
+          validatedFlight: normalizeFriendFlightValidationSnapshot(nextLeg.validatedFlight ?? null),
+        });
+
+        if (currentFingerprint === nextFingerprint) {
+          return leg;
+        }
+
+        changed = true;
+        return nextLeg;
+      }),
+    })),
+  }));
+
+  return {
+    config: nextConfig,
+    changed,
+  };
 }
 
 export function shouldAutoLockFriendFlight(

@@ -365,6 +365,12 @@ function hasRenderableMapPosition(status: FriendFlightStatus): boolean {
   );
 }
 
+function getRenderableMapFlight(status: FriendFlightStatus | null | undefined): TrackedFlight | null {
+  return status?.flight && hasRenderableMapPosition(status)
+    ? status.flight
+    : null;
+}
+
 function getMapStatusAgeMs(status: FriendFlightStatus, liveTimeMs: number): number | null {
   const statusTimeMs = getFriendStatusReferenceTimeMs(status);
   return Number.isFinite(statusTimeMs) ? Math.max(0, liveTimeMs - statusTimeMs) : null;
@@ -1131,8 +1137,9 @@ function FriendsTrackerDashboard({
     const flightsByIcao24 = new Map<string, TrackedFlight>();
 
     for (const status of mapStatuses) {
-      if (status.flight && !flightsByIcao24.has(status.flight.icao24)) {
-        flightsByIcao24.set(status.flight.icao24, status.flight);
+      const renderableFlight = getRenderableMapFlight(status);
+      if (renderableFlight && !flightsByIcao24.has(renderableFlight.icao24)) {
+        flightsByIcao24.set(renderableFlight.icao24, renderableFlight);
       }
     }
 
@@ -1141,9 +1148,10 @@ function FriendsTrackerDashboard({
 
   const flightLabels = useMemo(() => {
     return Object.fromEntries(
-      mapStatuses
-        .filter((status) => status.flight)
-        .map((status) => [status.flight!.icao24, status.label]),
+      mapStatuses.flatMap((status) => {
+        const renderableFlight = getRenderableMapFlight(status);
+        return renderableFlight ? [[renderableFlight.icao24, status.label] as const] : [];
+      }),
     ) satisfies Record<string, string>;
   }, [mapStatuses]);
 
@@ -1163,15 +1171,16 @@ function FriendsTrackerDashboard({
     const result = new Map<string, number>();
 
     for (const status of mapStatuses) {
-      if (!status.flight) {
+      const renderableFlight = getRenderableMapFlight(status);
+      if (!renderableFlight) {
         continue;
       }
 
       const stableColorIndex = friendColorIndexMap.get(status.friend.id) ?? 0;
-      const existingIndex = result.get(status.flight.icao24);
+      const existingIndex = result.get(renderableFlight.icao24);
 
       if (existingIndex == null || stableColorIndex < existingIndex) {
-        result.set(status.flight.icao24, stableColorIndex);
+        result.set(renderableFlight.icao24, stableColorIndex);
       }
     }
 
@@ -1183,17 +1192,18 @@ function FriendsTrackerDashboard({
     const chosenIndexes = new Map<string, number>();
 
     for (const status of mapStatuses) {
-      if (!status.flight) {
+      const renderableFlight = getRenderableMapFlight(status);
+      if (!renderableFlight) {
         continue;
       }
 
       const stableColorIndex = friendColorIndexMap.get(status.friend.id) ?? 0;
-      const existingIndex = chosenIndexes.get(status.flight.icao24);
+      const existingIndex = chosenIndexes.get(renderableFlight.icao24);
 
       if (existingIndex == null || stableColorIndex < existingIndex) {
-        chosenIndexes.set(status.flight.icao24, stableColorIndex);
+        chosenIndexes.set(renderableFlight.icao24, stableColorIndex);
         result.set(
-          status.flight.icao24,
+          renderableFlight.icao24,
           friendColorMap.get(status.friend.id) ?? getFlightMapColor(stableColorIndex, false),
         );
       }
@@ -1206,11 +1216,12 @@ function FriendsTrackerDashboard({
     const result: Record<string, FriendAvatarInfo[]> = {};
 
     for (const status of mapStatuses) {
-      if (!status.flight) {
+      const renderableFlight = getRenderableMapFlight(status);
+      if (!renderableFlight) {
         continue;
       }
 
-      const icao24 = status.flight.icao24;
+      const icao24 = renderableFlight.icao24;
       const colorIndex = friendColorIndexMap.get(status.friend.id)
         ?? flightColorIndexMap.get(icao24)
         ?? 0;
@@ -1271,7 +1282,7 @@ function FriendsTrackerDashboard({
 
     return config.friends.flatMap((friend, index) => {
       const mapStatus = mapStatusByFriendId.get(friend.id) ?? null;
-      if (mapStatus?.flight) {
+      if (getRenderableMapFlight(mapStatus)) {
         return [];
       }
 
@@ -1321,7 +1332,7 @@ function FriendsTrackerDashboard({
     [mapStatuses, selectedFriendId],
   );
 
-  const selectedIcao24 = selectedMapStatus?.flight?.icao24 ?? null;
+  const selectedIcao24 = getRenderableMapFlight(selectedMapStatus)?.icao24 ?? null;
 
   const selectedFriendMarker = useMemo(
     () => selectedFriendId ? staticFriendMarkers.find((marker) => marker.id === selectedFriendId) ?? null : null,

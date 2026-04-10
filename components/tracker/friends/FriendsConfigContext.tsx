@@ -10,6 +10,7 @@ import {
   normalizeFriendsTrackerConfig,
   resolveSuggestedFlightNumber,
   normalizeFriendsTrackerTripConfig,
+  type FriendFlightValidationProviderSnapshot,
   type FriendTravelConfig,
   type FriendsTrackerConfig,
   type FriendsTrackerTripConfig,
@@ -802,6 +803,60 @@ export function FriendsConfigProvider({
         }
 
         const matchedFlightNumber = resolveSuggestedFlightNumber(currentLeg.flightNumber, match.matchedFlightNumber);
+        const existingProviderMatches = Array.isArray(currentLeg.validatedFlight?.providerMatches)
+          ? currentLeg.validatedFlight.providerMatches
+          : currentLeg.validatedFlight?.providerLabel
+            ? [{
+                status: currentLeg.validatedFlight.status ?? 'matched',
+                providerLabel: currentLeg.validatedFlight.providerLabel,
+                message: currentLeg.validatedFlight.message ?? null,
+                matchedIcao24: currentLeg.validatedFlight.matchedIcao24 ?? currentLeg.resolvedIcao24 ?? null,
+                matchedFlightNumber: currentLeg.validatedFlight.matchedFlightNumber ?? currentLeg.flightNumber ?? null,
+                matchedDepartureTime: currentLeg.validatedFlight.matchedDepartureTime ?? currentLeg.departureTime,
+                matchedArrivalTime: currentLeg.validatedFlight.matchedArrivalTime ?? currentLeg.arrivalTime ?? null,
+                matchedDepartureAirport: currentLeg.validatedFlight.matchedDepartureAirport ?? normalizeAirportCode(currentLeg.from),
+                matchedArrivalAirport: currentLeg.validatedFlight.matchedArrivalAirport ?? normalizeAirportCode(currentLeg.to),
+                matchedRoute: currentLeg.validatedFlight.matchedRoute ?? null,
+                departureDeltaMinutes: currentLeg.validatedFlight.departureDeltaMinutes ?? null,
+                lastCheckedAt: currentLeg.validatedFlight.lastCheckedAt ?? currentLeg.lastResolvedAt ?? null,
+              } satisfies FriendFlightValidationProviderSnapshot]
+            : [];
+        const nextProviderMatches = match.providerLabel
+          ? [{
+              status: match.status,
+              providerLabel: match.providerLabel,
+              message: match.message,
+              matchedIcao24,
+              matchedFlightNumber: matchedFlightNumber || null,
+              matchedDepartureTime,
+              matchedArrivalTime,
+              matchedDepartureAirport,
+              matchedArrivalAirport,
+              matchedRoute: match.matchedRoute,
+              departureDeltaMinutes: match.departureDeltaMinutes,
+              lastCheckedAt,
+            } satisfies FriendFlightValidationProviderSnapshot]
+          : [];
+        const mergedProviderMatches = Array.from(new Map(
+          [...existingProviderMatches, ...nextProviderMatches].map((entry) => [
+            [
+              entry.providerLabel ?? '',
+              entry.matchedIcao24 ?? '',
+              entry.matchedFlightNumber ?? '',
+              entry.matchedDepartureTime ?? '',
+              entry.matchedArrivalTime ?? '',
+            ].join('|'),
+            entry,
+          ]),
+        ).values());
+        const mergedProviderLabel = Array.from(new Set(
+          mergedProviderMatches
+            .map((entry) => entry.providerLabel)
+            .filter((value): value is string => typeof value === 'string' && Boolean(value.trim())),
+        )).join(' + ') || match.providerLabel;
+        const mergedMessage = mergedProviderMatches.length > 1
+          ? `${mergedProviderLabel ?? 'Validation'} matched ${matchedFlightNumber || currentLeg.flightNumber}. ${mergedProviderMatches.length} providers confirmed this leg.`
+          : match.message;
 
         return {
           ...currentLeg,
@@ -817,8 +872,8 @@ export function FriendsConfigProvider({
           lastResolvedAt: matchedIcao24 ? lastCheckedAt : currentLeg.lastResolvedAt ?? null,
           validatedFlight: {
             status: match.status,
-            providerLabel: match.providerLabel,
-            message: match.message,
+            providerLabel: mergedProviderLabel,
+            message: mergedMessage,
             matchedIcao24,
             matchedFlightNumber: matchedFlightNumber || null,
             matchedDepartureTime,
@@ -828,6 +883,7 @@ export function FriendsConfigProvider({
             matchedRoute: match.matchedRoute,
             departureDeltaMinutes: match.departureDeltaMinutes,
             lastCheckedAt,
+            providerMatches: mergedProviderMatches,
           },
         };
       }),

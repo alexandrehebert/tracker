@@ -885,4 +885,95 @@ describe('tracker cron config and history', () => {
     expect(dashboard.history[0]?.finishedAt).not.toBeNull();
     expect(dashboard.history[0]?.durationMs).toBeGreaterThan(0);
   });
+
+  it('auto-validates unmatched Chantal legs during the 6-hour enrichment cron and keeps all provider confirmations', async () => {
+    const nowMs = Date.parse('2026-04-14T09:00:00.000Z');
+    vi.useFakeTimers();
+    vi.setSystemTime(nowMs);
+
+    searchFlightsMock.mockResolvedValueOnce({
+      query: 'AF123',
+      requestedIdentifiers: ['AF123'],
+      matchedIdentifiers: ['AF123'],
+      notFoundIdentifiers: [],
+      fetchedAt: nowMs + 60_000,
+      flights: [createTrackedFlight('AF123', 'abc123', {
+        flightNumber: 'AF123',
+        route: {
+          departureAirport: 'CDG',
+          arrivalAirport: 'JFK',
+          firstSeen: Math.floor((nowMs + (30 * 60 * 1000)) / 1000),
+          lastSeen: Math.floor((nowMs + (8 * 60 * 60 * 1000)) / 1000),
+        },
+        sourceDetails: [
+          {
+            source: 'opensky',
+            status: 'used',
+            usedInResult: true,
+            reason: 'OpenSky confirmed the scheduled AF123 leg.',
+          },
+          {
+            source: 'flightaware',
+            status: 'used',
+            usedInResult: true,
+            reason: 'FlightAware confirmed the same AF123 schedule.',
+          },
+        ],
+      })],
+    });
+
+    const { runTrackerCronJob } = await loadTrackerCronModule();
+    const { readFriendsTrackerConfig, writeFriendsTrackerConfig } = await loadFriendsTrackerModule();
+
+    await writeFriendsTrackerConfig({
+      updatedBy: 'chantal config page',
+      cronEnabled: true,
+      currentTripId: 'trip-1',
+      trips: [
+        {
+          id: 'trip-1',
+          name: 'Spring Meetup',
+          destinationAirport: 'JFK',
+          friends: [
+            {
+              id: 'friend-1',
+              name: 'Alice',
+              flights: [
+                {
+                  id: 'leg-1',
+                  flightNumber: 'AF123',
+                  departureTime: new Date(nowMs + (30 * 60 * 1000)).toISOString(),
+                  from: 'CDG',
+                  to: 'JFK',
+                },
+              ],
+            },
+          ],
+        },
+      ],
+    });
+
+    await runTrackerCronJob({
+      trigger: 'vercel-cron',
+      requestedBy: 'vercel-cron-enrichment/1.0',
+      refreshMode: 'full',
+    });
+
+    const persisted = await readFriendsTrackerConfig();
+    const savedLeg = persisted.trips?.find((trip) => trip.id === 'trip-1')?.friends[0]?.flights[0];
+
+    expect(savedLeg?.resolvedIcao24).toBe('ABC123');
+    expect(savedLeg?.validatedFlight).toEqual(expect.objectContaining({
+      status: 'matched',
+      providerLabel: 'OpenSky + FlightAware',
+      matchedIcao24: 'ABC123',
+      matchedFlightNumber: 'AF123',
+      matchedDepartureAirport: 'CDG',
+      matchedArrivalAirport: 'JFK',
+    }));
+    expect(savedLeg?.validatedFlight?.providerMatches).toEqual([
+      expect.objectContaining({ providerLabel: 'OpenSky', status: 'matched' }),
+      expect.objectContaining({ providerLabel: 'FlightAware', status: 'matched' }),
+    ]);
+  });
 });
