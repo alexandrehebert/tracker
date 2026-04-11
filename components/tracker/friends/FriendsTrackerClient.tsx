@@ -1424,6 +1424,10 @@ function FriendsTrackerDashboard({
     setSelectedFriendId((current) => current === friendId ? current : friendId);
   }, []);
 
+  const handleClearSelection = useCallback(() => {
+    setSelectedFriendId(null);
+  }, []);
+
   const handleMapFlightSelect = useCallback((icao24: string) => {
     const matchingStatus = mapStatuses.find((status) => status.flight?.icao24 === icao24);
     if (matchingStatus) {
@@ -1984,6 +1988,7 @@ function FriendsTrackerDashboard({
             onSelectFlight={handleMapFlightSelect}
             onSelectFriend={handleSelectFriend}
             onSelectAirport={setSelectedMapAirport}
+            onClearSelection={handleClearSelection}
             onInitialZoomEnd={onMapReady}
           />
         </div>

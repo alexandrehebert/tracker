@@ -51,6 +51,11 @@ const FRIEND_CLUSTER_FALLBACK_FILL = '#020617';
 const FRIEND_CLUSTER_ACCENT = '#93c5fd';
 const FRIEND_CLUSTER_BORDER_COLOR = 'rgba(147,197,253,0.24)';
 const FRIEND_CLUSTER_DIVIDER_STROKE = 'rgba(147,197,253,0.22)';
+const AIRPORT_OVERLAY_Z_INDEX = 20;
+const AIRPORT_OVERLAY_HOVER_Z_INDEX = 40;
+const FRIEND_AVATAR_Z_INDEX = 60;
+const FRIEND_AVATAR_HOVER_Z_INDEX = 80;
+const FRIEND_AVATAR_VERTICAL_OFFSET_PX = 14;
 
 type FriendClusterLayout = 'single' | 'split-2' | 'split-3' | 'split-4' | 'overflow';
 
@@ -115,6 +120,7 @@ interface FlightMap3DProps {
   onSelectFlight?: (icao24: string) => void;
   onSelectFriend?: (friendId: string) => void;
   onSelectAirport?: (airport: FlightMapAirportMarker) => void;
+  onClearSelection?: () => void;
   onInitialZoomEnd?: () => void;
   selectionMode?: 'single' | 'all';
   flightColorIndexes?: ReadonlyMap<string, number>;
@@ -818,6 +824,7 @@ export default function FlightMap3D({
   onSelectFlight,
   onSelectFriend,
   onSelectAirport,
+  onClearSelection,
   onInitialZoomEnd,
   selectionMode = 'single',
   flightColorIndexes,
@@ -1241,6 +1248,12 @@ export default function FlightMap3D({
         if (point?.icao24) {
           onSelectFlight?.(point.icao24);
         }
+      })
+      .onPolygonClick(() => {
+        onClearSelection?.();
+      })
+      .onGlobeClick(() => {
+        onClearSelection?.();
       });
 
     const selectedPoint = selectionMode === 'single'
@@ -1280,7 +1293,7 @@ export default function FlightMap3D({
           element.style.height = '0';
           element.style.cursor = 'default';
           element.style.transform = 'translate(-50%, -50%)';
-          element.style.zIndex = '20';
+          element.style.zIndex = String(AIRPORT_OVERLAY_Z_INDEX);
           element.title = `${item.label} (${item.code})`;
 
           const marker = document.createElement('div');
@@ -1316,12 +1329,12 @@ export default function FlightMap3D({
           badge.style.transition = 'opacity 140ms ease, transform 140ms ease';
 
           element.addEventListener('mouseenter', () => {
-            element.style.zIndex = '40';
+            element.style.zIndex = String(AIRPORT_OVERLAY_HOVER_Z_INDEX);
             badge.style.opacity = '1';
             badge.style.transform = 'translate(-50%, -100%) scale(1)';
           });
           element.addEventListener('mouseleave', () => {
-            element.style.zIndex = '20';
+            element.style.zIndex = String(AIRPORT_OVERLAY_Z_INDEX);
             badge.style.opacity = '0';
             badge.style.transform = 'translate(-50%, -100%) scale(0.96)';
           });
@@ -1398,8 +1411,8 @@ export default function FlightMap3D({
           element.style.width = `${size}px`;
           element.style.height = `${size}px`;
           element.style.borderRadius = '50%';
-          element.style.transform = 'translate(-50%, -50%)';
-          element.style.zIndex = '30';
+          element.style.transform = `translate(-50%, calc(-100% - ${FRIEND_AVATAR_VERTICAL_OFFSET_PX}px))`;
+          element.style.zIndex = String(FRIEND_AVATAR_Z_INDEX);
           element.style.position = 'relative';
           element.style.flexShrink = '0';
 
@@ -1602,12 +1615,12 @@ export default function FlightMap3D({
           element.appendChild(nameBadge);
 
           element.addEventListener('mouseenter', () => {
-            element.style.zIndex = '50';
+            element.style.zIndex = String(FRIEND_AVATAR_HOVER_Z_INDEX);
             nameBadge.style.opacity = '1';
             nameBadge.style.transform = 'translate(-50%, -100%) scale(1)';
           });
           element.addEventListener('mouseleave', () => {
-            element.style.zIndex = '30';
+            element.style.zIndex = String(FRIEND_AVATAR_Z_INDEX);
             nameBadge.style.opacity = '0';
             nameBadge.style.transform = 'translate(-50%, -100%) scale(0.92)';
           });
@@ -1641,7 +1654,7 @@ export default function FlightMap3D({
         element.style.transform = 'translate(-50%, -120%)';
         return element;
       });
-  }, [globeReady, htmlOverlayData, onSelectFlight, pathData, pointData, selectionMode]);
+  }, [globeReady, htmlOverlayData, onClearSelection, onSelectFlight, pathData, pointData, selectionMode]);
 
   useEffect(() => {
     if (!globeReady || !globeRef.current) {

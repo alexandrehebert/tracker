@@ -19,6 +19,7 @@ interface FlightMap2DProps {
   onSelectFlight?: (icao24: string) => void;
   onSelectFriend?: (friendId: string) => void;
   onSelectAirport?: (airport: FlightMapAirportMarker) => void;
+  onClearSelection?: () => void;
   onInitialZoomEnd?: () => void;
   selectionMode?: 'single' | 'all';
   flightColorIndexes?: ReadonlyMap<string, number>;
@@ -987,6 +988,7 @@ export default function FlightMap2D({
   onSelectFlight,
   onSelectFriend,
   onSelectAirport,
+  onClearSelection,
   onInitialZoomEnd,
   selectionMode = 'single',
   flightColorIndexes,
@@ -1270,6 +1272,14 @@ export default function FlightMap2D({
         }}
         role="img"
         aria-label="Interactive world map showing live tracked flight paths"
+        onClick={(event) => {
+          const target = event.target;
+          if (target instanceof Element && target.closest('[data-map-interactive="true"]')) {
+            return;
+          }
+
+          onClearSelection?.();
+        }}
       >
         <defs>
           <filter id="tracker-map-glow" x="-50%" y="-50%" width="200%" height="200%">
@@ -1359,6 +1369,7 @@ export default function FlightMap2D({
             return (
               <g
                 key={airport.id}
+                data-map-interactive="true"
                 transform={markerTransform}
                 opacity="0.98"
                 onMouseEnter={() => setHoveredAirportId(airport.id)}
@@ -1443,7 +1454,7 @@ export default function FlightMap2D({
               : null;
 
             return (
-              <g key={flight.icao24}>
+              <g key={flight.icao24} data-map-interactive="true">
                 {routePath ? (
                   <path
                     d={routePath}
@@ -1639,6 +1650,7 @@ export default function FlightMap2D({
             return (
               <g
                 key={clusterKey}
+                data-map-interactive="true"
                 transform={clusterTransform}
                 data-cluster-layout={clusterLayout}
                 data-cluster-size={cluster.members.length}

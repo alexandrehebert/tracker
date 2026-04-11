@@ -279,6 +279,8 @@ function createGlobeMock() {
     'pointColor',
     'pointsMerge',
     'onPointClick',
+    'onPolygonClick',
+    'onGlobeClick',
     'ringsData',
     'ringLat',
     'ringLng',
@@ -343,6 +345,45 @@ describe('FlightMap3D', () => {
   afterEach(() => {
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
+  });
+
+  it('clears the current selection when the user clicks the globe background', async () => {
+    const { globe } = createGlobeMock();
+    const onClearSelection = vi.fn();
+    globeFactory.mockReturnValue(() => globe);
+
+    render(
+      <TrackerMapProvider
+        value={{
+          globeRef: { current: null },
+          setGlobeRef: vi.fn(),
+          svgRef: { current: null },
+          mapTransform: { x: 0, y: 0, k: 1, apply: vi.fn(), applyX: vi.fn(), applyY: vi.fn(), invert: vi.fn(), invertX: vi.fn(), invertY: vi.fn(), rescaleX: vi.fn(), rescaleY: vi.fn(), scale: vi.fn(), translate: vi.fn(), toString: vi.fn(() => 'translate(0,0) scale(1)') },
+          zoomBy: vi.fn(),
+          resetZoom: vi.fn(),
+        }}
+      >
+        <FlightMap3D
+          flights={[trackedFlight]}
+          selectedIcao24={trackedFlight.icao24}
+          selectedFlightDetails={null}
+          onClearSelection={onClearSelection}
+        />
+      </TrackerMapProvider>,
+    );
+
+    await waitFor(() => {
+      expect(globe.onGlobeClick).toHaveBeenCalled();
+      expect(globe.onPolygonClick).toHaveBeenCalled();
+    });
+
+    const globeClickHandler = globe.onGlobeClick.mock.calls.at(-1)?.[0];
+    const polygonClickHandler = globe.onPolygonClick.mock.calls.at(-1)?.[0];
+
+    globeClickHandler?.();
+    polygonClickHandler?.();
+
+    expect(onClearSelection).toHaveBeenCalledTimes(2);
   });
 
   it('keeps the selected flight marker above the country layer, adds a route shadow, and keeps the aura on the map surface', async () => {
@@ -903,6 +944,7 @@ describe('FlightMap3D', () => {
     const renderedHtmlElements = globe.htmlElementsData.mock.calls.at(-1)?.[0] ?? [];
     const airportOverlay = renderedHtmlElements.find((item: { type?: string; code?: string }) => item.type === 'airport' && item.code === 'CDG');
     const friendOverlay = renderedHtmlElements.find((item: { type?: string }) => item.type === 'friend-avatar');
+    const airportElement = htmlElementAccessor?.(airportOverlay) as HTMLDivElement | undefined;
     const friendElement = htmlElementAccessor?.(friendOverlay) as HTMLDivElement | undefined;
     const bubble = Array.from(friendElement?.children ?? []).find(
       (node): node is HTMLDivElement => node instanceof HTMLDivElement && node.style.borderRadius === '50%',
@@ -912,6 +954,8 @@ describe('FlightMap3D', () => {
     expect(airportOverlay).toBeDefined();
     expect(friendOverlay).toBeDefined();
     expect(friendOverlay.altitude).toBeGreaterThan(airportOverlay.altitude);
+    expect(Number(friendElement?.style.zIndex ?? 0)).toBeGreaterThan(Number(airportElement?.style.zIndex ?? 0));
+    expect(friendElement?.style.transform).toContain('-100%');
     expect(bubble?.style.backgroundColor).toBe('rgb(34, 197, 94)');
     expect(fallbackSurface).not.toBeNull();
     expect((fallbackSurface as HTMLDivElement).style.background).toBe('rgb(2, 6, 23)');

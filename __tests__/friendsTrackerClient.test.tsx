@@ -219,6 +219,127 @@ describe('FriendsTrackerClient', () => {
     expect(window.location.search).toContain('friend=Alice');
   });
 
+  it('clears the focused friend when the map background is clicked', async () => {
+    const nowSeconds = Math.floor(Date.now() / 1000);
+
+    vi.spyOn(window, 'fetch').mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          query: 'AF123',
+          requestedIdentifiers: ['AF123'],
+          matchedIdentifiers: ['AF123'],
+          notFoundIdentifiers: [],
+          fetchedAt: Date.now(),
+          flights: [
+            {
+              icao24: 'abc123',
+              callsign: 'AF123',
+              flightNumber: 'AF123',
+              originCountry: 'France',
+              matchedBy: ['AF123'],
+              lastContact: nowSeconds - 30,
+              current: {
+                time: nowSeconds - 30,
+                latitude: 48.9,
+                longitude: 2.4,
+                x: 420,
+                y: 220,
+                altitude: 10300,
+                heading: 280,
+                onGround: false,
+              },
+              originPoint: {
+                time: nowSeconds - 3600,
+                latitude: 49.0097,
+                longitude: 2.5479,
+                x: 410,
+                y: 225,
+                altitude: 0,
+                heading: 280,
+                onGround: true,
+              },
+              track: [],
+              rawTrack: [],
+              onGround: false,
+              velocity: 240,
+              heading: 280,
+              verticalRate: 0,
+              geoAltitude: 10300,
+              baroAltitude: 10350,
+              squawk: '2201',
+              category: 1,
+              route: {
+                departureAirport: 'CDG',
+                arrivalAirport: 'LIS',
+                firstSeen: nowSeconds - 3600,
+                lastSeen: null,
+              },
+              dataSource: 'opensky',
+              sourceDetails: [],
+            },
+          ],
+        }),
+        {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        },
+      ),
+    );
+
+    render(
+      <FriendsTrackerClient
+        map={map}
+        initialConfig={{
+          ...initialConfig,
+          destinationAirport: 'LIS',
+          friends: [
+            {
+              ...initialConfig.friends[0]!,
+              flights: [
+                {
+                  id: 'leg-1',
+                  flightNumber: 'AF123',
+                  departureTime: new Date(Date.now() - 45 * 60 * 1000).toISOString(),
+                  from: 'CDG',
+                  to: 'LIS',
+                },
+              ],
+            },
+          ],
+        }}
+        airportMarkers={[
+          { id: 'cdg', code: 'CDG', label: 'Paris CDG', latitude: 49.0097, longitude: 2.5479, usage: 'both' },
+          { id: 'lis', code: 'LIS', label: 'Lisbon', latitude: 38.7742, longitude: -9.1342, usage: 'both' },
+        ]}
+      />,
+    );
+
+    const aliceCard = await screen.findByRole('button', { name: /focus alice on map/i });
+
+    await waitFor(() => {
+      expect(typeof latestFlightMapProps?.onSelectFriend).toBe('function');
+      expect(typeof latestFlightMapProps?.onClearSelection).toBe('function');
+    });
+
+    await act(async () => {
+      (latestFlightMapProps?.onSelectFriend as ((friendId: string) => void))('friend-1');
+    });
+
+    await waitFor(() => {
+      expect(aliceCard).toHaveAttribute('aria-pressed', 'true');
+      expect(window.location.search).toContain('friend=Alice');
+    });
+
+    await act(async () => {
+      (latestFlightMapProps?.onClearSelection as (() => void))();
+    });
+
+    await waitFor(() => {
+      expect(aliceCard).toHaveAttribute('aria-pressed', 'false');
+      expect(window.location.search).not.toContain('friend=Alice');
+    });
+  });
+
   it('hydrates a focused friend from the query string and keeps a pinned friend selected', async () => {
     mockSearchParams = 'friend=Maya';
     window.history.replaceState({}, '', '/en/chantal?friend=Maya');

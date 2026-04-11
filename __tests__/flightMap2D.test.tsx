@@ -249,6 +249,7 @@ describe('FlightMap2D', () => {
       selectionMode = 'single',
       mapTransform = zoomIdentity,
       focusBounds = vi.fn() as FocusBoundsHandler,
+      onClearSelection,
     }: {
       flights?: TrackedFlight[];
       selectedIcao24?: string | null;
@@ -258,6 +259,7 @@ describe('FlightMap2D', () => {
       selectionMode?: 'single' | 'all';
       mapTransform?: typeof zoomIdentity;
       focusBounds?: FocusBoundsHandler;
+      onClearSelection?: () => void;
     } = {},
   ) {
     mockUseTrackerLayout.mockReturnValue({
@@ -290,6 +292,7 @@ describe('FlightMap2D', () => {
           airportMarkers={mapAirportMarkers}
           staticFriendMarkers={staticFriendMarkers}
           selectionMode={selectionMode}
+          onClearSelection={onClearSelection}
         />
       </TrackerMapProvider>,
     );
@@ -299,6 +302,20 @@ describe('FlightMap2D', () => {
     renderMap(true);
 
     expect(screen.getByRole('img', { name: /interactive world map/i })).toHaveAttribute('preserveAspectRatio', 'xMidYMid slice');
+  });
+
+  it('clears the current selection when clicking empty map space', () => {
+    const onClearSelection = vi.fn();
+
+    renderMap(false, {
+      flights: [trackedFlight],
+      selectedIcao24: trackedFlight.icao24,
+      onClearSelection,
+    });
+
+    fireEvent.click(screen.getByRole('img', { name: /interactive world map/i }));
+
+    expect(onClearSelection).toHaveBeenCalledTimes(1);
   });
 
   it('uses slice preserveAspectRatio on desktop so the map fills the screen without top or bottom padding', () => {
