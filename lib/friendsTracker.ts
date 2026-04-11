@@ -392,7 +392,7 @@ function normalizeFriendFlightValidationProviderSnapshot(
   const providerLabel = normalizeOptionalText(input.providerLabel);
   const message = normalizeOptionalText(input.message);
   const matchedIcao24 = normalizeFriendFlightIdentifier(input.matchedIcao24 ?? null) || null;
-  const matchedFlightNumber = normalizeFriendFlightIdentifier(input.matchedFlightNumber ?? null) || null;
+  const matchedFlightNumber = normalizeConfiguredFlightNumber(input.matchedFlightNumber ?? null) || null;
   const matchedDepartureTime = normalizeDateTime(input.matchedDepartureTime);
   const matchedArrivalTime = normalizeDateTime(input.matchedArrivalTime);
   const matchedDepartureAirport = normalizeOptionalText(input.matchedDepartureAirport)?.toUpperCase() ?? null;
@@ -563,7 +563,18 @@ export function normalizeFriendFlightIdentifier(value: string | null | undefined
     : '';
 }
 
+const SYNTHETIC_PROVIDER_FLIGHT_NUMBER_PATTERN = /^(?:FA|AL|AS|ADB)-([A-Z]{0,4}\d+[A-Z]?)(?:-.+)?$/;
 const REAL_ICAO24_PATTERN = /^[0-9A-F]{6}$/;
+
+export function normalizeConfiguredFlightNumber(value: string | null | undefined): string {
+  const normalized = normalizeFriendFlightIdentifier(value);
+  if (!normalized) {
+    return '';
+  }
+
+  const syntheticMatch = normalized.match(SYNTHETIC_PROVIDER_FLIGHT_NUMBER_PATTERN);
+  return syntheticMatch?.[1] ?? normalized;
+}
 
 function normalizeConfiguredResolvedIcao24(value: string | null | undefined): string {
   const normalized = normalizeFriendFlightIdentifier(value);
@@ -573,7 +584,7 @@ function normalizeConfiguredResolvedIcao24(value: string | null | undefined): st
 function getFlightTrackingIdentifiersForLeg(leg: Pick<FriendFlightLeg, 'resolvedIcao24' | 'flightNumber'>): string[] {
   return Array.from(new Set([
     normalizeConfiguredResolvedIcao24(leg.resolvedIcao24),
-    normalizeFriendFlightIdentifier(leg.flightNumber),
+    normalizeConfiguredFlightNumber(leg.flightNumber),
   ].filter(Boolean)));
 }
 
@@ -581,12 +592,12 @@ export function resolveSuggestedFlightNumber(
   preferredIdentifier: string | null | undefined,
   suggestedFlightNumber: string | null | undefined,
 ): string {
-  const normalizedSuggestedFlightNumber = normalizeFriendFlightIdentifier(suggestedFlightNumber);
+  const normalizedSuggestedFlightNumber = normalizeConfiguredFlightNumber(suggestedFlightNumber);
   if (!normalizedSuggestedFlightNumber) {
     return '';
   }
 
-  const normalizedPreferredIdentifier = normalizeFriendFlightIdentifier(preferredIdentifier);
+  const normalizedPreferredIdentifier = normalizeConfiguredFlightNumber(preferredIdentifier);
   const suggestedIsNumericSuffix = /^\d+[A-Z]?$/.test(normalizedSuggestedFlightNumber);
   const preferredHasAirlinePrefix = /^[A-Z]{2,4}\d+[A-Z]?$/.test(normalizedPreferredIdentifier);
 
@@ -872,7 +883,11 @@ export function normalizeFriendFlightLeg(
   friendIndex = 0,
   legIndex = 0,
 ): FriendFlightLeg {
-  const flightNumber = normalizeFriendFlightIdentifier(input?.flightNumber ?? null);
+  const validatedFlight = normalizeFriendFlightValidationSnapshot(input?.validatedFlight);
+  const flightNumber = resolveSuggestedFlightNumber(
+    input?.flightNumber ?? validatedFlight?.matchedFlightNumber ?? null,
+    validatedFlight?.matchedFlightNumber ?? input?.flightNumber ?? null,
+  ) || normalizeConfiguredFlightNumber(input?.flightNumber ?? validatedFlight?.matchedFlightNumber ?? null);
   const resolvedIcao24 = normalizeConfiguredResolvedIcao24(input?.resolvedIcao24 ?? null);
 
   return {
@@ -888,7 +903,7 @@ export function normalizeFriendFlightLeg(
     lastResolvedAt: typeof input?.lastResolvedAt === 'number' && Number.isFinite(input.lastResolvedAt)
       ? input.lastResolvedAt
       : null,
-    validatedFlight: normalizeFriendFlightValidationSnapshot(input?.validatedFlight),
+    validatedFlight,
   };
 }
 
@@ -1045,7 +1060,7 @@ export function findMatchingTrackedFlightsForLeg(
       .filter((flight) => isFlightTimingPlausibleForLeg(flight, leg, now, { isLockedMatch: true }));
   }
 
-  const normalizedFlightNumber = normalizeFriendFlightIdentifier(leg.flightNumber);
+  const normalizedFlightNumber = normalizeConfiguredFlightNumber(leg.flightNumber);
   if (!normalizedFlightNumber) {
     return [];
   }

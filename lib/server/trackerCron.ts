@@ -1,6 +1,6 @@
 import { MongoClient, type Collection } from 'mongodb';
 import type { TrackedFlight } from '~/components/tracker/flight/types';
-import type { FriendFlightLeg } from '~/lib/friendsTracker';
+import { normalizeConfiguredFlightNumber, type FriendFlightLeg } from '~/lib/friendsTracker';
 import { ensureOpenSkyAccessToken, getOpenSkyTokenStatus, searchFlights, type OpenSkyTokenStatus } from './opensky';
 import { withProviderRequestContext } from './providers/observability';
 
@@ -130,7 +130,7 @@ function logMongoWarning(error: unknown) {
 }
 
 function normalizeTrackerCronIdentifier(value: string | null | undefined): string {
-  return typeof value === 'string' ? value.replace(/\s+/g, '').trim().toUpperCase() : '';
+  return normalizeConfiguredFlightNumber(value);
 }
 
 export function normalizeTrackerCronIdentifiers(input: string | string[] | null | undefined): string[] {

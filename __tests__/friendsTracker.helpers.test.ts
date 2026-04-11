@@ -98,6 +98,34 @@ describe('friends tracker helpers', () => {
     expect(extractFriendTrackerIdentifiers(config)).toEqual(['AF345']);
   });
 
+  it('sanitizes a synthetic provider flight number back to the public AF345 identifier', () => {
+    const config: FriendsTrackerConfig = {
+      updatedAt: null,
+      updatedBy: null,
+      friends: [
+        {
+          id: 'friend-1',
+          name: 'Alex',
+          flights: [
+            {
+              id: 'leg-1',
+              flightNumber: 'AL-AFR345',
+              departureTime: '2026-04-10T23:06:00.000Z',
+              validatedFlight: {
+                status: 'matched',
+                matchedFlightNumber: 'AF345',
+              },
+            },
+          ],
+        },
+      ],
+    };
+
+    const normalized = normalizeFriendsTrackerConfig(config);
+    expect(normalized.friends[0]?.flights[0]?.flightNumber).toBe('AF345');
+    expect(extractFriendTrackerIdentifiers(normalized)).toEqual(['AF345']);
+  });
+
   it('matches configured friends to flights and enables ICAO24 locking near departure time', () => {
     const departureTime = Date.UTC(2026, 3, 14, 9, 30);
     const config: FriendsTrackerConfig = {
