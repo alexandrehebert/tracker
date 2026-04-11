@@ -1663,6 +1663,128 @@ describe('FriendsTrackerClient', () => {
     });
   });
 
+  it('clamps the live wayback range to now and hides future-dated map telemetry', async () => {
+    const nowMs = Date.UTC(2026, 3, 11, 9, 22);
+    const departureMs = Date.UTC(2026, 3, 10, 23, 6);
+    const futurePointMs = Date.UTC(2026, 3, 11, 23, 0);
+    const futurePointSeconds = Math.floor(futurePointMs / 1000);
+    const fetchedAt = Date.UTC(2026, 3, 11, 9, 8);
+    const formatter = new Intl.DateTimeFormat('en', {
+      dateStyle: 'medium',
+      timeStyle: 'short',
+      timeZone: 'UTC',
+    });
+    const localFormatter = new Intl.DateTimeFormat('en', {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: '2-digit',
+      timeZoneName: 'short',
+    });
+
+    vi.spyOn(Date, 'now').mockReturnValue(nowMs);
+    vi.spyOn(window, 'fetch').mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          query: 'SQ221',
+          requestedIdentifiers: ['SQ221'],
+          matchedIdentifiers: ['SQ221'],
+          notFoundIdentifiers: [],
+          fetchedAt,
+          flights: [
+            {
+              icao24: 'future-sq221',
+              callsign: 'SQ221',
+              flightNumber: 'SQ221',
+              originCountry: 'Singapore',
+              matchedBy: ['SQ221'],
+              lastContact: futurePointSeconds,
+              current: {
+                time: futurePointSeconds,
+                latitude: -12.5,
+                longitude: 129.1,
+                x: 0,
+                y: 0,
+                altitude: 11000,
+                heading: 150,
+                onGround: false,
+              },
+              originPoint: null,
+              track: [],
+              rawTrack: [],
+              onGround: false,
+              velocity: 245,
+              heading: 150,
+              verticalRate: 0,
+              geoAltitude: 11000,
+              baroAltitude: 11020,
+              squawk: '2231',
+              category: 1,
+              route: {
+                departureAirport: 'SIN',
+                arrivalAirport: 'SYD',
+                firstSeen: Math.floor(departureMs / 1000),
+                lastSeen: futurePointSeconds,
+              },
+              dataSource: 'flightaware',
+              sourceDetails: [],
+            },
+          ],
+        }),
+        {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        },
+      ),
+    );
+
+    render(
+      <FriendsTrackerClient
+        map={map}
+        initialConfig={{
+          ...initialConfig,
+          destinationAirport: 'SYD',
+          friends: [
+            {
+              id: 'friend-1',
+              name: 'Alice',
+              flights: [
+                {
+                  id: 'leg-1',
+                  flightNumber: 'SQ221',
+                  departureTime: new Date(departureMs).toISOString(),
+                  arrivalTime: new Date(futurePointMs).toISOString(),
+                  from: 'SIN',
+                  to: 'SYD',
+                },
+              ],
+            },
+          ],
+        }}
+        airportMarkers={[
+          { id: 'sin', code: 'SIN', label: 'Singapore', latitude: 1.3644, longitude: 103.9915, usage: 'both' },
+          { id: 'syd', code: 'SYD', label: 'Sydney', latitude: -33.9399, longitude: 151.1753, usage: 'both' },
+        ]}
+      />,
+    );
+
+    const slider = await screen.findByLabelText(/wayback machine/i);
+    expect(await screen.findByText(/live now/i)).toBeInTheDocument();
+    expect(screen.getByText(`${formatter.format(nowMs)} UTC`)).toBeInTheDocument();
+    expect(screen.getByText(`Local ${localFormatter.format(nowMs)}`)).toBeInTheDocument();
+    expect(screen.getByText(/trip start/i)).toBeInTheDocument();
+    expect(screen.getByText(`${formatter.format(departureMs)} UTC`)).toBeInTheDocument();
+    expect(screen.queryByText('Now (UTC)')).not.toBeInTheDocument();
+    expect(slider).toHaveAttribute('max', String(nowMs));
+    expect(screen.queryByText(`${formatter.format(futurePointMs)} UTC`)).not.toBeInTheDocument();
+
+    await waitFor(() => {
+      const flights = (latestFlightMapProps?.flights as Array<{ icao24?: string }> | undefined) ?? [];
+      expect(flights).toHaveLength(0);
+    });
+  });
+
   it('interpolates sparse demo telemetry while rewinding so back-in-time steps visibly move the plane', async () => {
     const nowMs = Date.now();
     const nowSeconds = Math.floor(nowMs / 1000);

@@ -191,6 +191,33 @@ function getEarliestHistoricalEvidenceTimeMs(flight: TrackedFlight): number | nu
   return earliestTimeMs;
 }
 
+function getLatestHistoricalEvidenceTimeMs(flight: TrackedFlight): number | null {
+  let latestTimeMs: number | null = null;
+
+  const consider = (value: number | null | undefined) => {
+    if (typeof value !== 'number' || !Number.isFinite(value)) {
+      return;
+    }
+
+    latestTimeMs = latestTimeMs == null ? value : Math.max(latestTimeMs, value);
+  };
+
+  consider(typeof flight.route.lastSeen === 'number' ? flight.route.lastSeen * 1000 : null);
+  consider(typeof flight.lastContact === 'number' ? flight.lastContact * 1000 : null);
+
+  for (const point of [flight.originPoint, ...flight.track, ...(flight.rawTrack ?? []), flight.current]) {
+    consider(getFlightPointTimeMs(point));
+  }
+
+  for (const snapshot of flight.fetchHistory ?? []) {
+    consider(snapshot.capturedAt);
+    consider(typeof snapshot.route.lastSeen === 'number' ? snapshot.route.lastSeen * 1000 : null);
+    consider(getFlightPointTimeMs(snapshot.current));
+  }
+
+  return latestTimeMs;
+}
+
 function getLatestHistoricalSnapshot(
   history: FlightFetchSnapshot[] | undefined,
   referenceTimeMs: number,
@@ -283,8 +310,10 @@ export function buildHistoricalFlightView(
   const clampedReferenceTimeMs = Math.min(referenceTimeMs, liveTimeMs);
   const returnToLiveThresholdMs = options?.returnToLiveThresholdMs ?? 0;
   const preTelemetryLeadInMs = Math.max(options?.preTelemetryLeadInMs ?? 0, 0);
+  const latestEvidenceTimeMs = getLatestHistoricalEvidenceTimeMs(flight);
+  const hasFutureEvidence = latestEvidenceTimeMs != null && latestEvidenceTimeMs > liveTimeMs;
 
-  if (clampedReferenceTimeMs >= liveTimeMs - returnToLiveThresholdMs) {
+  if (!hasFutureEvidence && clampedReferenceTimeMs >= liveTimeMs - returnToLiveThresholdMs) {
     return flight;
   }
 
@@ -335,6 +364,7 @@ export function buildHistoricalFlightView(
   const canForecastFromLivePoint = currentPoint == null
     && liveReferencePoint != null
     && routeFirstSeenMs != null
+    && liveReferenceTimeMs <= liveTimeMs
     && liveReferenceTimeMs > routeFirstSeenMs
     && clampedReferenceTimeMs >= routeFirstSeenMs
     && clampedReferenceTimeMs <= liveReferenceTimeMs;
@@ -405,6 +435,14 @@ export function computeWaybackBounds(
   const departureTimes: number[] = [];
   const observedTimes: number[] = [fallbackEndMs];
 
+  const addObservedTime = (value: number | null | undefined) => {
+    if (typeof value !== 'number' || !Number.isFinite(value) || value > fallbackEndMs) {
+      return;
+    }
+
+    observedTimes.push(value);
+  };
+
   for (const friend of friends) {
     for (const leg of friend.flights) {
       const departureMs = Date.parse(leg.departureTime);
@@ -415,38 +453,18 @@ export function computeWaybackBounds(
   }
 
   for (const flight of flights) {
-    if (flight.route.firstSeen != null) {
-      observedTimes.push(flight.route.firstSeen * 1000);
-    }
-
-    if (flight.route.lastSeen != null) {
-      observedTimes.push(flight.route.lastSeen * 1000);
-    }
+    addObservedTime(flight.route.firstSeen != null ? flight.route.firstSeen * 1000 : null);
+    addObservedTime(flight.route.lastSeen != null ? flight.route.lastSeen * 1000 : null);
 
     for (const point of [flight.originPoint, ...flight.track, ...(flight.rawTrack ?? []), flight.current]) {
-      const pointTimeMs = getFlightPointTimeMs(point);
-      if (pointTimeMs != null) {
-        observedTimes.push(pointTimeMs);
-      }
+      addObservedTime(getFlightPointTimeMs(point));
     }
 
     for (const snapshot of flight.fetchHistory ?? []) {
-      if (Number.isFinite(snapshot.capturedAt)) {
-        observedTimes.push(snapshot.capturedAt);
-      }
-
-      if (snapshot.route.firstSeen != null) {
-        observedTimes.push(snapshot.route.firstSeen * 1000);
-      }
-
-      if (snapshot.route.lastSeen != null) {
-        observedTimes.push(snapshot.route.lastSeen * 1000);
-      }
-
-      const pointTimeMs = getFlightPointTimeMs(snapshot.current);
-      if (pointTimeMs != null) {
-        observedTimes.push(pointTimeMs);
-      }
+      addObservedTime(snapshot.capturedAt);
+      addObservedTime(snapshot.route.firstSeen != null ? snapshot.route.firstSeen * 1000 : null);
+      addObservedTime(snapshot.route.lastSeen != null ? snapshot.route.lastSeen * 1000 : null);
+      addObservedTime(getFlightPointTimeMs(snapshot.current));
     }
   }
 

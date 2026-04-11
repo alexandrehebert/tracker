@@ -116,6 +116,21 @@ function formatDateTimeMillis(timestampMs: number | null, locale: string): strin
   }).format(timestampMs);
 }
 
+function formatLocalDateTimeMillis(timestampMs: number | null, locale: string): string {
+  if (!timestampMs) {
+    return '—';
+  }
+
+  return new Intl.DateTimeFormat(locale, {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    timeZoneName: 'short',
+  }).format(timestampMs);
+}
+
 function getFriendInitials(name: string): string {
   const parts = name.trim().split(/\s+/);
   if (parts.length >= 2) {
@@ -1237,7 +1252,10 @@ function FriendsTrackerDashboard({
 
   const identifiers = useMemo(() => extractFriendTrackerIdentifiers(config), [config]);
   const identifiersQuery = identifiers.join(',');
-  const liveTimeMs = data?.fetchedAt ?? Date.now();
+  const nowMs = Date.now();
+  const liveTimeMs = data?.fetchedAt != null && Number.isFinite(data.fetchedAt)
+    ? Math.max(nowMs, data.fetchedAt)
+    : nowMs;
 
   const waybackBounds = useMemo(
     () => computeWaybackBounds(config.friends, data?.flights ?? [], liveTimeMs),
@@ -1250,10 +1268,6 @@ function FriendsTrackerDashboard({
   const isWaybackActive = referenceTimeMs < waybackBounds.endMs - WAYBACK_RETURN_TO_LIVE_THRESHOLD_MS;
 
   const displayFlights = useMemo(() => {
-    if (!isWaybackActive) {
-      return data?.flights ?? [];
-    }
-
     return (data?.flights ?? []).flatMap((flight) => {
       const historicalFlight = buildHistoricalFlightView(flight, referenceTimeMs, liveTimeMs, {
         returnToLiveThresholdMs: WAYBACK_RETURN_TO_LIVE_THRESHOLD_MS,
@@ -1261,7 +1275,7 @@ function FriendsTrackerDashboard({
       });
       return historicalFlight ? [historicalFlight] : [];
     });
-  }, [data?.flights, isWaybackActive, liveTimeMs, referenceTimeMs]);
+  }, [data?.flights, liveTimeMs, referenceTimeMs]);
 
   const statuses = useMemo(
     () => buildFriendFlightStatuses(config, displayFlights, referenceTimeMs),
@@ -1698,7 +1712,8 @@ function FriendsTrackerDashboard({
             {isWaybackActive ? 'Historical snapshot' : 'Live now'}
           </div>
           <div className="text-[11px] text-slate-400">
-            {formatDateTimeMillis(sliderValue, locale)} UTC
+            <div>{formatDateTimeMillis(sliderValue, locale)} UTC</div>
+            <div className="text-[10px] text-slate-500">Local {formatLocalDateTimeMillis(sliderValue, locale)}</div>
           </div>
         </div>
 
@@ -1752,12 +1767,17 @@ function FriendsTrackerDashboard({
         className="mt-3 w-full accent-cyan-400"
       />
 
-      <div className="mt-2 flex items-center justify-between gap-3 text-[10px] text-slate-500">
-        <span>{formatDateTimeMillis(waybackBounds.startMs, locale)}</span>
-        <span>Live</span>
+      <div className="mt-2 flex items-start justify-between gap-3 text-[10px] text-slate-500">
+        <div className="max-w-[70%] leading-4">
+          <div className="uppercase tracking-[0.16em] text-slate-500/90">Trip start</div>
+          <div>{formatDateTimeMillis(waybackBounds.startMs, locale)} UTC</div>
+        </div>
+        <span className="shrink-0">Now</span>
       </div>
 
       <p className="mt-2 text-[11px] text-slate-400">
+        Range starts at the earliest past departure or recorded telemetry for this trip.
+        <br />
         Stored provider telemetry is used first, then itinerary timing fills any gaps.
       </p>
     </div>
