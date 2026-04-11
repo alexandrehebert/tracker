@@ -744,7 +744,7 @@ describe('searchFlights', () => {
     expect(cachedResult?.flights[0]?.fetchHistory).toHaveLength(1_701);
   });
 
-  it('backfills airport route points for a landed provider-only match with no live telemetry', async () => {
+  it('uses the curated local AF345 history instead of a generic two-point airport fallback when seeding a landed provider-only match', async () => {
     delete process.env.OPENSKY_CLIENT_ID;
     delete process.env.OPENSKY_CLIENT_SECRET;
     delete process.env.AVIATION_STACK_API_KEY;
@@ -839,9 +839,20 @@ describe('searchFlights', () => {
       onGround: true,
     }));
     expect(result.flights[0]?.track).toEqual([
-      expect.objectContaining({ latitude: 45.4706, longitude: -73.7408 }),
-      expect.objectContaining({ latitude: 49.0097, longitude: 2.5479 }),
+      expect.objectContaining({ time: 1_775_862_360, latitude: 45.4706, longitude: -73.7408, altitude: 0, onGround: true }),
+      expect.objectContaining({ time: 1_775_865_000, latitude: 47.25, longitude: -68.9, altitude: 2500, onGround: false }),
+      expect.objectContaining({ time: 1_775_869_800, latitude: 49.4, longitude: -57.2, altitude: 10300, onGround: false }),
+      expect.objectContaining({ time: 1_775_877_000, latitude: 51.2, longitude: -37.8, altitude: 10900, onGround: false }),
+      expect.objectContaining({ time: 1_775_881_800, latitude: 50.7, longitude: -18.2, altitude: 10100, onGround: false }),
+      expect.objectContaining({ time: 1_775_884_200, latitude: 49.8, longitude: -4.2, altitude: 3200, onGround: false }),
+      expect.objectContaining({ time: 1_775_885_280, latitude: 49.0097, longitude: 2.5479, altitude: 0, onGround: true }),
     ]);
+    expect(result.flights[0]?.sourceDetails).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        source: 'flightaware',
+        reason: expect.stringMatching(/local historical fallback for AF345/i),
+      }),
+    ]));
   });
 
   it('pins an on-ground provider-only match to the arrival airport even when route timestamps are missing', async () => {

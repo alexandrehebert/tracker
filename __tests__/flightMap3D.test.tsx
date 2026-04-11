@@ -1012,7 +1012,7 @@ describe('FlightMap3D', () => {
     const renderedHtmlElements = globe.htmlElementsData.mock.calls.at(-1)?.[0] ?? [];
     const friendOverlay = renderedHtmlElements.find((item: { type?: string; members?: Array<unknown> }) => item.type === 'friend-avatar' && (item.members?.length ?? 0) >= 5);
     const friendElement = htmlElementAccessor?.(friendOverlay) as HTMLDivElement | undefined;
-    const clusterGrid = friendElement?.querySelector('[data-cluster-layout="overflow"]');
+    const clusterGrid = friendElement?.querySelector('[data-cluster-layout="overflow"]') as HTMLDivElement | null | undefined;
 
     expect(friendOverlay).toBeDefined();
     expect(clusterGrid).not.toBeNull();
