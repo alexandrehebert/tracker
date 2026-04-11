@@ -158,6 +158,82 @@ describe('friends tracker helpers', () => {
     expect(status?.canAutoLock).toBe(true);
   });
 
+  it('falls back to the public flight number when a locked ICAO24 no longer matches the configured route', () => {
+    const departureTime = Date.UTC(2026, 3, 10, 23, 22);
+    const config: FriendsTrackerConfig = {
+      updatedAt: null,
+      updatedBy: null,
+      friends: [
+        {
+          id: 'friend-1',
+          name: 'Alex',
+          flights: [
+            {
+              id: 'leg-1',
+              flightNumber: 'AF345',
+              departureTime: new Date(departureTime).toISOString(),
+              arrivalTime: new Date(Date.UTC(2026, 3, 11, 5, 27)).toISOString(),
+              from: 'YUL',
+              to: 'CDG',
+              resolvedIcao24: '3965A5',
+            },
+          ],
+        },
+      ],
+    };
+
+    const [status] = buildFriendFlightStatuses(
+      config,
+      [
+        {
+          ...createTrackedFlight('AF344', '3965a5', { firstSeen: Math.floor(Date.UTC(2026, 3, 10, 18, 0) / 1000) }),
+          callsign: 'AFR344',
+          matchedBy: ['3965A5', 'AF344'],
+          route: {
+            departureAirport: 'CDG',
+            arrivalAirport: 'YUL',
+            firstSeen: Math.floor(Date.UTC(2026, 3, 10, 18, 0) / 1000),
+            lastSeen: Math.floor(Date.UTC(2026, 3, 10, 21, 15) / 1000),
+          },
+        },
+        {
+          icao24: 'al-afr345',
+          callsign: 'AFR345',
+          originCountry: 'Testland',
+          matchedBy: ['AF345', 'AFR345', 'al-afr345'],
+          lastContact: null,
+          current: null,
+          originPoint: null,
+          track: [],
+          rawTrack: [],
+          onGround: true,
+          velocity: null,
+          heading: null,
+          verticalRate: null,
+          geoAltitude: null,
+          baroAltitude: null,
+          squawk: null,
+          category: null,
+          route: {
+            departureAirport: 'YUL',
+            arrivalAirport: 'CDG',
+            firstSeen: null,
+            lastSeen: null,
+          },
+          dataSource: 'airlabs',
+          sourceDetails: [],
+          fetchHistory: [],
+        },
+      ],
+      Date.UTC(2026, 3, 11, 7, 0),
+    );
+
+    expect(status?.status).toBe('matched');
+    expect(status?.flight?.icao24).toBe('al-afr345');
+    expect(status?.flight?.route.departureAirport).toBe('YUL');
+    expect(status?.flight?.route.arrivalAirport).toBe('CDG');
+  });
+
   it('does not treat a repeated daily flight as live when the configured departure is still far in the future', () => {
     const departureTime = Date.UTC(2026, 3, 14, 9, 30);
     const now = Date.UTC(2026, 3, 5, 9, 30);

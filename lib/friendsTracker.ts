@@ -515,6 +515,26 @@ function resolveFlightReferenceTimeMs(flight: TrackedFlight): number | null {
   return null;
 }
 
+function resolveLegArrivalTimeMs(leg: FriendFlightLeg): number | null {
+  const candidateValues = [
+    typeof leg.arrivalTime === 'string' ? leg.arrivalTime : null,
+    typeof leg.validatedFlight?.matchedArrivalTime === 'string' ? leg.validatedFlight.matchedArrivalTime : null,
+  ];
+
+  for (const value of candidateValues) {
+    if (!value) {
+      continue;
+    }
+
+    const parsed = Date.parse(value);
+    if (Number.isFinite(parsed)) {
+      return parsed;
+    }
+  }
+
+  return null;
+}
+
 function hasTrackedFlightTelemetry(flight: TrackedFlight): boolean {
   return flight.current != null
     || flight.originPoint != null
@@ -547,14 +567,26 @@ function isFlightTimingPlausibleForLeg(
   }
 
   const referenceTime = resolvedReferenceTime ?? now;
+  const scheduledArrivalTime = resolveLegArrivalTimeMs(leg);
+  const latestScheduledTime = scheduledArrivalTime != null && scheduledArrivalTime >= scheduledTime
+    ? scheduledArrivalTime
+    : scheduledTime;
   const matchWindowHours = options?.isLockedMatch ? AUTO_LOCK_WINDOW_HOURS : FLIGHT_MATCH_WINDOW_HOURS;
   const matchWindowMs = matchWindowHours * 60 * 60 * 1000;
 
-  if (!options?.isLockedMatch && !isSameServiceDay(referenceTime, scheduledTime, leg.departureTimezone)) {
-    return false;
+  if (!options?.isLockedMatch) {
+    const matchesDepartureServiceDay = isSameServiceDay(referenceTime, scheduledTime, leg.departureTimezone);
+    const matchesArrivalServiceDay = scheduledArrivalTime != null
+      ? isSameServiceDay(referenceTime, scheduledArrivalTime, leg.departureTimezone)
+      : false;
+
+    if (!matchesDepartureServiceDay && !matchesArrivalServiceDay) {
+      return false;
+    }
   }
 
-  return Math.abs(referenceTime - scheduledTime) <= matchWindowMs;
+  return referenceTime >= (scheduledTime - matchWindowMs)
+    && referenceTime <= (latestScheduledTime + matchWindowMs);
 }
 
 export function normalizeFriendFlightIdentifier(value: string | null | undefined): string {
@@ -1054,13 +1086,18 @@ export function findMatchingTrackedFlightsForLeg(
   now = Date.now(),
 ): TrackedFlight[] {
   const lockedIcao24 = normalizeConfiguredResolvedIcao24(leg.resolvedIcao24);
+  const normalizedFlightNumber = normalizeConfiguredFlightNumber(leg.flightNumber);
+
   if (lockedIcao24) {
-    return flights
+    const lockedMatches = flights
       .filter((flight) => normalizeFriendFlightIdentifier(flight.icao24) === lockedIcao24)
       .filter((flight) => isFlightTimingPlausibleForLeg(flight, leg, now, { isLockedMatch: true }));
+
+    if (lockedMatches.length > 0 || !normalizedFlightNumber) {
+      return lockedMatches;
+    }
   }
 
-  const normalizedFlightNumber = normalizeConfiguredFlightNumber(leg.flightNumber);
   if (!normalizedFlightNumber) {
     return [];
   }
