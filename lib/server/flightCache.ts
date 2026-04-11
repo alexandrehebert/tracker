@@ -144,7 +144,7 @@ function getConfiguredHistoryLimit(envName: string, defaultValue: number): numbe
   return parsedValue <= 0 ? Number.POSITIVE_INFINITY : parsedValue;
 }
 
-async function mergeTrackerPayloadWithHistoricalFlights(payload: TrackerApiResponse): Promise<TrackerApiResponse> {
+export async function mergeTrackerPayloadWithHistoricalFlights(payload: TrackerApiResponse): Promise<TrackerApiResponse> {
   const unresolvedIdentifiers = Array.from(
     new Set(payload.notFoundIdentifiers.map((identifier) => normalizeHistoryIdentifier(identifier)).filter(Boolean)),
   );
@@ -1065,18 +1065,49 @@ async function getSharedFlightCollection(): Promise<Collection<SharedFlightCache
   }
 }
 
+function getSharedFlightIdentifierCandidates(flight: Pick<TrackedFlight, 'icao24' | 'callsign' | 'flightNumber' | 'matchedBy'>): string[] {
+  return Array.from(
+    new Set([
+      normalizeHistoryIdentifier(flight.icao24),
+      normalizeHistoryIdentifier(flight.callsign),
+      normalizeHistoryIdentifier(flight.flightNumber ?? null),
+      ...(flight.matchedBy ?? []).map((value) => normalizeHistoryIdentifier(value)),
+    ].filter(Boolean)),
+  );
+}
+
 async function readSharedFlightCache(icao24: string): Promise<TrackedFlight | null> {
-  const cacheKey = normalizeHistoryIdentifier(icao24).toLowerCase();
+  const normalizedIdentifier = normalizeHistoryIdentifier(icao24);
+  const cacheKey = normalizedIdentifier.toLowerCase();
   if (!cacheKey) {
     return null;
   }
 
   const storedFlight = await readStoredSharedFlightCachePayload(cacheKey);
-  if (!storedFlight) {
+  if (storedFlight) {
+    return hydrateSharedFlightArchive(cacheKey, storedFlight);
+  }
+
+  const collection = await getSharedFlightCollection();
+  if (!collection) {
     return null;
   }
 
-  return hydrateSharedFlightArchive(cacheKey, storedFlight);
+  try {
+    const candidateDocuments = await collection.find({}).toArray();
+    const matchingDocument = candidateDocuments
+      .filter((document) => Boolean(document?.payload) && getSharedFlightIdentifierCandidates(document.payload).includes(normalizedIdentifier))
+      .sort((left, right) => right.updatedAt.getTime() - left.updatedAt.getTime())[0];
+
+    if (!matchingDocument) {
+      return null;
+    }
+
+    return hydrateSharedFlightArchive(matchingDocument._id, matchingDocument.payload);
+  } catch (error) {
+    logMongoWarning(error);
+    return null;
+  }
 }
 
 async function writeSharedFlightCache(flight: TrackedFlight): Promise<TrackedFlight> {

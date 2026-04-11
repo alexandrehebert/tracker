@@ -844,6 +844,120 @@ describe('searchFlights', () => {
     ]);
   });
 
+  it('returns a shared historical match for cache-only AF345 lookups even when only a synthetic provider ICAO24 was stored', async () => {
+    process.env.MONGODB_URI = 'mongodb://mocked-mongo:27017/tracker';
+
+    const sharedFlightStore = getMockMongoCollection('tracker', 'shared_flight_cache');
+    sharedFlightStore.set('fa-afr345-1775628379-airline-348p', {
+      _id: 'fa-afr345-1775628379-airline-348p',
+      updatedAt: new Date('2026-04-11T09:15:00.000Z'),
+      payload: {
+        icao24: 'FA-AFR345-1775628379-AIRLINE-348P',
+        callsign: 'AFR345',
+        flightNumber: '345',
+        originCountry: 'France',
+        matchedBy: ['AF345', 'AFR345', '345'],
+        lastContact: 1_775_885_280,
+        current: {
+          time: 1_775_885_280,
+          latitude: 49.0097,
+          longitude: 2.5479,
+          x: 600,
+          y: 210,
+          altitude: 0,
+          heading: 96,
+          onGround: true,
+        },
+        originPoint: {
+          time: 1_775_862_360,
+          latitude: 45.4706,
+          longitude: -73.7408,
+          x: 250,
+          y: 230,
+          altitude: 0,
+          heading: 62,
+          onGround: true,
+        },
+        track: [
+          {
+            time: 1_775_862_360,
+            latitude: 45.4706,
+            longitude: -73.7408,
+            x: 250,
+            y: 230,
+            altitude: 0,
+            heading: 62,
+            onGround: true,
+          },
+          {
+            time: 1_775_885_280,
+            latitude: 49.0097,
+            longitude: 2.5479,
+            x: 600,
+            y: 210,
+            altitude: 0,
+            heading: 96,
+            onGround: true,
+          },
+        ],
+        rawTrack: [
+          {
+            time: 1_775_862_360,
+            latitude: 45.4706,
+            longitude: -73.7408,
+            x: 250,
+            y: 230,
+            altitude: 0,
+            heading: 62,
+            onGround: true,
+          },
+          {
+            time: 1_775_885_280,
+            latitude: 49.0097,
+            longitude: 2.5479,
+            x: 600,
+            y: 210,
+            altitude: 0,
+            heading: 96,
+            onGround: true,
+          },
+        ],
+        onGround: true,
+        velocity: 0,
+        heading: 96,
+        verticalRate: 0,
+        geoAltitude: 0,
+        baroAltitude: 0,
+        squawk: null,
+        category: null,
+        route: {
+          departureAirport: 'YUL',
+          arrivalAirport: 'CDG',
+          firstSeen: 1_775_862_360,
+          lastSeen: 1_775_885_280,
+        },
+        dataSource: 'hybrid',
+        sourceDetails: [],
+        fetchHistory: [],
+      },
+    });
+
+    const searchFlights = await loadSearchFlights();
+    const result = await searchFlights('AF345', { cacheOnly: true });
+
+    expect(result.matchedIdentifiers).toEqual(['AF345']);
+    expect(result.notFoundIdentifiers).toEqual([]);
+    expect(result.flights[0]).toEqual(expect.objectContaining({
+      icao24: 'FA-AFR345-1775628379-AIRLINE-348P',
+      matchedBy: expect.arrayContaining(['AF345']),
+      route: expect.objectContaining({
+        departureAirport: 'YUL',
+        arrivalAirport: 'CDG',
+      }),
+    }));
+    expect(result.flights[0]?.track).toHaveLength(2);
+  });
+
   it('bypasses the cached AirLabs live snapshot when forceRefresh is requested', async () => {
     delete process.env.OPENSKY_CLIENT_ID;
     delete process.env.OPENSKY_CLIENT_SECRET;

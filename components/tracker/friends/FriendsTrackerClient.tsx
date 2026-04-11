@@ -1581,13 +1581,23 @@ function FriendsTrackerDashboard({
       }
 
       setData(payload);
+
+      const shouldRequestLiveHydration = !forceRefresh
+        && payload.notFoundIdentifiers.length > 0
+        && (config.cronEnabled === false || payload.matchedIdentifiers.length === 0);
+
+      if (shouldRequestLiveHydration) {
+        queueMicrotask(() => {
+          void runSearch({ background: true, forceRefresh: true });
+        });
+      }
     } catch (caughtError) {
       setError(caughtError instanceof Error ? caughtError.message : 'Unable to fetch the Chantal crew flights.');
     } finally {
       setIsLoading(false);
       setIsRefreshing(false);
     }
-  }, [identifiersQuery]);
+  }, [config.cronEnabled, identifiersQuery]);
 
   useEffect(() => {
     void runSearch();

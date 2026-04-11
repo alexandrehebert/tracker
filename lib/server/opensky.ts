@@ -50,6 +50,7 @@ export {
 export type { OpenSkyTokenStatus };
 import { lookupAirportDetails } from './airports';
 import {
+  mergeTrackerPayloadWithHistoricalFlights,
   readFlightSearchCache,
   writeFlightSearchCache,
 } from './flightCache';
@@ -2404,14 +2405,18 @@ export async function searchFlights(query: string, options: SearchFlightsOptions
   }
 
   if (options.cacheOnly) {
-    return mergeWithDemoPayload({
-      query: trimmedQuery,
-      requestedIdentifiers,
-      matchedIdentifiers: [],
-      notFoundIdentifiers: remainingIdentifiers,
-      fetchedAt: Date.now(),
-      flights: [],
-    });
+    const historicalCacheOnlyPayload = await hydrateTrackerPayloadWithAirportFallbacks(
+      await mergeTrackerPayloadWithHistoricalFlights({
+        query: trimmedQuery,
+        requestedIdentifiers,
+        matchedIdentifiers: [],
+        notFoundIdentifiers: remainingIdentifiers,
+        fetchedAt: Date.now(),
+        flights: [],
+      }),
+    );
+
+    return mergeWithDemoPayload(historicalCacheOnlyPayload);
   }
 
   const existingSearch = inFlightSearches.get(inFlightKey);

@@ -1227,6 +1227,114 @@ describe('FriendsTrackerClient', () => {
     });
   });
 
+  it('falls back to a live refresh when the initial Chantal cache-only lookup is empty', async () => {
+    const nowMs = Date.now();
+    const nowSeconds = Math.floor(nowMs / 1000);
+    const fetchMock = vi.spyOn(window, 'fetch')
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            query: 'AF345',
+            requestedIdentifiers: ['AF345'],
+            matchedIdentifiers: [],
+            notFoundIdentifiers: ['AF345'],
+            fetchedAt: nowMs,
+            flights: [],
+          }),
+          {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          },
+        ),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            query: 'AF345',
+            requestedIdentifiers: ['AF345'],
+            matchedIdentifiers: ['AF345'],
+            notFoundIdentifiers: [],
+            fetchedAt: nowMs + 1_000,
+            flights: [
+              {
+                icao24: 'fa-afr345-yul-cdg',
+                callsign: 'AFR345',
+                flightNumber: '345',
+                originCountry: 'France',
+                matchedBy: ['AF345'],
+                lastContact: nowSeconds - (20 * 60),
+                current: null,
+                originPoint: null,
+                track: [],
+                rawTrack: [],
+                onGround: false,
+                velocity: null,
+                heading: null,
+                verticalRate: null,
+                geoAltitude: null,
+                baroAltitude: null,
+                squawk: null,
+                category: null,
+                route: {
+                  departureAirport: 'YUL',
+                  arrivalAirport: 'CDG',
+                  firstSeen: nowSeconds - (7 * 60 * 60),
+                  lastSeen: nowSeconds - (20 * 60),
+                },
+                dataSource: 'airlabs',
+                sourceDetails: [],
+              },
+            ],
+          }),
+          {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          },
+        ),
+      );
+
+    render(
+      <FriendsTrackerClient
+        map={map}
+        initialConfig={{
+          ...initialConfig,
+          cronEnabled: false,
+          destinationAirport: 'SIN',
+          friends: [
+            {
+              id: 'friend-alex',
+              name: 'Alex',
+              flights: [
+                {
+                  id: 'leg-alex-1',
+                  flightNumber: 'AF345',
+                  departureTime: new Date(nowMs - (7 * 60 * 60 * 1000)).toISOString(),
+                  arrivalTime: new Date(nowMs - (20 * 60 * 1000)).toISOString(),
+                  from: 'YUL',
+                  to: 'CDG',
+                },
+              ],
+            },
+          ],
+        }}
+        airportMarkers={[
+          { id: 'yul', code: 'YUL', label: 'Montreal Trudeau', latitude: 45.4706, longitude: -73.7408, usage: 'both' },
+          { id: 'cdg', code: 'CDG', label: 'Paris Charles de Gaulle', latitude: 49.0097, longitude: 2.5479, usage: 'both' },
+        ]}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledTimes(2);
+      expect(fetchMock.mock.calls[1]?.[0]).toContain('refresh=1');
+    });
+
+    await waitFor(() => {
+      const visibleFlights = latestFlightMapProps?.flights as Array<{ icao24: string }> | undefined;
+      expect(visibleFlights?.map((flight) => flight.icao24)).toContain('fa-afr345-yul-cdg');
+    });
+  });
+
   it('marks last-known map avatars as stale after extended silence in live mode', async () => {
     const nowMs = Date.now();
     const nowSeconds = Math.floor(nowMs / 1000);
