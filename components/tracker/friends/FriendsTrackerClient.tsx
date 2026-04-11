@@ -27,6 +27,7 @@ import {
   normalizeFriendsTrackerConfig,
   parseDestinationAirportCodes,
   resolveFriendAccentColor,
+  normalizeFriendFlightIdentifier,
   type FriendFlightLeg,
   type FriendFlightStatus,
   type FriendsTrackerConfig,
@@ -63,6 +64,8 @@ const WAYBACK_LIVE_THRESHOLD_MS = 60 * 1000;
 const WAYBACK_RETURN_TO_LIVE_THRESHOLD_MS = Math.max(WAYBACK_LIVE_THRESHOLD_MS, WAYBACK_STEP_MS);
 const WAYBACK_PRE_TELEMETRY_LEAD_IN_MS = 15 * 60 * 1000;
 const STALE_LAST_KNOWN_THRESHOLD_MS = 20 * 60 * 1000;
+const TRACKER_ROUTE_REFRESH_SIGNAL_KEY = 'chantal-route-refresh-signal';
+const TRACKER_ROUTE_REFRESH_SIGNAL_MAX_AGE_MS = 5 * 60 * 1000;
 
 function snapWaybackSliderValue(valueMs: number, startMs: number, endMs: number): number {
   const clampedValueMs = Math.min(Math.max(valueMs, startMs), endMs);
@@ -1248,9 +1251,14 @@ function FriendsTrackerDashboard({
   const [selectedMapAirport, setSelectedMapAirport] = useState<FlightMapAirportMarker | null>(null);
   const [selectedFriendId, setSelectedFriendId] = useState<string | null>(null);
   const autoLockSignatureRef = useRef<string | null>(null);
+  const processedRefreshSignalAtRef = useRef<number>(0);
   const { startRouteLoading, stopRouteLoading } = useGlobalRouteLoading();
 
   const identifiers = useMemo(() => extractFriendTrackerIdentifiers(config), [config]);
+  const normalizedIdentifiers = useMemo(
+    () => identifiers.map((identifier) => normalizeFriendFlightIdentifier(identifier)).filter(Boolean),
+    [identifiers],
+  );
   const identifiersQuery = identifiers.join(',');
   const nowMs = Date.now();
   const liveTimeMs = data?.fetchedAt != null && Number.isFinite(data.fetchedAt)
@@ -1612,6 +1620,69 @@ function FriendsTrackerDashboard({
       setIsRefreshing(false);
     }
   }, [config.cronEnabled, identifiersQuery]);
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || normalizedIdentifiers.length === 0) {
+      return;
+    }
+
+    const maybeTriggerRefresh = (signal: { at?: number; identifiers?: string[] } | null | undefined) => {
+      const signalAt = typeof signal?.at === 'number' && Number.isFinite(signal.at) ? signal.at : null;
+      if (signalAt == null || signalAt <= processedRefreshSignalAtRef.current) {
+        return;
+      }
+
+      if (Date.now() - signalAt > TRACKER_ROUTE_REFRESH_SIGNAL_MAX_AGE_MS) {
+        return;
+      }
+
+      const signalIdentifiers = Array.isArray(signal?.identifiers)
+        ? signal.identifiers.map((identifier) => normalizeFriendFlightIdentifier(identifier)).filter(Boolean)
+        : [];
+      const isRelevant = signalIdentifiers.length === 0
+        || signalIdentifiers.some((identifier) => normalizedIdentifiers.includes(identifier));
+
+      if (!isRelevant) {
+        return;
+      }
+
+      processedRefreshSignalAtRef.current = signalAt;
+      void runSearch({ background: true, forceRefresh: true });
+    };
+
+    const handleStorage = (event: StorageEvent) => {
+      if (event.key !== TRACKER_ROUTE_REFRESH_SIGNAL_KEY || !event.newValue) {
+        return;
+      }
+
+      try {
+        maybeTriggerRefresh(JSON.parse(event.newValue) as { at?: number; identifiers?: string[] });
+      } catch {
+        // Ignore malformed refresh signals.
+      }
+    };
+
+    const handleCustomRefresh = (event: Event) => {
+      maybeTriggerRefresh((event as CustomEvent<{ at?: number; identifiers?: string[] }>).detail);
+    };
+
+    try {
+      const initialSignal = window.localStorage.getItem(TRACKER_ROUTE_REFRESH_SIGNAL_KEY);
+      if (initialSignal) {
+        maybeTriggerRefresh(JSON.parse(initialSignal) as { at?: number; identifiers?: string[] });
+      }
+    } catch {
+      // Ignore storage read issues and keep the normal polling behavior.
+    }
+
+    window.addEventListener('storage', handleStorage);
+    window.addEventListener('chantal:tracker-refresh', handleCustomRefresh as EventListener);
+
+    return () => {
+      window.removeEventListener('storage', handleStorage);
+      window.removeEventListener('chantal:tracker-refresh', handleCustomRefresh as EventListener);
+    };
+  }, [normalizedIdentifiers, runSearch]);
 
   useEffect(() => {
     void runSearch();

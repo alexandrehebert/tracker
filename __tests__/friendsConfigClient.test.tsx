@@ -1370,6 +1370,10 @@ describe('FriendsConfigClient', () => {
     });
 
     expect(await screen.findByText(/Route\/track refresh finished for AF123/i)).toBeInTheDocument();
+
+    const refreshSignalRaw = window.localStorage.getItem('chantal-route-refresh-signal');
+    expect(refreshSignalRaw).not.toBeNull();
+    expect(refreshSignalRaw).toContain('AF123');
   });
 
   it('keeps the save bar above group trips and highlights it when there are pending changes', async () => {

@@ -1351,10 +1351,27 @@ export function FriendsConfigProvider({
         return;
       }
 
+      if (hasRouteData && typeof window !== 'undefined') {
+        const refreshSignal = {
+          at: Date.now(),
+          identifiers,
+        };
+
+        try {
+          window.localStorage.setItem('chantal-route-refresh-signal', JSON.stringify(refreshSignal));
+        } catch {
+          // Ignore storage write issues and still notify any same-tab listeners.
+        }
+
+        window.dispatchEvent(new CustomEvent('chantal:tracker-refresh', {
+          detail: refreshSignal,
+        }));
+      }
+
       setNotice({
         type: hasRouteData ? 'success' : 'error',
         text: hasRouteData
-          ? `Route/track refresh finished for ${displayIdentifier}.`
+          ? `Route/track refresh finished for ${displayIdentifier}. Any open tracker map will refresh automatically.`
           : `Force refresh ran for ${displayIdentifier}, but route/track data is still unavailable from the providers.`,
       });
     } catch (error) {

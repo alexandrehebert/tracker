@@ -1227,6 +1227,126 @@ describe('FriendsTrackerClient', () => {
     });
   });
 
+  it('reacts to a route-seed refresh signal by forcing an immediate tracker refresh', async () => {
+    const nowMs = Date.UTC(2026, 3, 11, 9, 40);
+    const nowSeconds = Math.floor(nowMs / 1000);
+    const fetchMock = vi.spyOn(window, 'fetch');
+
+    fetchMock
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        query: 'AF123',
+        requestedIdentifiers: ['AF123'],
+        matchedIdentifiers: [],
+        notFoundIdentifiers: ['AF123'],
+        fetchedAt: nowMs,
+        flights: [],
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        query: 'AF123',
+        requestedIdentifiers: ['AF123'],
+        matchedIdentifiers: ['AF123'],
+        notFoundIdentifiers: [],
+        fetchedAt: nowMs + 1_000,
+        flights: [
+          {
+            icao24: '3c675a',
+            callsign: 'AF123',
+            flightNumber: 'AF123',
+            originCountry: 'France',
+            matchedBy: ['AF123'],
+            lastContact: nowSeconds,
+            current: {
+              time: nowSeconds,
+              latitude: 48.9,
+              longitude: 2.4,
+              x: 420,
+              y: 220,
+              altitude: 10300,
+              heading: 280,
+              onGround: false,
+            },
+            originPoint: null,
+            track: [],
+            rawTrack: [],
+            onGround: false,
+            velocity: 240,
+            heading: 280,
+            verticalRate: 0,
+            geoAltitude: 10300,
+            baroAltitude: 10350,
+            squawk: '2201',
+            category: 1,
+            route: {
+              departureAirport: 'CDG',
+              arrivalAirport: 'LIS',
+              firstSeen: nowSeconds - 3600,
+              lastSeen: null,
+            },
+            dataSource: 'opensky',
+            sourceDetails: [],
+          },
+        ],
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      }));
+
+    const trackedFriend = {
+      ...initialConfig.friends[0]!,
+      flights: [
+        {
+          id: 'leg-1',
+          flightNumber: 'AF123',
+          departureTime: new Date(nowMs - 45 * 60 * 1000).toISOString(),
+          from: 'CDG',
+          to: 'LIS',
+        },
+      ],
+    };
+
+    render(
+      <FriendsTrackerClient
+        map={map}
+        initialConfig={{
+          ...initialConfig,
+          currentTripId: 'main-trip',
+          destinationAirport: 'LIS',
+          trips: [
+            {
+              id: 'main-trip',
+              name: 'Main trip',
+              destinationAirport: 'LIS',
+              isDemo: false,
+              friends: [trackedFriend],
+            },
+          ],
+          friends: [trackedFriend],
+        }}
+        airportMarkers={[
+          { id: 'cdg', code: 'CDG', label: 'Paris CDG', latitude: 49.0097, longitude: 2.5479, usage: 'both' },
+          { id: 'lis', code: 'LIS', label: 'Lisbon', latitude: 38.7742, longitude: -9.1342, usage: 'both' },
+        ]}
+      />,
+    );
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith('/api/tracker?q=AF123&cacheonly=1', expect.objectContaining({ cache: 'no-store' }));
+    });
+
+    window.dispatchEvent(new CustomEvent('chantal:tracker-refresh', {
+      detail: { at: nowMs + 5_000, identifiers: ['AF123'] },
+    }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith('/api/tracker?q=AF123&refresh=1', expect.objectContaining({ cache: 'no-store' }));
+      const visibleFlights = (latestFlightMapProps?.flights as Array<{ icao24?: string }> | undefined) ?? [];
+      expect(visibleFlights.map((flight) => flight.icao24)).toContain('3c675a');
+    });
+  });
+
   it('falls back to a live refresh when the initial Chantal cache-only lookup is empty', async () => {
     const nowMs = Date.now();
     const nowSeconds = Math.floor(nowMs / 1000);
