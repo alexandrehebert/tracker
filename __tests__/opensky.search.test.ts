@@ -844,6 +844,80 @@ describe('searchFlights', () => {
     ]);
   });
 
+  it('pins an on-ground provider-only match to the arrival airport even when route timestamps are missing', async () => {
+    delete process.env.OPENSKY_CLIENT_ID;
+    delete process.env.OPENSKY_CLIENT_SECRET;
+    delete process.env.AVIATION_STACK_API_KEY;
+    delete process.env.FLIGHT_AWARE_API_KEY;
+    delete process.env.FLIGHTAWARE_API_KEY;
+    process.env.AIRLABS_API_KEY = 'airlabs-key';
+
+    vi.doMock('~/lib/server/airports', () => ({
+      lookupAirportDetails: vi.fn(async (code: string) => {
+        if (code === 'YUL') {
+          return {
+            code: 'YUL', iata: 'YUL', icao: 'CYUL', name: 'Montréal–Trudeau', city: 'Montreal', country: 'Canada',
+            latitude: 45.4706, longitude: -73.7408, timezone: 'America/Toronto',
+          };
+        }
+        if (code === 'CDG') {
+          return {
+            code: 'CDG', iata: 'CDG', icao: 'LFPG', name: 'Paris Charles de Gaulle', city: 'Paris', country: 'France',
+            latitude: 49.0097, longitude: 2.5479, timezone: 'Europe/Paris',
+          };
+        }
+        return null;
+      }),
+    }));
+
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      response: {
+        hex: null,
+        reg_number: 'F-GZNF',
+        aircraft_icao: 'B77W',
+        airline_iata: 'AF',
+        airline_icao: 'AFR',
+        airline_name: 'Air France',
+        flight_number: '345',
+        flight_icao: 'AFR345',
+        flight_iata: 'AF345',
+        dep_iata: 'YUL',
+        dep_icao: 'CYUL',
+        dep_name: 'Montreal Trudeau',
+        arr_iata: 'CDG',
+        arr_icao: 'LFPG',
+        arr_name: 'Paris Charles de Gaulle',
+        updated: null,
+        lat: null,
+        lng: null,
+        alt: null,
+        dir: null,
+        speed: null,
+        status: 'landed',
+        model: 'Boeing 777-300ER',
+      },
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }));
+
+    vi.stubGlobal('fetch', fetchMock);
+
+    const searchFlights = await loadSearchFlights();
+    const result = await searchFlights('AF345', { forceRefresh: true });
+
+    expect(result.flights[0]?.current).toEqual(expect.objectContaining({
+      latitude: 49.0097,
+      longitude: 2.5479,
+      onGround: true,
+    }));
+    expect(result.flights[0]?.originPoint).toEqual(expect.objectContaining({
+      latitude: 45.4706,
+      longitude: -73.7408,
+      onGround: true,
+    }));
+  });
+
   it('returns a shared historical match for cache-only AF345 lookups even when only a synthetic provider ICAO24 was stored', async () => {
     process.env.MONGODB_URI = 'mongodb://mocked-mongo:27017/tracker';
 

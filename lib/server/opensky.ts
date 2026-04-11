@@ -1996,6 +1996,63 @@ function dedupeFallbackPoints(points: Array<FlightMapPoint | null | undefined>):
   });
 }
 
+function resolveFallbackRouteEvidenceTimes(flight: TrackedFlight): { firstSeen: number | null; lastSeen: number | null } {
+  const firstSeenCandidates: number[] = [];
+  const lastSeenCandidates: number[] = [];
+
+  const collectRouteTimes = (route: { firstSeen?: number | null; lastSeen?: number | null } | null | undefined) => {
+    const firstSeen = normalizeUnixSeconds(route?.firstSeen);
+    const lastSeen = normalizeUnixSeconds(route?.lastSeen);
+
+    if (firstSeen != null) {
+      firstSeenCandidates.push(firstSeen);
+    }
+
+    if (lastSeen != null) {
+      lastSeenCandidates.push(lastSeen);
+    }
+  };
+
+  const collectSourceDetails = (details: FlightSourceDetail[] | undefined) => {
+    for (const detail of details ?? []) {
+      const raw = detail.raw;
+      if (!raw || typeof raw !== 'object') {
+        continue;
+      }
+
+      const record = raw as Record<string, unknown>;
+      const nestedMatch = record.match;
+      const nestedRoute = nestedMatch && typeof nestedMatch === 'object'
+        ? (nestedMatch as Record<string, unknown>).route
+        : record.route;
+
+      if (nestedRoute && typeof nestedRoute === 'object') {
+        collectRouteTimes(nestedRoute as { firstSeen?: number | null; lastSeen?: number | null });
+      }
+    }
+  };
+
+  collectRouteTimes(flight.route);
+  collectSourceDetails(flight.sourceDetails);
+
+  for (const snapshot of flight.fetchHistory ?? []) {
+    collectRouteTimes(snapshot.route);
+    if (typeof snapshot.current?.time === 'number' && Number.isFinite(snapshot.current.time)) {
+      lastSeenCandidates.push(snapshot.current.time);
+    }
+    collectSourceDetails(snapshot.sourceDetails);
+  }
+
+  if (typeof flight.lastContact === 'number' && Number.isFinite(flight.lastContact)) {
+    lastSeenCandidates.push(flight.lastContact);
+  }
+
+  return {
+    firstSeen: firstSeenCandidates.length > 0 ? Math.min(...firstSeenCandidates) : null,
+    lastSeen: lastSeenCandidates.length > 0 ? Math.max(...lastSeenCandidates) : null,
+  };
+}
+
 async function hydrateTrackerPayloadWithAirportFallbacks(payload: TrackerApiResponse): Promise<TrackerApiResponse> {
   const airportCodes = new Set<string>();
 
@@ -2031,13 +2088,14 @@ async function hydrateTrackerPayloadWithAirportFallbacks(payload: TrackerApiResp
     const arrivalCode = normalizeIdentifier(flight.route.arrivalAirport ?? '');
     const departureAirport = departureCode ? airportLookup.get(departureCode) ?? null : null;
     const arrivalAirport = arrivalCode ? airportLookup.get(arrivalCode) ?? null : null;
+    const routeTimes = resolveFallbackRouteEvidenceTimes(flight);
     const departurePoint = createAirportFallbackPoint(
       departureAirport,
-      flight.route.firstSeen ?? flight.lastContact ?? flight.route.lastSeen ?? null,
+      routeTimes.firstSeen ?? flight.lastContact ?? routeTimes.lastSeen ?? null,
     );
     const arrivalPoint = createAirportFallbackPoint(
       arrivalAirport,
-      flight.route.lastSeen ?? flight.lastContact ?? flight.route.firstSeen ?? null,
+      routeTimes.lastSeen ?? flight.lastContact ?? routeTimes.firstSeen ?? null,
     );
     const fallbackRoute = dedupeFallbackPoints([departurePoint, arrivalPoint]);
 
@@ -2046,19 +2104,25 @@ async function hydrateTrackerPayloadWithAirportFallbacks(payload: TrackerApiResp
     }
 
     const originPoint = flight.originPoint ?? departurePoint ?? fallbackRoute[0] ?? null;
+    const shouldPreferArrivalPoint = flight.onGround || routeTimes.lastSeen != null;
     const currentPoint = flight.current
-      ?? (flight.route.lastSeen != null
+      ?? (shouldPreferArrivalPoint
         ? arrivalPoint ?? fallbackRoute.at(-1) ?? originPoint
         : departurePoint ?? arrivalPoint ?? fallbackRoute.at(-1) ?? originPoint);
 
     return {
       ...flight,
-      lastContact: flight.lastContact ?? currentPoint?.time ?? flight.route.lastSeen ?? flight.route.firstSeen ?? null,
+      lastContact: flight.lastContact ?? currentPoint?.time ?? routeTimes.lastSeen ?? routeTimes.firstSeen ?? null,
       current: currentPoint,
       originPoint,
       track: flight.track.length > 0 ? flight.track : fallbackRoute,
       rawTrack: (flight.rawTrack?.length ?? 0) > 0 ? (flight.rawTrack ?? []) : (flight.track.length > 0 ? flight.track : fallbackRoute),
-      onGround: flight.onGround || currentPoint?.onGround === true || flight.route.lastSeen != null,
+      route: {
+        ...flight.route,
+        firstSeen: flight.route.firstSeen ?? routeTimes.firstSeen,
+        lastSeen: flight.route.lastSeen ?? routeTimes.lastSeen,
+      },
+      onGround: flight.onGround || currentPoint?.onGround === true || routeTimes.lastSeen != null,
       heading: flight.heading ?? currentPoint?.heading ?? null,
       geoAltitude: flight.geoAltitude ?? currentPoint?.altitude ?? null,
     } satisfies TrackedFlight;
