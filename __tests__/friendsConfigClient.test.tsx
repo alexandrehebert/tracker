@@ -233,6 +233,13 @@ describe('FriendsConfigClient', () => {
         });
       }
 
+      if (url.includes('/api/tracker/cron/config')) {
+        return new Response(JSON.stringify(initialCronDashboard), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
       if (url.includes('/api/chantal/config') && init?.method === 'PUT') {
         const body = typeof init.body === 'string' ? init.body : JSON.stringify(initialConfig);
         return new Response(body, {
@@ -1289,6 +1296,80 @@ describe('FriendsConfigClient', () => {
         body: expect.stringContaining('"includeOnDemandProviders":true'),
       }));
     });
+  });
+
+  it('forces a targeted route refresh for a single leg', async () => {
+    const user = userEvent.setup();
+    const fetchMock = vi.mocked(window.fetch);
+
+    fetchMock.mockImplementation(async (input, init) => {
+      const url = typeof input === 'string'
+        ? input
+        : input instanceof URL
+          ? input.toString()
+          : input.url;
+
+      if (url.includes('/api/airports')) {
+        return new Response(JSON.stringify(airportDirectoryResponse), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      if (url.includes('/api/tracker/cron/enrichment')) {
+        return new Response(JSON.stringify({
+          status: 'success',
+          identifiers: ['AF123'],
+        }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      if (url.includes('/api/tracker?q=AF123&refresh=1')) {
+        return new Response(JSON.stringify({
+          matchedIdentifiers: ['AF123'],
+          notFoundIdentifiers: [],
+          flights: [
+            {
+              icao24: '3C675A',
+              route: {
+                departureAirport: 'CDG',
+                arrivalAirport: 'AMS',
+              },
+              originPoint: { latitude: 49.0097, longitude: 2.5479 },
+              current: { latitude: 52.3105, longitude: 4.7683 },
+              track: [{ latitude: 50.5, longitude: 3.2 }],
+            },
+          ],
+        }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      return new Response(JSON.stringify(initialConfig), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      });
+    });
+
+    render(<FriendsConfigClient initialConfig={initialConfig} initialCronDashboard={initialCronDashboard} />);
+
+    const aliceCard = screen.getByDisplayValue('Alice').closest('section');
+    expect(aliceCard).not.toBeNull();
+
+    await user.click(within(aliceCard as HTMLElement).getByRole('button', { name: /force refresh route for leg 1/i }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith('/api/tracker/cron/enrichment', expect.objectContaining({
+        method: 'POST',
+        body: expect.stringContaining('"AF123"'),
+      }));
+      expect(fetchMock).toHaveBeenCalledWith('/api/tracker?q=AF123&refresh=1');
+    });
+
+    expect(await screen.findByText(/Route\/track refresh finished for AF123/i)).toBeInTheDocument();
   });
 
   it('keeps the save bar above group trips and highlights it when there are pending changes', async () => {

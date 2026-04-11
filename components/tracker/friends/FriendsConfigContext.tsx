@@ -6,10 +6,12 @@ import type { AirportDirectoryResponse } from '~/components/tracker/flight/types
 import {
   extractFriendTrackerIdentifiers,
   getCurrentTripConfig,
+  normalizeConfiguredFlightNumber,
   normalizeFriendFlightIdentifier,
   normalizeFriendsTrackerConfig,
   resolveSuggestedFlightNumber,
   normalizeFriendsTrackerTripConfig,
+  type FriendFlightLeg,
   type FriendFlightValidationProviderSnapshot,
   type FriendTravelConfig,
   type FriendsTrackerConfig,
@@ -240,6 +242,16 @@ function countSelectedValidationProviders(selection: FlightValidationProviderSel
   return Object.values(selection).filter(Boolean).length;
 }
 
+function getFlightLegRefreshIdentifiers(leg: Pick<FriendFlightLeg, 'flightNumber' | 'resolvedIcao24'>): string[] {
+  const normalizedFlightNumber = normalizeConfiguredFlightNumber(leg.flightNumber);
+  const normalizedIcao24 = normalizeFriendFlightIdentifier(leg.resolvedIcao24);
+
+  return Array.from(new Set([
+    normalizedFlightNumber,
+    /^[0-9A-F]{6}$/.test(normalizedIcao24) ? normalizedIcao24 : '',
+  ].filter(Boolean)));
+}
+
 function toValidationTimestamp(value: string | null | undefined): number | null {
   if (typeof value !== 'string' || !value.trim()) {
     return null;
@@ -394,6 +406,7 @@ export interface FriendsConfigContextValue {
   hasValidationErrors: boolean;
   availableValidationProviders: FlightValidationProviderSelection;
   flightValidationResults: Record<string, FlightProviderValidationResult>;
+  refreshingLegIds: Record<string, boolean>;
   validationModal: FlightValidationModalState | null;
   // Actions
   updateTrip: (tripId: string, updater: (trip: FriendsTrackerTripConfig) => FriendsTrackerTripConfig) => void;
@@ -405,6 +418,7 @@ export interface FriendsConfigContextValue {
   addTrip: () => void;
   handleCronToggle: (nextValue: boolean) => Promise<void>;
   handleRunCronNow: () => Promise<void>;
+  forceRefreshFlightLeg: (friendId: string, legId: string) => Promise<void>;
   validateFlightLeg: (friendId: string, legId: string) => Promise<void>;
   runValidationModal: () => Promise<void>;
   toggleValidationProvider: (providerId: FlightValidationProviderId) => void;
@@ -460,6 +474,7 @@ export function FriendsConfigProvider({
   const [isSaving, setIsSaving] = useState(false);
   const [isSavingCronToggle, setIsSavingCronToggle] = useState(false);
   const [isRunningCron, setIsRunningCron] = useState(false);
+  const [refreshingLegIds, setRefreshingLegIds] = useState<Record<string, boolean>>({});
   const [flightValidationResults, setFlightValidationResults] = useState<Record<string, FlightProviderValidationResult>>({});
   const [validationModal, setValidationModal] = useState<FlightValidationModalState | null>(null);
   const persistedFlightValidationResults = useMemo(
@@ -521,7 +536,7 @@ export function FriendsConfigProvider({
   const currentSnapshot = buildSaveableConfigSnapshot(buildExportPayload(), demoReferenceTime);
   const hasPendingChanges = currentSnapshot !== savedSnapshot;
   const trackedIdentifiers = extractFriendTrackerIdentifiers(buildExportPayload());
-  const latestCronRun = cronDashboard.history[0] ?? null;
+  const latestCronRun = Array.isArray(cronDashboard.history) ? cronDashboard.history[0] ?? null : null;
   const validationIssues = buildValidationIssuesForTrip(selectedTrip);
   const hasValidationErrors = validationIssues.length > 0;
 
@@ -1255,6 +1270,107 @@ export function FriendsConfigProvider({
     }
   }
 
+  async function forceRefreshFlightLeg(friendId: string, legId: string) {
+    const activeTrip = selectedTrip;
+    const friend = activeTrip?.friends.find((entry) => entry.id === friendId);
+    const leg = friend?.flights.find((entry) => entry.id === legId);
+
+    if (!friend || !leg) {
+      return;
+    }
+
+    const identifiers = getFlightLegRefreshIdentifiers(leg);
+    const displayIdentifier = identifiers[0] ?? normalizeFriendFlightIdentifier(leg.flightNumber) ?? `leg ${legId}`;
+
+    if (identifiers.length === 0) {
+      setNotice({
+        type: 'error',
+        text: 'Add a public flight number or a real ICAO24 lock before forcing a route refresh.',
+      });
+      return;
+    }
+
+    setRefreshingLegIds((current) => ({ ...current, [legId]: true }));
+    setNotice(null);
+
+    try {
+      const enrichmentResponse = await fetch('/api/tracker/cron/enrichment', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          trigger: 'manual-admin',
+          identifiers,
+          requestedBy: 'chantal config leg force refresh',
+        }),
+      });
+
+      const enrichmentPayload = await enrichmentResponse.json() as { error?: string };
+      if (!enrichmentResponse.ok) {
+        throw new Error(enrichmentPayload.error || `Unable to run the targeted refresh for ${displayIdentifier}.`);
+      }
+
+      const queryParams = new URLSearchParams({
+        q: identifiers.join(','),
+        refresh: '1',
+      });
+      const trackerResponse = await fetch(`/api/tracker?${queryParams.toString()}`);
+      const trackerPayload = await trackerResponse.json() as {
+        error?: string;
+        matchedIdentifiers?: string[];
+        flights?: Array<{
+          route?: { departureAirport?: string | null; arrivalAirport?: string | null } | null;
+          originPoint?: unknown;
+          current?: unknown;
+          track?: unknown[];
+          rawTrack?: unknown[];
+        }>;
+      };
+
+      if (!trackerResponse.ok) {
+        throw new Error(trackerPayload.error || `Unable to fetch refreshed tracker data for ${displayIdentifier}.`);
+      }
+
+      await refreshCronDashboard();
+
+      const matchedIdentifiers = Array.isArray(trackerPayload.matchedIdentifiers) ? trackerPayload.matchedIdentifiers : [];
+      const flights = Array.isArray(trackerPayload.flights) ? trackerPayload.flights : [];
+      const hasRouteData = flights.some((flight) => Boolean(
+        flight.originPoint
+        || flight.current
+        || (Array.isArray(flight.track) && flight.track.length > 0)
+        || (Array.isArray(flight.rawTrack) && flight.rawTrack.length > 0)
+        || flight.route?.departureAirport
+        || flight.route?.arrivalAirport
+      ));
+
+      if (matchedIdentifiers.length === 0) {
+        setNotice({
+          type: 'error',
+          text: `Force refresh ran for ${displayIdentifier}, but no live or cached match was found yet.`,
+        });
+        return;
+      }
+
+      setNotice({
+        type: hasRouteData ? 'success' : 'error',
+        text: hasRouteData
+          ? `Route/track refresh finished for ${displayIdentifier}.`
+          : `Force refresh ran for ${displayIdentifier}, but route/track data is still unavailable from the providers.`,
+      });
+    } catch (error) {
+      setNotice({
+        type: 'error',
+        text: error instanceof Error ? error.message : 'Unable to refresh this flight leg right now.',
+      });
+    } finally {
+      setRefreshingLegIds((current) => {
+        const nextState = { ...current };
+        delete nextState[legId];
+        return nextState;
+      });
+    }
+  }
+
   function handleExport() {
     setJsonNotice(null);
 
@@ -1520,6 +1636,7 @@ export function FriendsConfigProvider({
     hasValidationErrors,
     availableValidationProviders,
     flightValidationResults: combinedFlightValidationResults,
+    refreshingLegIds,
     validationModal,
     updateTrip,
     updateSelectedTrip,
@@ -1530,6 +1647,7 @@ export function FriendsConfigProvider({
     addTrip,
     handleCronToggle,
     handleRunCronNow,
+    forceRefreshFlightLeg,
     validateFlightLeg,
     runValidationModal,
     toggleValidationProvider,
@@ -1572,6 +1690,7 @@ export function FriendsConfigProvider({
     availableValidationProviders,
     flightValidationResults,
     combinedFlightValidationResults,
+    refreshingLegIds,
     validationModal,
     lastSavedConfig,
   ]);

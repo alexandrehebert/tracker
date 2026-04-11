@@ -24,8 +24,10 @@ export function FlightLegCard({ friendId, leg, legIndex, totalLegs }: FlightLegC
     activeAirportField,
     airportSuggestions,
     flightValidationResults,
+    refreshingLegIds,
     updateFriend,
     moveFriendFlight,
+    forceRefreshFlightLeg,
     validateFlightLeg,
   } = useFriendsConfig();
 
@@ -41,7 +43,9 @@ export function FlightLegCard({ friendId, leg, legIndex, totalLegs }: FlightLegC
   const arrivalInputRef = useRef<HTMLInputElement | null>(null);
   const hasAppliedValidation = leg.validatedFlight?.status === 'matched' || leg.validatedFlight?.status === 'warning';
   const isValidationLoading = validationResult?.status === 'loading';
+  const isRouteRefreshLoading = Boolean(refreshingLegIds[leg.id]);
   const normalizedFlightNumber = normalizeFlightRadarFlightNumber(leg.flightNumber);
+  const canForceRefresh = Boolean(normalizedFlightNumber || leg.resolvedIcao24?.trim());
   const showInlineValidationBanner = Boolean(
     validationResult
       && validationResult.status !== 'idle'
@@ -139,6 +143,19 @@ export function FlightLegCard({ friendId, leg, legIndex, totalLegs }: FlightLegC
               <RefreshCw className={`h-3.5 w-3.5 ${isValidationLoading ? 'animate-spin' : ''}`} />
             )}
             {isValidationLoading ? 'Validating…' : hasAppliedValidation ? 'Validated' : 'Validate flight'}
+          </button>
+          <button
+            type="button"
+            aria-label={`Force refresh route for leg ${legIndex + 1}`}
+            title="Run a targeted refresh for this flight to try seeding route and track data"
+            disabled={!canForceRefresh || isRouteRefreshLoading}
+            onClick={() => {
+              void forceRefreshFlightLeg(friendId, leg.id);
+            }}
+            className="inline-flex items-center gap-1 rounded-full border border-violet-400/30 bg-violet-500/10 px-3 py-1.5 text-xs font-medium text-violet-100 transition hover:bg-violet-500/20 disabled:cursor-not-allowed disabled:opacity-45"
+          >
+            <RefreshCw className={`h-3.5 w-3.5 ${isRouteRefreshLoading ? 'animate-spin' : ''}`} />
+            {isRouteRefreshLoading ? 'Refreshing…' : 'Force refresh route'}
           </button>
           <button
             type="button"
