@@ -480,7 +480,7 @@ function hasLikelyReachedArrivalAirport(
     return false;
   }
 
-  if (status.flight?.onGround || status.flight?.current?.onGround) {
+  if (status.flight?.current?.onGround || (status.flight?.onGround && status.flight?.route.firstSeen != null)) {
     const landedTimeMs = (status.flight?.route.lastSeen != null ? status.flight.route.lastSeen * 1000 : null)
       ?? (status.flight?.lastContact != null ? status.flight.lastContact * 1000 : null)
       ?? getFriendStatusReferenceTimeMs(status);

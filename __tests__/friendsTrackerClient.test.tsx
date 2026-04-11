@@ -634,6 +634,104 @@ describe('FriendsTrackerClient', () => {
     });
   });
 
+  it('keeps a friend at the departure airport when matched flight is on-ground without GPS and departure time just passed', async () => {
+    const nowSeconds = Math.floor(Date.now() / 1000);
+
+    vi.spyOn(window, 'fetch').mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          query: 'AF123',
+          requestedIdentifiers: ['AF123'],
+          matchedIdentifiers: ['AF123'],
+          notFoundIdentifiers: [],
+          fetchedAt: Date.now(),
+          flights: [
+            {
+              icao24: 'abc-onground',
+              callsign: 'AF123',
+              flightNumber: 'AF123',
+              originCountry: 'France',
+              matchedBy: ['AF123'],
+              lastContact: nowSeconds - 5,
+              current: null,
+              originPoint: null,
+              track: [],
+              rawTrack: [],
+              onGround: true,
+              velocity: 0,
+              heading: null,
+              verticalRate: null,
+              geoAltitude: null,
+              baroAltitude: null,
+              squawk: null,
+              category: null,
+              route: {
+                departureAirport: 'LIS',
+                arrivalAirport: 'MAD',
+                firstSeen: null,
+                lastSeen: null,
+              },
+              dataSource: 'opensky',
+              sourceDetails: [],
+            },
+          ],
+        }),
+        {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        },
+      ),
+    );
+
+    render(
+      <FriendsTrackerClient
+        map={map}
+        initialConfig={{
+          ...initialConfig,
+          friends: [
+            {
+              id: 'friend-1',
+              name: 'Alice',
+              flights: [
+                {
+                  id: 'leg-1',
+                  flightNumber: 'AF123',
+                  departureTime: new Date(Date.now() - 5 * 60 * 1000).toISOString(),
+                  from: 'LIS',
+                  to: 'MAD',
+                },
+              ],
+            },
+          ],
+        }}
+        airportMarkers={[
+          { id: 'lis', code: 'LIS', label: 'Lisbon', latitude: 38.7742, longitude: -9.1342, usage: 'both' },
+          { id: 'mad', code: 'MAD', label: 'Madrid', latitude: 40.4983, longitude: -3.5676, usage: 'both' },
+        ]}
+      />,
+    );
+
+    expect(await screen.findByText(/chantal crew tracker/i)).toBeInTheDocument();
+
+    await waitFor(() => {
+      const staticFriendMarkers = latestFlightMapProps?.staticFriendMarkers as Array<{
+        id: string;
+        latitude: number;
+        longitude: number;
+      }> | undefined;
+
+      expect(staticFriendMarkers).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            id: 'friend-1',
+            latitude: 38.7742,
+            longitude: -9.1342,
+          }),
+        ]),
+      );
+    });
+  });
+
   it('pins a non-traveler friend to the configured current airport even without any flights', async () => {
     render(
       <FriendsTrackerClient
