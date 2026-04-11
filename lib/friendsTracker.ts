@@ -563,6 +563,20 @@ export function normalizeFriendFlightIdentifier(value: string | null | undefined
     : '';
 }
 
+const REAL_ICAO24_PATTERN = /^[0-9A-F]{6}$/;
+
+function normalizeConfiguredResolvedIcao24(value: string | null | undefined): string {
+  const normalized = normalizeFriendFlightIdentifier(value);
+  return REAL_ICAO24_PATTERN.test(normalized) ? normalized : '';
+}
+
+function getFlightTrackingIdentifiersForLeg(leg: Pick<FriendFlightLeg, 'resolvedIcao24' | 'flightNumber'>): string[] {
+  return Array.from(new Set([
+    normalizeConfiguredResolvedIcao24(leg.resolvedIcao24),
+    normalizeFriendFlightIdentifier(leg.flightNumber),
+  ].filter(Boolean)));
+}
+
 export function resolveSuggestedFlightNumber(
   preferredIdentifier: string | null | undefined,
   suggestedFlightNumber: string | null | undefined,
@@ -859,7 +873,7 @@ export function normalizeFriendFlightLeg(
   legIndex = 0,
 ): FriendFlightLeg {
   const flightNumber = normalizeFriendFlightIdentifier(input?.flightNumber ?? null);
-  const resolvedIcao24 = normalizeFriendFlightIdentifier(input?.resolvedIcao24 ?? null);
+  const resolvedIcao24 = normalizeConfiguredResolvedIcao24(input?.resolvedIcao24 ?? null);
 
   return {
     id: typeof input?.id === 'string' && input.id.trim() ? input.id.trim() : getFallbackId('leg', friendIndex, legIndex),
@@ -980,8 +994,7 @@ export function extractFriendTrackerIdentifiers(config: FriendsTrackerConfig): s
   return Array.from(
     new Set(
       friends.flatMap((friend) => friend.flights)
-        .map((leg) => normalizeFriendFlightIdentifier(leg.resolvedIcao24 || leg.flightNumber))
-        .filter(Boolean),
+        .flatMap((leg) => getFlightTrackingIdentifiersForLeg(leg)),
     ),
   );
 }
@@ -1025,7 +1038,7 @@ export function findMatchingTrackedFlightsForLeg(
   leg: FriendFlightLeg,
   now = Date.now(),
 ): TrackedFlight[] {
-  const lockedIcao24 = normalizeFriendFlightIdentifier(leg.resolvedIcao24);
+  const lockedIcao24 = normalizeConfiguredResolvedIcao24(leg.resolvedIcao24);
   if (lockedIcao24) {
     return flights
       .filter((flight) => normalizeFriendFlightIdentifier(flight.icao24) === lockedIcao24)
@@ -1300,6 +1313,7 @@ export function applyAutoValidatedFriendFlights(
 
         const mergedValidation = mergeValidationSnapshots(leg.validatedFlight ?? null, autoValidationSnapshot, leg.flightNumber);
         const matchedFlightNumber = resolveSuggestedFlightNumber(leg.flightNumber, mergedValidation.matchedFlightNumber);
+        const nextResolvedIcao24 = normalizeConfiguredResolvedIcao24(mergedValidation.matchedIcao24 ?? leg.resolvedIcao24 ?? null) || null;
         const nextLeg: FriendFlightLeg = {
           ...leg,
           flightNumber: matchedFlightNumber || leg.flightNumber,
@@ -1310,8 +1324,8 @@ export function applyAutoValidatedFriendFlights(
             : leg.departureTimezone ?? null,
           from: mergedValidation.matchedDepartureAirport ?? leg.from ?? null,
           to: mergedValidation.matchedArrivalAirport ?? leg.to ?? null,
-          resolvedIcao24: mergedValidation.matchedIcao24 ?? leg.resolvedIcao24 ?? null,
-          lastResolvedAt: mergedValidation.matchedIcao24
+          resolvedIcao24: nextResolvedIcao24,
+          lastResolvedAt: nextResolvedIcao24
             ? mergedValidation.lastCheckedAt ?? now
             : leg.lastResolvedAt ?? null,
           validatedFlight: mergedValidation,
@@ -1348,7 +1362,9 @@ export function shouldAutoLockFriendFlight(
   flight: TrackedFlight | null,
   now = Date.now(),
 ): boolean {
-  if (!flight || normalizeFriendFlightIdentifier(leg.resolvedIcao24)) {
+  const candidateIcao24 = normalizeConfiguredResolvedIcao24(flight?.icao24);
+
+  if (!flight || !candidateIcao24 || normalizeConfiguredResolvedIcao24(leg.resolvedIcao24)) {
     return false;
   }
 

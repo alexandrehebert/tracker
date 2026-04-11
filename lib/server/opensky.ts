@@ -1875,7 +1875,8 @@ async function enrichSearchResultWithExternalSources(
     forceFlightAwareRefresh: options.forceFlightAwareRefresh,
   });
   const withAirlabs = await enrichSearchResultWithAirlabs(withFlightAware, options);
-  return enrichSearchResultWithAviationstack(withAirlabs);
+  const withAviationstack = await enrichSearchResultWithAviationstack(withAirlabs);
+  return hydrateTrackerPayloadWithAirportFallbacks(withAviationstack);
 }
 
 async function searchFlightsFromExternalSourcesOnly(
@@ -1935,6 +1936,136 @@ function projectPoint(params: {
     altitude,
     heading,
     onGround,
+  };
+}
+
+function hasFlightMapTelemetry(flight: TrackedFlight): boolean {
+  return Boolean(
+    flight.current
+      || flight.originPoint
+      || flight.track.length > 0
+      || (flight.rawTrack?.length ?? 0) > 0,
+  );
+}
+
+function createAirportFallbackPoint(airport: AirportDetails | null, time: number | null): FlightMapPoint | null {
+  if (!airport || airport.latitude == null || airport.longitude == null) {
+    return null;
+  }
+
+  return projectPoint({
+    latitude: airport.latitude,
+    longitude: airport.longitude,
+    time,
+    altitude: 0,
+    heading: null,
+    onGround: true,
+  });
+}
+
+function dedupeFallbackPoints(points: Array<FlightMapPoint | null | undefined>): FlightMapPoint[] {
+  const deduped = new Map<string, FlightMapPoint>();
+
+  for (const point of points) {
+    if (!point) {
+      continue;
+    }
+
+    const key = point.time != null
+      ? `t:${point.time}:${point.latitude.toFixed(4)}:${point.longitude.toFixed(4)}`
+      : `c:${point.latitude.toFixed(4)}:${point.longitude.toFixed(4)}:${point.onGround ? 'g' : 'a'}`;
+
+    deduped.set(key, point);
+  }
+
+  return Array.from(deduped.values()).sort((first, second) => {
+    if (first.time == null && second.time == null) {
+      return 0;
+    }
+
+    if (first.time == null) {
+      return -1;
+    }
+
+    if (second.time == null) {
+      return 1;
+    }
+
+    return first.time - second.time;
+  });
+}
+
+async function hydrateTrackerPayloadWithAirportFallbacks(payload: TrackerApiResponse): Promise<TrackerApiResponse> {
+  const airportCodes = new Set<string>();
+
+  for (const flight of payload.flights) {
+    if (hasFlightMapTelemetry(flight)) {
+      continue;
+    }
+
+    for (const code of [flight.route.departureAirport, flight.route.arrivalAirport]) {
+      const normalizedCode = normalizeIdentifier(code ?? '');
+      if (normalizedCode) {
+        airportCodes.add(normalizedCode);
+      }
+    }
+  }
+
+  if (airportCodes.size === 0) {
+    return payload;
+  }
+
+  const airportLookup = new Map(
+    await Promise.all(
+      Array.from(airportCodes).map(async (code) => [code, await lookupAirportDetails(code)] as const),
+    ),
+  );
+
+  const flights = payload.flights.map((flight) => {
+    if (hasFlightMapTelemetry(flight)) {
+      return flight;
+    }
+
+    const departureCode = normalizeIdentifier(flight.route.departureAirport ?? '');
+    const arrivalCode = normalizeIdentifier(flight.route.arrivalAirport ?? '');
+    const departureAirport = departureCode ? airportLookup.get(departureCode) ?? null : null;
+    const arrivalAirport = arrivalCode ? airportLookup.get(arrivalCode) ?? null : null;
+    const departurePoint = createAirportFallbackPoint(
+      departureAirport,
+      flight.route.firstSeen ?? flight.lastContact ?? flight.route.lastSeen ?? null,
+    );
+    const arrivalPoint = createAirportFallbackPoint(
+      arrivalAirport,
+      flight.route.lastSeen ?? flight.lastContact ?? flight.route.firstSeen ?? null,
+    );
+    const fallbackRoute = dedupeFallbackPoints([departurePoint, arrivalPoint]);
+
+    if (fallbackRoute.length === 0) {
+      return flight;
+    }
+
+    const originPoint = flight.originPoint ?? departurePoint ?? fallbackRoute[0] ?? null;
+    const currentPoint = flight.current
+      ?? (flight.route.lastSeen != null
+        ? arrivalPoint ?? fallbackRoute.at(-1) ?? originPoint
+        : departurePoint ?? arrivalPoint ?? fallbackRoute.at(-1) ?? originPoint);
+
+    return {
+      ...flight,
+      lastContact: flight.lastContact ?? currentPoint?.time ?? flight.route.lastSeen ?? flight.route.firstSeen ?? null,
+      current: currentPoint,
+      originPoint,
+      track: flight.track.length > 0 ? flight.track : fallbackRoute,
+      rawTrack: (flight.rawTrack?.length ?? 0) > 0 ? (flight.rawTrack ?? []) : (flight.track.length > 0 ? flight.track : fallbackRoute),
+      onGround: flight.onGround || currentPoint?.onGround === true || flight.route.lastSeen != null,
+      heading: flight.heading ?? currentPoint?.heading ?? null,
+      geoAltitude: flight.geoAltitude ?? currentPoint?.altitude ?? null,
+    } satisfies TrackedFlight;
+  });
+
+  return {
+    ...payload,
+    flights,
   };
 }
 
@@ -2269,7 +2400,7 @@ export async function searchFlights(query: string, options: SearchFlightsOptions
   ].join(':');
   const cachedResult = options.forceRefresh ? null : await readFlightSearchCache(cacheKey, options.cacheOnly);
   if (cachedResult && payloadHasRawTrackData(cachedResult)) {
-    return mergeWithDemoPayload(cachedResult);
+    return mergeWithDemoPayload(await hydrateTrackerPayloadWithAirportFallbacks(cachedResult));
   }
 
   if (options.cacheOnly) {

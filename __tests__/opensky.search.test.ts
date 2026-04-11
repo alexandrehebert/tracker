@@ -744,6 +744,106 @@ describe('searchFlights', () => {
     expect(cachedResult?.flights[0]?.fetchHistory).toHaveLength(1_701);
   });
 
+  it('backfills airport route points for a landed provider-only match with no live telemetry', async () => {
+    delete process.env.OPENSKY_CLIENT_ID;
+    delete process.env.OPENSKY_CLIENT_SECRET;
+    delete process.env.AVIATION_STACK_API_KEY;
+    delete process.env.FLIGHT_AWARE_API_KEY;
+    delete process.env.FLIGHTAWARE_API_KEY;
+    process.env.AIRLABS_API_KEY = 'airlabs-key';
+
+    vi.doMock('~/lib/server/airports', () => ({
+      lookupAirportDetails: vi.fn(async (code: string) => {
+        if (code === 'YUL') {
+          return {
+            code: 'YUL',
+            iata: 'YUL',
+            icao: 'CYUL',
+            name: 'Montréal–Trudeau',
+            city: 'Montreal',
+            country: 'Canada',
+            latitude: 45.4706,
+            longitude: -73.7408,
+            timezone: 'America/Toronto',
+          };
+        }
+
+        if (code === 'CDG') {
+          return {
+            code: 'CDG',
+            iata: 'CDG',
+            icao: 'LFPG',
+            name: 'Paris Charles de Gaulle',
+            city: 'Paris',
+            country: 'France',
+            latitude: 49.0097,
+            longitude: 2.5479,
+            timezone: 'Europe/Paris',
+          };
+        }
+
+        return null;
+      }),
+    }));
+
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      response: {
+        hex: null,
+        reg_number: 'F-GZNF',
+        aircraft_icao: 'B77W',
+        airline_iata: 'AF',
+        airline_icao: 'AFR',
+        airline_name: 'Air France',
+        flight_number: '345',
+        flight_icao: 'AFR345',
+        flight_iata: 'AF345',
+        dep_iata: 'YUL',
+        dep_icao: 'CYUL',
+        dep_name: 'Montreal Trudeau',
+        dep_time_ts: 1_775_862_360,
+        arr_iata: 'CDG',
+        arr_icao: 'LFPG',
+        arr_name: 'Paris Charles de Gaulle',
+        arr_time_ts: 1_775_885_280,
+        updated: 1_775_885_280,
+        lat: null,
+        lng: null,
+        alt: null,
+        dir: null,
+        speed: null,
+        status: 'landed',
+        model: 'Boeing 777-300ER',
+      },
+    }), {
+      status: 200,
+      headers: { 'Content-Type': 'application/json' },
+    }));
+
+    vi.stubGlobal('fetch', fetchMock);
+
+    const searchFlights = await loadSearchFlights();
+    const result = await searchFlights('AF345', { forceRefresh: true });
+
+    expect(result.flights[0]?.route).toEqual(expect.objectContaining({
+      departureAirport: 'YUL',
+      arrivalAirport: 'CDG',
+    }));
+    expect(result.flights[0]?.originPoint).toEqual(expect.objectContaining({
+      latitude: 45.4706,
+      longitude: -73.7408,
+      onGround: true,
+    }));
+    expect(result.flights[0]?.current).toEqual(expect.objectContaining({
+      latitude: 49.0097,
+      longitude: 2.5479,
+      onGround: true,
+    }));
+    expect(result.flights[0]?.track).toEqual([
+      expect.objectContaining({ latitude: 45.4706, longitude: -73.7408 }),
+      expect.objectContaining({ latitude: 49.0097, longitude: 2.5479 }),
+    ]);
+  });
+
   it('bypasses the cached AirLabs live snapshot when forceRefresh is requested', async () => {
     delete process.env.OPENSKY_CLIENT_ID;
     delete process.env.OPENSKY_CLIENT_SECRET;

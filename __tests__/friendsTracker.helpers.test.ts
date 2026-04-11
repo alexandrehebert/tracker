@@ -75,6 +75,29 @@ describe('friends tracker helpers', () => {
     expect(extractFriendTrackerIdentifiers(config)).toEqual(['3C675A', 'AF123']);
   });
 
+  it('keeps the public flight number when a leg is locked to a synthetic provider identifier', () => {
+    const config: FriendsTrackerConfig = {
+      updatedAt: null,
+      updatedBy: null,
+      friends: [
+        {
+          id: 'friend-1',
+          name: 'Alex',
+          flights: [
+            {
+              id: 'leg-1',
+              flightNumber: 'AF345',
+              departureTime: '2026-04-10T23:06:00.000Z',
+              resolvedIcao24: 'FA-AFR345-1775628379-AIRLINE-348P',
+            },
+          ],
+        },
+      ],
+    };
+
+    expect(extractFriendTrackerIdentifiers(config)).toEqual(['AF345']);
+  });
+
   it('matches configured friends to flights and enables ICAO24 locking near departure time', () => {
     const departureTime = Date.UTC(2026, 3, 14, 9, 30);
     const config: FriendsTrackerConfig = {
