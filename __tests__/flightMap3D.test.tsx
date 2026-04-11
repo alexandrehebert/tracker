@@ -962,6 +962,10 @@ describe('FlightMap3D', () => {
     );
 
     expect(bubble).toBeDefined();
+    expect(friendElement?.style.width).toBe('46.5px');
+    expect(friendElement?.style.height).toBe('46.5px');
+    expect(bubble?.style.width).toBe('46.5px');
+    expect(bubble?.style.height).toBe('46.5px');
     expect(bubble?.style.border).toContain('rgb(34, 197, 94)');
     expect(bubble?.style.backgroundColor).toBe('rgb(34, 197, 94)');
     expect(bubble?.style.boxShadow).toContain('rgba(34, 197, 94, 0.12)');
@@ -1012,6 +1016,10 @@ describe('FlightMap3D', () => {
 
     expect(friendOverlay).toBeDefined();
     expect(clusterGrid).not.toBeNull();
+    expect(friendElement?.style.width).toBe('57px');
+    expect(friendElement?.style.height).toBe('57px');
+    expect(clusterGrid?.style.width).toBe('57px');
+    expect(clusterGrid?.style.height).toBe('57px');
     expect(clusterGrid?.querySelectorAll('[data-friend-cluster-segment]').length).toBe(4);
     expect(clusterGrid?.querySelectorAll('img').length).toBe(4);
     expect(clusterGrid?.querySelectorAll('[data-friend-cluster-segment] span').length).toBe(0);

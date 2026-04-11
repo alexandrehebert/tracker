@@ -42,6 +42,11 @@ const PATH_POINT_DUPLICATE_DISTANCE_KM = 12;
 const GROUND_RING_ALTITUDE = COUNTRY_ALTITUDE + 0.001;
 const FRIEND_AVATAR_CLUSTER_DEGREES = 2.5;
 const FRIEND_AVATAR_ALTITUDE = DEPARTURE_MARKER_ALTITUDE + 0.006;
+const FRIEND_BUBBLE_SCALE = 1.5;
+const FRIEND_SINGLE_BUBBLE_SIZE = 31 * FRIEND_BUBBLE_SCALE;
+const FRIEND_CLUSTER_BUBBLE_SIZE = 38 * FRIEND_BUBBLE_SCALE;
+const FRIEND_BUBBLE_FRAME_PADDING = 1.5 * FRIEND_BUBBLE_SCALE;
+const FRIEND_BUBBLE_INITIALS_FONT_SIZE = 11 * FRIEND_BUBBLE_SCALE;
 const FRIEND_CLUSTER_FALLBACK_FILL = '#020617';
 const FRIEND_CLUSTER_ACCENT = '#93c5fd';
 const FRIEND_CLUSTER_BORDER_COLOR = 'rgba(147,197,253,0.24)';
@@ -1382,7 +1387,7 @@ export default function FlightMap3D({
         if (item.type === 'friend-avatar') {
           const isSingle = item.members.length === 1;
           const firstMember = item.members[0]!;
-          const size = isSingle ? 31 : 38;
+          const size = isSingle ? FRIEND_SINGLE_BUBBLE_SIZE : FRIEND_CLUSTER_BUBBLE_SIZE;
           const halfSize = size / 2;
           const staleCount = item.members.filter((member) => member.isStale).length;
           const hasStaleMembers = staleCount > 0;
@@ -1426,7 +1431,7 @@ export default function FlightMap3D({
             bubble.style.borderRadius = '50%';
             bubble.style.overflow = 'hidden';
             bubble.style.boxSizing = 'border-box';
-            bubble.style.padding = '1.5px';
+            bubble.style.padding = `${FRIEND_BUBBLE_FRAME_PADDING}px`;
             bubble.style.backgroundColor = firstMember.color;
             bubble.style.border = `0.3px solid ${firstMember.color}`;
             bubble.style.boxShadow = `0 0 0 3px ${withAlphaColor(firstMember.color, 0.12)}, 0 6px 16px rgba(2,6,23,0.4)`;
@@ -1459,7 +1464,7 @@ export default function FlightMap3D({
               initials.textContent = getFriendInitials(firstMember.name);
               initials.style.color = '#ffffff';
               initials.style.textShadow = '0 1px 1px rgba(2,6,23,0.4)';
-              initials.style.fontSize = '11px';
+              initials.style.fontSize = `${FRIEND_BUBBLE_INITIALS_FONT_SIZE}px`;
               initials.style.fontWeight = '700';
               initials.style.fontFamily = 'ui-sans-serif, system-ui, sans-serif';
               surface.appendChild(initials);
@@ -1484,7 +1489,7 @@ export default function FlightMap3D({
             clusterContainer.style.borderRadius = '50%';
             clusterContainer.style.position = 'relative';
             clusterContainer.style.boxSizing = 'border-box';
-            clusterContainer.style.padding = '1.5px';
+            clusterContainer.style.padding = `${FRIEND_BUBBLE_FRAME_PADDING}px`;
             clusterContainer.style.background = FRIEND_CLUSTER_ACCENT;
             clusterContainer.style.border = `0.3px solid ${FRIEND_CLUSTER_BORDER_COLOR}`;
             clusterContainer.style.boxShadow = `0 0 0 3px ${withAlphaColor(FRIEND_CLUSTER_ACCENT, 0.12)}, 0 6px 16px rgba(2,6,23,0.4)`;
@@ -1493,7 +1498,7 @@ export default function FlightMap3D({
 
             const fillLayer = document.createElement('div');
             fillLayer.style.position = 'absolute';
-            fillLayer.style.inset = '1.5px';
+            fillLayer.style.inset = `${FRIEND_BUBBLE_FRAME_PADDING}px`;
             fillLayer.style.borderRadius = '50%';
             fillLayer.style.overflow = 'hidden';
             fillLayer.style.background = FRIEND_CLUSTER_FALLBACK_FILL;
