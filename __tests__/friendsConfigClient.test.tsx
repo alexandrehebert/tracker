@@ -1359,7 +1359,7 @@ describe('FriendsConfigClient', () => {
     const aliceCard = screen.getByDisplayValue('Alice').closest('section');
     expect(aliceCard).not.toBeNull();
 
-    await user.click(within(aliceCard as HTMLElement).getByRole('button', { name: /force refresh route for leg 1/i }));
+    await user.click(within(aliceCard as HTMLElement).getByRole('button', { name: /seed route\/track for leg 1/i }));
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith('/api/tracker/cron/enrichment', expect.objectContaining({
