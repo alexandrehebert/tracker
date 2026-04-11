@@ -1075,6 +1075,158 @@ describe('FriendsTrackerClient', () => {
     });
   });
 
+  it('renders a landed route-only match at the arrival airport instead of leaving the friend at departure', async () => {
+    const nowMs = Date.now();
+    const nowSeconds = Math.floor(nowMs / 1000);
+
+    vi.spyOn(window, 'fetch').mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          query: 'AF345,MU554',
+          requestedIdentifiers: ['AF345', 'MU554'],
+          matchedIdentifiers: ['AF345', 'MU554'],
+          notFoundIdentifiers: [],
+          fetchedAt: nowMs,
+          flights: [
+            {
+              icao24: 'fa-afr345-yul-cdg',
+              callsign: 'AFR345',
+              flightNumber: '345',
+              originCountry: 'France',
+              matchedBy: ['AF345'],
+              lastContact: nowSeconds - (20 * 60),
+              current: null,
+              originPoint: null,
+              track: [],
+              rawTrack: [],
+              onGround: false,
+              velocity: null,
+              heading: null,
+              verticalRate: null,
+              geoAltitude: null,
+              baroAltitude: null,
+              squawk: null,
+              category: null,
+              route: {
+                departureAirport: 'YUL',
+                arrivalAirport: 'CDG',
+                firstSeen: nowSeconds - (7 * 60 * 60),
+                lastSeen: nowSeconds - (20 * 60),
+              },
+              dataSource: 'airlabs',
+              sourceDetails: [],
+            },
+            {
+              icao24: 'fa-ces554-upcoming',
+              callsign: 'CES554',
+              flightNumber: '554',
+              originCountry: 'China',
+              matchedBy: ['MU554'],
+              lastContact: nowSeconds - (90 * 60),
+              current: null,
+              originPoint: null,
+              track: [],
+              rawTrack: [],
+              onGround: false,
+              velocity: null,
+              heading: null,
+              verticalRate: null,
+              geoAltitude: null,
+              baroAltitude: null,
+              squawk: null,
+              category: null,
+              route: {
+                departureAirport: 'CDG',
+                arrivalAirport: 'PVG',
+                firstSeen: nowSeconds - (9 * 60 * 60),
+                lastSeen: nowSeconds - (4 * 60 * 60),
+              },
+              dataSource: 'airlabs',
+              sourceDetails: [],
+            },
+          ],
+        }),
+        {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        },
+      ),
+    );
+
+    render(
+      <FriendsTrackerClient
+        map={map}
+        initialConfig={{
+          ...initialConfig,
+          destinationAirport: 'SIN',
+          friends: [
+            {
+              id: 'friend-alex',
+              name: 'Alex',
+              flights: [
+                {
+                  id: 'leg-alex-1',
+                  flightNumber: 'AF345',
+                  departureTime: new Date(nowMs - (7 * 60 * 60 * 1000)).toISOString(),
+                  arrivalTime: new Date(nowMs - (20 * 60 * 1000)).toISOString(),
+                  from: 'YUL',
+                  to: 'CDG',
+                },
+                {
+                  id: 'leg-alex-2',
+                  flightNumber: 'MU554',
+                  departureTime: new Date(nowMs + (3 * 24 * 60 * 60 * 1000)).toISOString(),
+                  from: 'CDG',
+                  to: 'PVG',
+                },
+              ],
+            },
+          ],
+        }}
+        airportMarkers={[
+          { id: 'yul', code: 'YUL', label: 'Montreal Trudeau', latitude: 45.4706, longitude: -73.7408, usage: 'both' },
+          { id: 'cdg', code: 'CDG', label: 'Paris Charles de Gaulle', latitude: 49.0097, longitude: 2.5479, usage: 'both' },
+          { id: 'pvg', code: 'PVG', label: 'Shanghai Pudong', latitude: 31.1443, longitude: 121.8083, usage: 'both' },
+        ]}
+      />,
+    );
+
+    expect(await screen.findByText(/^alex$/i)).toBeInTheDocument();
+
+    await waitFor(() => {
+      const visibleFlights = latestFlightMapProps?.flights as Array<{
+        icao24: string;
+        current?: { latitude: number; longitude: number; onGround: boolean } | null;
+        originPoint?: { latitude: number; longitude: number } | null;
+        track?: Array<unknown>;
+      }> | undefined;
+      const staticFriendMarkers = latestFlightMapProps?.staticFriendMarkers as Array<{ id: string }> | undefined;
+
+      expect(visibleFlights).toEqual(
+        expect.arrayContaining([
+          expect.objectContaining({
+            icao24: 'fa-afr345-yul-cdg',
+            current: expect.objectContaining({
+              latitude: 49.0097,
+              longitude: 2.5479,
+              onGround: true,
+            }),
+            originPoint: expect.objectContaining({
+              latitude: 45.4706,
+              longitude: -73.7408,
+            }),
+            track: expect.arrayContaining([
+              expect.objectContaining({ latitude: 45.4706, longitude: -73.7408 }),
+              expect.objectContaining({ latitude: 49.0097, longitude: 2.5479 }),
+            ]),
+          }),
+        ]),
+      );
+      expect(visibleFlights?.map((flight) => flight.icao24) ?? []).not.toContain('fa-ces554-upcoming');
+      expect(staticFriendMarkers?.some((marker) => marker.id === 'friend-alex')).toBe(false);
+    });
+  });
+
   it('marks last-known map avatars as stale after extended silence in live mode', async () => {
     const nowMs = Date.now();
     const nowSeconds = Math.floor(nowMs / 1000);

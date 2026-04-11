@@ -44,6 +44,7 @@ import { FlightMapProvider } from '../flight/contexts/FlightMapProvider';
 import FlightMapViewToggle, { type TrackerMapView } from '../flight/FlightMapViewToggle';
 import type {
   FlightMapAirportMarker,
+  FlightMapPoint,
   FriendAvatarInfo,
   FriendAvatarMarker,
   TrackerApiResponse,
@@ -347,28 +348,137 @@ function getFriendStatusReferenceTimeMs(status: FriendFlightStatus): number {
   return Number.isFinite(scheduledTime) ? scheduledTime : Number.NEGATIVE_INFINITY;
 }
 
-function hasRenderableMapPosition(status: FriendFlightStatus): boolean {
-  const flight = status.flight;
+function getNativeRenderableFlightPoint(flight: TrackedFlight | null | undefined): FlightMapPoint | null {
   if (!flight) {
-    return false;
+    return null;
   }
 
   const latestSnapshotPoint = [...(flight.fetchHistory ?? [])]
     .map((snapshot) => snapshot.current)
     .find((point) => point != null) ?? null;
 
+  return flight.current
+    ?? flight.track.at(-1)
+    ?? flight.rawTrack?.at(-1)
+    ?? latestSnapshotPoint
+    ?? flight.originPoint
+    ?? null;
+}
+
+function createAirportFallbackPoint(
+  airportMarker: FlightMapAirportMarker,
+  time: number | null,
+  heading: number | null,
+  onGround: boolean,
+): FlightMapPoint {
+  return {
+    time,
+    latitude: airportMarker.latitude,
+    longitude: airportMarker.longitude,
+    x: 0,
+    y: 0,
+    altitude: 0,
+    heading,
+    onGround,
+  };
+}
+
+function buildCompletedFallbackMapFlight(
+  status: FriendFlightStatus,
+  airportMarkerByCode: Map<string, FlightMapAirportMarker>,
+  referenceTimeMs: number,
+): TrackedFlight | null {
+  const flight = status.flight;
+  if (!flight) {
+    return null;
+  }
+
+  const departureCode = normalizeAirportCode(status.leg.from ?? flight.route.departureAirport);
+  const arrivalCode = normalizeAirportCode(status.leg.to ?? flight.route.arrivalAirport);
+  if (!departureCode || !arrivalCode) {
+    return null;
+  }
+
+  const departureMarker = airportMarkerByCode.get(departureCode);
+  const arrivalMarker = airportMarkerByCode.get(arrivalCode);
+  if (!departureMarker || !arrivalMarker) {
+    return null;
+  }
+
+  const departureTimeMs = Date.parse(status.leg.departureTime);
+  const arrivalTimeMs = Date.parse(status.leg.arrivalTime ?? '');
+  const routeFirstSeenMs = typeof flight.route.firstSeen === 'number' ? flight.route.firstSeen * 1000 : null;
+  const routeLastSeenMs = typeof flight.route.lastSeen === 'number' ? flight.route.lastSeen * 1000 : null;
+  const hasStarted = (routeFirstSeenMs != null && routeFirstSeenMs <= referenceTimeMs)
+    || (Number.isFinite(departureTimeMs) && departureTimeMs <= referenceTimeMs);
+
+  if (!hasStarted) {
+    return null;
+  }
+
+  const hasReachedArrival = hasLikelyReachedArrivalAirport(status, referenceTimeMs, airportMarkerByCode)
+    || (routeLastSeenMs != null && routeLastSeenMs <= referenceTimeMs)
+    || (Number.isFinite(arrivalTimeMs) && arrivalTimeMs <= referenceTimeMs);
+
+  if (!hasReachedArrival) {
+    return null;
+  }
+
+  const heading = computeAirportBearingDegrees(departureMarker, arrivalMarker);
+  const departureTime = typeof flight.route.firstSeen === 'number'
+    ? flight.route.firstSeen
+    : (Number.isFinite(departureTimeMs) ? Math.floor(departureTimeMs / 1000) : flight.lastContact ?? null);
+  const arrivalTime = typeof flight.route.lastSeen === 'number'
+    ? flight.route.lastSeen
+    : (Number.isFinite(arrivalTimeMs) ? Math.floor(arrivalTimeMs / 1000) : flight.lastContact ?? departureTime);
+  const originPoint = createAirportFallbackPoint(departureMarker, departureTime, heading, true);
+  const currentPoint = createAirportFallbackPoint(arrivalMarker, arrivalTime, heading, true);
+  const routePoints = departureMarker.code === arrivalMarker.code
+    ? [currentPoint]
+    : [originPoint, currentPoint];
+
+  return {
+    ...flight,
+    current: currentPoint,
+    originPoint,
+    track: routePoints,
+    rawTrack: routePoints,
+    onGround: true,
+    heading: flight.heading ?? heading,
+    lastContact: currentPoint.time ?? flight.lastContact,
+  };
+}
+
+function hasRenderableMapPosition(
+  status: FriendFlightStatus,
+  airportMarkerByCode?: Map<string, FlightMapAirportMarker>,
+  referenceTimeMs = Date.now(),
+): boolean {
+  if (getNativeRenderableFlightPoint(status.flight)) {
+    return true;
+  }
+
   return Boolean(
-    flight.current
-      ?? flight.track.at(-1)
-      ?? flight.rawTrack?.at(-1)
-      ?? latestSnapshotPoint
-      ?? flight.originPoint,
+    airportMarkerByCode
+      && buildCompletedFallbackMapFlight(status, airportMarkerByCode, referenceTimeMs),
   );
 }
 
-function getRenderableMapFlight(status: FriendFlightStatus | null | undefined): TrackedFlight | null {
-  return status?.flight && hasRenderableMapPosition(status)
-    ? status.flight
+function getRenderableMapFlight(
+  status: FriendFlightStatus | null | undefined,
+  airportMarkerByCode?: Map<string, FlightMapAirportMarker>,
+  referenceTimeMs = Date.now(),
+): TrackedFlight | null {
+  if (!status?.flight) {
+    return null;
+  }
+
+  if (getNativeRenderableFlightPoint(status.flight)) {
+    return status.flight;
+  }
+
+  return airportMarkerByCode
+    ? buildCompletedFallbackMapFlight(status, airportMarkerByCode, referenceTimeMs)
     : null;
 }
 
@@ -390,24 +500,35 @@ function isStatusStaleForLiveMap(
   return ageMs != null && ageMs >= STALE_LAST_KNOWN_THRESHOLD_MS;
 }
 
-function pickPreferredMapStatus(friendStatuses: FriendFlightStatus[], now = Date.now()): FriendFlightStatus | null {
+function pickPreferredMapStatus(
+  friendStatuses: FriendFlightStatus[],
+  airportMarkerByCode: Map<string, FlightMapAirportMarker>,
+  now = Date.now(),
+): FriendFlightStatus | null {
   if (!friendStatuses.length) {
     return null;
   }
 
-  const matchedStatuses = friendStatuses.filter((status) => status.status === 'matched' && status.flight);
-  const positionedMatchedStatuses = matchedStatuses.filter((status) => hasRenderableMapPosition(status));
+  const positionedMatchedStatuses = friendStatuses
+    .filter((status) => status.status === 'matched' && status.flight)
+    .map((status) => ({
+      status,
+      renderableFlight: getRenderableMapFlight(status, airportMarkerByCode, now),
+    }))
+    .filter((entry) => entry.renderableFlight != null);
 
   if (positionedMatchedStatuses.length > 0) {
-    const inFlightStatuses = positionedMatchedStatuses.filter((status) => !status.flight?.onGround);
+    const inFlightStatuses = positionedMatchedStatuses.filter((entry) => !entry.renderableFlight?.onGround);
     const candidateStatuses = inFlightStatuses.length > 0 ? inFlightStatuses : positionedMatchedStatuses;
 
-    return candidateStatuses.reduce<FriendFlightStatus | null>((best, status) => {
+    return candidateStatuses.reduce<FriendFlightStatus | null>((best, entry) => {
       if (!best) {
-        return status;
+        return entry.status;
       }
 
-      return getFriendStatusReferenceTimeMs(status) >= getFriendStatusReferenceTimeMs(best) ? status : best;
+      return getFriendStatusReferenceTimeMs(entry.status) >= getFriendStatusReferenceTimeMs(best)
+        ? entry.status
+        : best;
     }, null);
   }
 
@@ -480,9 +601,14 @@ function hasLikelyReachedArrivalAirport(
     return false;
   }
 
+  const routeLastSeenMs = status.flight?.route.lastSeen != null ? status.flight.route.lastSeen * 1000 : null;
+  if (routeLastSeenMs != null && routeLastSeenMs <= now) {
+    return true;
+  }
+
   if (status.flight?.current?.onGround || (status.flight?.onGround && status.flight?.route.firstSeen != null)) {
-    const landedTimeMs = (status.flight?.route.lastSeen != null ? status.flight.route.lastSeen * 1000 : null)
-      ?? (status.flight?.lastContact != null ? status.flight.lastContact * 1000 : null)
+    const landedTimeMs = (status.flight?.lastContact != null ? status.flight.lastContact * 1000 : null)
+      ?? routeLastSeenMs
       ?? getFriendStatusReferenceTimeMs(status);
 
     return Number.isFinite(landedTimeMs) && landedTimeMs <= now;
@@ -524,7 +650,7 @@ function resolveStaticFriendMarkerAirportCode(
       : (departureCode ?? arrivalCode ?? configuredAirportCode);
   }
 
-  const nextPlannedStatus = pickPreferredMapStatus(friendStatuses, now);
+  const nextPlannedStatus = pickPreferredMapStatus(friendStatuses, airportMarkerByCode, now);
   return configuredAirportCode
     ?? normalizeAirportCode(nextPlannedStatus?.leg.from)
     ?? normalizeAirportCode(nextPlannedStatus?.leg.to);
@@ -1142,35 +1268,41 @@ function FriendsTrackerDashboard({
     [config, displayFlights, referenceTimeMs],
   );
 
+  const airportMarkerByCode = useMemo(() => {
+    return new Map(
+      airportMarkers.map((marker) => [marker.code.toUpperCase().trim(), marker] as const),
+    );
+  }, [airportMarkers]);
+
   const mapStatuses = useMemo(() => {
     return config.friends.flatMap((friend) => {
       const friendStatuses = statuses.filter((status) => status.friend.id === friend.id);
-      const preferredStatus = pickPreferredMapStatus(friendStatuses, referenceTimeMs);
+      const preferredStatus = pickPreferredMapStatus(friendStatuses, airportMarkerByCode, referenceTimeMs);
       return preferredStatus ? [preferredStatus] : [];
     });
-  }, [config.friends, referenceTimeMs, statuses]);
+  }, [airportMarkerByCode, config.friends, referenceTimeMs, statuses]);
 
   const visibleFlights = useMemo(() => {
     const flightsByIcao24 = new Map<string, TrackedFlight>();
 
     for (const status of mapStatuses) {
-      const renderableFlight = getRenderableMapFlight(status);
+      const renderableFlight = getRenderableMapFlight(status, airportMarkerByCode, referenceTimeMs);
       if (renderableFlight && !flightsByIcao24.has(renderableFlight.icao24)) {
         flightsByIcao24.set(renderableFlight.icao24, renderableFlight);
       }
     }
 
     return Array.from(flightsByIcao24.values());
-  }, [mapStatuses]);
+  }, [airportMarkerByCode, mapStatuses, referenceTimeMs]);
 
   const flightLabels = useMemo(() => {
     return Object.fromEntries(
       mapStatuses.flatMap((status) => {
-        const renderableFlight = getRenderableMapFlight(status);
+        const renderableFlight = getRenderableMapFlight(status, airportMarkerByCode, referenceTimeMs);
         return renderableFlight ? [[renderableFlight.icao24, status.label] as const] : [];
       }),
     ) satisfies Record<string, string>;
-  }, [mapStatuses]);
+  }, [airportMarkerByCode, mapStatuses, referenceTimeMs]);
 
   const friendColorIndexMap = useMemo(() => {
     return new Map(
@@ -1188,7 +1320,7 @@ function FriendsTrackerDashboard({
     const result = new Map<string, number>();
 
     for (const status of mapStatuses) {
-      const renderableFlight = getRenderableMapFlight(status);
+      const renderableFlight = getRenderableMapFlight(status, airportMarkerByCode, referenceTimeMs);
       if (!renderableFlight) {
         continue;
       }
@@ -1202,14 +1334,14 @@ function FriendsTrackerDashboard({
     }
 
     return result;
-  }, [friendColorIndexMap, mapStatuses]);
+  }, [airportMarkerByCode, friendColorIndexMap, mapStatuses, referenceTimeMs]);
 
   const flightColorMap = useMemo(() => {
     const result = new Map<string, string>();
     const chosenIndexes = new Map<string, number>();
 
     for (const status of mapStatuses) {
-      const renderableFlight = getRenderableMapFlight(status);
+      const renderableFlight = getRenderableMapFlight(status, airportMarkerByCode, referenceTimeMs);
       if (!renderableFlight) {
         continue;
       }
@@ -1227,13 +1359,13 @@ function FriendsTrackerDashboard({
     }
 
     return result;
-  }, [friendColorIndexMap, friendColorMap, mapStatuses]);
+  }, [airportMarkerByCode, friendColorIndexMap, friendColorMap, mapStatuses, referenceTimeMs]);
 
   const flightAvatars = useMemo<Record<string, FriendAvatarInfo[]>>(() => {
     const result: Record<string, FriendAvatarInfo[]> = {};
 
     for (const status of mapStatuses) {
-      const renderableFlight = getRenderableMapFlight(status);
+      const renderableFlight = getRenderableMapFlight(status, airportMarkerByCode, referenceTimeMs);
       if (!renderableFlight) {
         continue;
       }
@@ -1260,7 +1392,7 @@ function FriendsTrackerDashboard({
     }
 
     return result;
-  }, [flightColorIndexMap, flightColorMap, friendColorIndexMap, friendColorMap, isWaybackActive, liveTimeMs, mapStatuses]);
+  }, [airportMarkerByCode, flightColorIndexMap, flightColorMap, friendColorIndexMap, friendColorMap, isWaybackActive, liveTimeMs, mapStatuses, referenceTimeMs]);
 
   const handleOpenFlightLink = useCallback((flightNumber: string | null | undefined) => {
     openFlightRadarUrl(flightNumber);
@@ -1278,9 +1410,6 @@ function FriendsTrackerDashboard({
   }, [handleSelectFriend, mapStatuses]);
 
   const staticFriendMarkers = useMemo<FriendAvatarMarker[]>(() => {
-    const airportMarkerByCode = new Map(
-      airportMarkers.map((marker) => [marker.code.toUpperCase().trim(), marker] as const),
-    );
     const statusesByFriendId = new Map<string, FriendFlightStatus[]>();
     const mapStatusByFriendId = new Map<string, FriendFlightStatus>();
 
@@ -1299,7 +1428,7 @@ function FriendsTrackerDashboard({
 
     return config.friends.flatMap((friend, index) => {
       const mapStatus = mapStatusByFriendId.get(friend.id) ?? null;
-      if (getRenderableMapFlight(mapStatus)) {
+      if (getRenderableMapFlight(mapStatus, airportMarkerByCode, referenceTimeMs)) {
         return [];
       }
 
@@ -1349,7 +1478,7 @@ function FriendsTrackerDashboard({
     [mapStatuses, selectedFriendId],
   );
 
-  const selectedIcao24 = getRenderableMapFlight(selectedMapStatus)?.icao24 ?? null;
+  const selectedIcao24 = getRenderableMapFlight(selectedMapStatus, airportMarkerByCode, referenceTimeMs)?.icao24 ?? null;
 
   useEffect(() => {
     if (!isRefreshing) {
