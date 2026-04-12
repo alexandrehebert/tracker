@@ -320,6 +320,27 @@ function computeTimelineCursorPosition(
     return i + progress;
   }
 
+  for (let i = 0; i < currentTripLegs.length; i++) {
+    const leg = currentTripLegs[i]!;
+    const departureTimeMs = Date.parse(leg.departureTime);
+    const arrivalTimeMs = resolveLegArrivalTimeMs(leg);
+
+    if (
+      !Number.isNaN(departureTimeMs)
+      && arrivalTimeMs != null
+      && arrivalTimeMs > departureTimeMs
+      && departureTimeMs <= now
+      && now < arrivalTimeMs
+    ) {
+      const scheduledProgress = clampNumber(
+        (now - departureTimeMs) / (arrivalTimeMs - departureTimeMs),
+        0.05,
+        0.95,
+      );
+      return i + scheduledProgress;
+    }
+  }
+
   let lastPastLegIndex = -1;
   for (let i = 0; i < currentTripLegs.length; i++) {
     const dep = Date.parse(currentTripLegs[i]!.departureTime);
@@ -364,6 +385,26 @@ function getFriendStatusReferenceTimeMs(status: FriendFlightStatus): number {
 
   const scheduledTime = Date.parse(status.leg.departureTime);
   return Number.isFinite(scheduledTime) ? scheduledTime : Number.NEGATIVE_INFINITY;
+}
+
+function resolveLegArrivalTimeMs(leg: Pick<FriendFlightLeg, 'arrivalTime' | 'validatedFlight'>): number | null {
+  const candidateValues = [
+    typeof leg.arrivalTime === 'string' ? leg.arrivalTime : null,
+    typeof leg.validatedFlight?.matchedArrivalTime === 'string' ? leg.validatedFlight.matchedArrivalTime : null,
+  ];
+
+  for (const value of candidateValues) {
+    if (!value) {
+      continue;
+    }
+
+    const parsedTimeMs = Date.parse(value);
+    if (Number.isFinite(parsedTimeMs)) {
+      return parsedTimeMs;
+    }
+  }
+
+  return null;
 }
 
 function getNativeRenderableFlightPoint(flight: TrackedFlight | null | undefined): FlightMapPoint | null {
@@ -632,6 +673,11 @@ function hasLikelyReachedArrivalAirport(
     return Number.isFinite(landedTimeMs) && landedTimeMs <= now;
   }
 
+  const scheduledArrivalTimeMs = resolveLegArrivalTimeMs(status.leg);
+  if (scheduledArrivalTimeMs != null) {
+    return now >= scheduledArrivalTimeMs;
+  }
+
   const fromCode = normalizeAirportCode(status.leg.from);
   const toCode = normalizeAirportCode(status.leg.to);
   const fromMarker = fromCode ? airportMarkerByCode.get(fromCode) : undefined;
@@ -806,11 +852,15 @@ function FriendTimelineCard({
     const departureMs = Date.parse(leg.departureTime);
     return !Number.isNaN(departureMs) && departureMs > referenceTimeMs;
   });
+  const hasInterpolatedInFlightCursor = cursorRaw != null
+    && cursorRaw > 0
+    && cursorRaw < Math.max(airports.length - 1, 0)
+    && Math.abs(cursorRaw % 1) > 0.001;
   const hasNotStartedTrip = !hasArrivedAtDestination && activeLegIndex < 0 && !hasStartedTrip;
   const isOnConnectionStop = !hasArrivedAtDestination && activeLegIndex < 0 && hasStartedTrip && hasFutureLeg;
   const tripProgressLabel = hasArrivedAtDestination
     ? 'arrived'
-    : activeLegIndex >= 0
+    : activeLegIndex >= 0 || hasInterpolatedInFlightCursor
     ? 'in flight'
     : hasNotStartedTrip
     ? 'not started'

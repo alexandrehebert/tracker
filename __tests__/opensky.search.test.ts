@@ -340,6 +340,154 @@ describe('searchFlights', () => {
     expect(statesRequestCount).toBe(2);
   });
 
+  it('hydrates OpenSky telemetry automatically from a provider-derived callsign when searching by flight number only', async () => {
+    process.env.OPENSKY_CLIENT_ID = 'client-from-env';
+    process.env.OPENSKY_CLIENT_SECRET = 'secret-from-env';
+    process.env.AIRLABS_API_KEY = 'airlabs-key';
+
+    let statesRequestCount = 0;
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = typeof input === 'string' ? input : input.toString();
+
+      if (url.includes('/protocol/openid-connect/token')) {
+        return new Response(JSON.stringify({ access_token: 'token-123', expires_in: 1800 }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      if (url.includes('/states/all')) {
+        statesRequestCount += 1;
+
+        if (statesRequestCount === 1) {
+          return new Response(JSON.stringify({ time: 1_700_000_600, states: [] }), {
+            status: 200,
+            headers: { 'Content-Type': 'application/json' },
+          });
+        }
+
+        return new Response(JSON.stringify({
+          time: 1_700_000_900,
+          states: [[
+            '4b180b',
+            'SWR438A',
+            'Switzerland',
+            1_700_000_880,
+            1_700_000_900,
+            5.2,
+            47.8,
+            10_000,
+            false,
+            220,
+            98,
+            0,
+            null,
+            10_100,
+            '1234',
+            false,
+            0,
+            null,
+          ]],
+        }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      if (url.includes('/flights/all')) {
+        return new Response(JSON.stringify([]), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      if (url.includes('/tracks/all')) {
+        return new Response(JSON.stringify({
+          path: [
+            [1_700_000_300, 51.47, -0.4543, 0, 90, true],
+            [1_700_000_900, 47.8, 5.2, 10_100, 98, false],
+          ],
+        }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      if (url.includes('/flights/aircraft')) {
+        return new Response(JSON.stringify([
+          {
+            icao24: '4b180b',
+            firstSeen: 1_700_000_300,
+            lastSeen: 1_700_001_500,
+            estDepartureAirport: 'LHR',
+            estArrivalAirport: 'ZRH',
+            callsign: 'SWR438A',
+          },
+        ]), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      if (url.includes('airlabs.co') || url.includes('airlabs')) {
+        return new Response(JSON.stringify({
+          response: [
+            {
+              hex: '4b180b',
+              airline_iata: 'LX',
+              airline_icao: 'SWR',
+              airline_name: 'Swiss',
+              flight_iata: 'LX325',
+              flight_icao: 'SWR438A',
+              flight_number: '325',
+              dep_iata: 'LHR',
+              arr_iata: 'ZRH',
+              dep_estimated_ts: 1_700_000_300,
+              arr_estimated_ts: 1_700_001_500,
+              status: 'en-route',
+              lat: null,
+              lng: null,
+              updated: null,
+              dir: null,
+              alt: null,
+              speed: null,
+              reg_number: 'HB-JCT',
+              aircraft_icao: 'A320',
+              model: 'Airbus A320',
+            },
+          ],
+        }), {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        });
+      }
+
+      throw new Error(`Unhandled fetch URL in test: ${url}`);
+    });
+
+    vi.stubGlobal('fetch', fetchMock);
+
+    const searchFlights = await loadSearchFlights();
+    const result = await searchFlights('LX325');
+
+    expect(result.matchedIdentifiers).toEqual(['LX325']);
+    expect(result.notFoundIdentifiers).toEqual([]);
+    expect(result.flights[0]).toMatchObject({
+      icao24: '4b180b',
+      callsign: 'SWR438A',
+      dataSource: 'hybrid',
+      route: {
+        departureAirport: 'LHR',
+        arrivalAirport: 'ZRH',
+      },
+    });
+    expect(result.flights[0]?.track.length).toBeGreaterThan(0);
+    expect(result.flights[0]?.sourceDetails).toEqual(expect.arrayContaining([
+      expect.objectContaining({ source: 'opensky', usedInResult: true }),
+      expect.objectContaining({ source: 'airlabs', usedInResult: true }),
+    ]));
+  });
+
   it('reuses cached flight search results for up to the configured ttl', async () => {
     process.env.OPENSKY_CLIENT_ID = 'client-from-env';
     process.env.OPENSKY_CLIENT_SECRET = 'secret-from-env';

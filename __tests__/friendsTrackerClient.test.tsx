@@ -853,6 +853,74 @@ describe('FriendsTrackerClient', () => {
     });
   });
 
+  it('keeps a departed connection leg in-flight on the timeline until its scheduled arrival when no telemetry is available yet', async () => {
+    const nowMs = Date.UTC(2026, 3, 12, 17, 0, 0);
+    vi.spyOn(Date, 'now').mockReturnValue(nowMs);
+
+    vi.spyOn(window, 'fetch').mockResolvedValue(
+      new Response(
+        JSON.stringify({
+          query: 'LX325,LX176',
+          requestedIdentifiers: ['LX325', 'LX176'],
+          matchedIdentifiers: [],
+          notFoundIdentifiers: ['LX325', 'LX176'],
+          fetchedAt: nowMs,
+          flights: [],
+        }),
+        {
+          status: 200,
+          headers: { 'Content-Type': 'application/json' },
+        },
+      ),
+    );
+
+    render(
+      <FriendsTrackerClient
+        map={map}
+        initialConfig={{
+          ...initialConfig,
+          destinationAirport: 'SIN',
+          friends: [
+            {
+              id: 'friend-chris',
+              name: 'Chris',
+              flights: [
+                {
+                  id: 'leg-lx325',
+                  flightNumber: 'LX325',
+                  departureTime: '2026-04-12T16:15:00.000Z',
+                  arrivalTime: '2026-04-12T18:00:00.000Z',
+                  from: 'LHR',
+                  to: 'ZRH',
+                },
+                {
+                  id: 'leg-lx176',
+                  flightNumber: 'LX176',
+                  departureTime: '2026-04-12T20:40:00.000Z',
+                  arrivalTime: '2026-04-13T09:10:00.000Z',
+                  from: 'ZRH',
+                  to: 'SIN',
+                },
+              ],
+            },
+          ],
+        }}
+        airportMarkers={[
+          { id: 'lhr', code: 'LHR', label: 'London Heathrow', latitude: 51.47, longitude: -0.4543, usage: 'both' },
+          { id: 'zrh', code: 'ZRH', label: 'Zurich', latitude: 47.4581, longitude: 8.5555, usage: 'both' },
+          { id: 'sin', code: 'SIN', label: 'Singapore', latitude: 1.3644, longitude: 103.9915, usage: 'both' },
+        ]}
+      />,
+    );
+
+    expect(await screen.findByText(/chantal crew tracker/i)).toBeInTheDocument();
+
+    const chrisCard = screen.getByRole('button', { name: /focus chris on map/i });
+    expect(chrisCard).toHaveTextContent(/in flight/i);
+    expect(screen.getByLabelText(/flight lx325/i)).toBeInTheDocument();
+    expect(screen.queryByLabelText(/flight lx325 arrived/i)).not.toBeInTheDocument();
+  });
+
   it('pins a non-traveler friend to the configured current airport even without any flights', async () => {
     render(
       <FriendsTrackerClient

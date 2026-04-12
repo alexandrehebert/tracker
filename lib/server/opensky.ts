@@ -1880,6 +1880,198 @@ async function enrichSearchResultWithExternalSources(
   return hydrateTrackerPayloadWithAirportFallbacks(withAviationstack);
 }
 
+function isRealAircraftIcao24(value: string | null | undefined): boolean {
+  return /^[0-9A-F]{6}$/i.test(normalizeIdentifier(value ?? ''));
+}
+
+function getOpenSkyHydrationIdentifiersForFlight(flight: TrackedFlight): string[] {
+  const identifiers = new Set<string>();
+
+  const aircraftIcao24 = normalizeIdentifier(flight.aircraft?.icao24 ?? '');
+  if (isRealAircraftIcao24(aircraftIcao24)) {
+    identifiers.add(aircraftIcao24);
+  }
+
+  const callsign = normalizeIdentifier(flight.callsign);
+  if (callsign) {
+    identifiers.add(callsign);
+  }
+
+  const airlineIcao = normalizeIdentifier(flight.airline?.icao ?? '');
+  const flightNumber = normalizeIdentifier(flight.flightNumber ?? '');
+  if (airlineIcao && flightNumber) {
+    identifiers.add(`${airlineIcao}${flightNumber}`);
+  }
+
+  return Array.from(identifiers);
+}
+
+function chooseOpenSkyHydrationMatch(
+  flight: TrackedFlight,
+  candidates: TrackedFlight[],
+  identifiers: string[],
+): TrackedFlight | null {
+  if (candidates.length === 0) {
+    return null;
+  }
+
+  const normalizedFlightIcao24 = normalizeIdentifier(flight.aircraft?.icao24 ?? flight.icao24 ?? '');
+  const normalizedFlightCallsign = normalizeIdentifier(flight.callsign);
+  const normalizedDepartureAirport = normalizeIdentifier(flight.route.departureAirport ?? '');
+  const normalizedArrivalAirport = normalizeIdentifier(flight.route.arrivalAirport ?? '');
+  const identifierSet = new Set(identifiers.map((identifier) => normalizeIdentifier(identifier)).filter(Boolean));
+
+  let bestMatch: TrackedFlight | null = null;
+  let bestScore = Number.NEGATIVE_INFINITY;
+
+  for (const candidate of candidates) {
+    let score = 0;
+    const candidateIcao24 = normalizeIdentifier(candidate.icao24);
+    const candidateCallsign = normalizeIdentifier(candidate.callsign);
+    const candidateMatchedBy = new Set((candidate.matchedBy ?? []).map((value) => normalizeIdentifier(value)).filter(Boolean));
+
+    if (normalizedFlightIcao24 && candidateIcao24 === normalizedFlightIcao24) {
+      score += 120;
+    }
+
+    if (normalizedFlightCallsign && candidateCallsign === normalizedFlightCallsign) {
+      score += 90;
+    }
+
+    for (const identifier of identifierSet) {
+      if (candidateMatchedBy.has(identifier)) {
+        score += 40;
+      }
+    }
+
+    if (normalizedDepartureAirport && normalizeIdentifier(candidate.route.departureAirport ?? '') === normalizedDepartureAirport) {
+      score += 12;
+    }
+
+    if (normalizedArrivalAirport && normalizeIdentifier(candidate.route.arrivalAirport ?? '') === normalizedArrivalAirport) {
+      score += 12;
+    }
+
+    if ((candidate.rawTrack?.length ?? 0) > 0 || candidate.track.length > 0 || candidate.current) {
+      score += 8;
+    }
+
+    if ((candidate.lastContact ?? Number.NEGATIVE_INFINITY) > (bestMatch?.lastContact ?? Number.NEGATIVE_INFINITY)) {
+      score += 1;
+    }
+
+    if (score > bestScore) {
+      bestScore = score;
+      bestMatch = candidate;
+    }
+  }
+
+  return bestMatch;
+}
+
+function mergeProviderFlightWithOpenSky(flight: TrackedFlight, openSkyFlight: TrackedFlight): TrackedFlight {
+  const mergedMatchedBy = Array.from(new Set([
+    ...(flight.matchedBy ?? []),
+    ...(openSkyFlight.matchedBy ?? []),
+  ]));
+
+  return {
+    ...flight,
+    ...openSkyFlight,
+    icao24: openSkyFlight.icao24 || flight.icao24,
+    callsign: openSkyFlight.callsign || flight.callsign,
+    matchedBy: mergedMatchedBy,
+    lastContact: openSkyFlight.lastContact ?? flight.lastContact,
+    current: openSkyFlight.current ?? flight.current,
+    originPoint: openSkyFlight.originPoint ?? flight.originPoint,
+    track: openSkyFlight.track.length > 0 ? openSkyFlight.track : flight.track,
+    rawTrack: (openSkyFlight.rawTrack?.length ?? 0) > 0 ? (openSkyFlight.rawTrack ?? []) : (flight.rawTrack ?? flight.track),
+    onGround: openSkyFlight.onGround,
+    velocity: openSkyFlight.velocity ?? flight.velocity,
+    heading: openSkyFlight.heading ?? flight.heading,
+    verticalRate: openSkyFlight.verticalRate ?? flight.verticalRate,
+    geoAltitude: openSkyFlight.geoAltitude ?? flight.geoAltitude,
+    baroAltitude: openSkyFlight.baroAltitude ?? flight.baroAltitude,
+    squawk: openSkyFlight.squawk ?? flight.squawk,
+    category: openSkyFlight.category ?? flight.category,
+    route: {
+      departureAirport: openSkyFlight.route.departureAirport ?? flight.route.departureAirport,
+      arrivalAirport: openSkyFlight.route.arrivalAirport ?? flight.route.arrivalAirport,
+      firstSeen: openSkyFlight.route.firstSeen ?? flight.route.firstSeen,
+      lastSeen: openSkyFlight.route.lastSeen ?? flight.route.lastSeen,
+    },
+    flightNumber: flight.flightNumber ?? openSkyFlight.flightNumber,
+    airline: flight.airline ?? openSkyFlight.airline,
+    aircraft: flight.aircraft ?? openSkyFlight.aircraft,
+    dataSource: 'hybrid',
+    sourceDetails: mergeSourceDetails(flight.sourceDetails, openSkyFlight.sourceDetails),
+  };
+}
+
+async function hydrateProviderFlightsWithOpenSky(
+  payload: TrackerApiResponse,
+  options: { openSkyDataMode?: 'full' | 'snapshot-only' } = {},
+): Promise<TrackerApiResponse> {
+  const flightsNeedingHydration = payload.flights.filter((flight) => !hasFlightMapTelemetry(flight));
+  if (flightsNeedingHydration.length === 0) {
+    return payload;
+  }
+
+  const hydrationIdentifiersByFlight = new Map<string, string[]>();
+  const hydrationIdentifiers = new Set<string>();
+
+  for (const flight of flightsNeedingHydration) {
+    const identifiers = getOpenSkyHydrationIdentifiersForFlight(flight);
+    if (identifiers.length === 0) {
+      continue;
+    }
+
+    hydrationIdentifiersByFlight.set(flight.icao24, identifiers);
+    for (const identifier of identifiers) {
+      hydrationIdentifiers.add(identifier);
+    }
+  }
+
+  if (hydrationIdentifiers.size === 0) {
+    return payload;
+  }
+
+  const openSkyPayload = await fetchFreshFlights(
+    Array.from(hydrationIdentifiers).join(','),
+    Array.from(hydrationIdentifiers),
+    { openSkyDataMode: options.openSkyDataMode },
+  );
+
+  if (openSkyPayload.flights.length === 0) {
+    return payload;
+  }
+
+  const hydratedFlights = payload.flights.map((flight) => {
+    const identifiers = hydrationIdentifiersByFlight.get(flight.icao24);
+    if (!identifiers || hasFlightMapTelemetry(flight)) {
+      return flight;
+    }
+
+    const candidates = openSkyPayload.flights.filter((candidate) => {
+      const candidateMatchedBy = new Set((candidate.matchedBy ?? []).map((value) => normalizeIdentifier(value)).filter(Boolean));
+      return identifiers.some((identifier) => {
+        const normalizedIdentifier = normalizeIdentifier(identifier);
+        return candidateMatchedBy.has(normalizedIdentifier)
+          || normalizeIdentifier(candidate.callsign) === normalizedIdentifier
+          || normalizeIdentifier(candidate.icao24) === normalizedIdentifier;
+      });
+    });
+
+    const bestMatch = chooseOpenSkyHydrationMatch(flight, candidates, identifiers);
+    return bestMatch ? mergeProviderFlightWithOpenSky(flight, bestMatch) : flight;
+  });
+
+  return hydrateTrackerPayloadWithAirportFallbacks({
+    ...payload,
+    flights: hydratedFlights,
+  });
+}
+
 async function searchFlightsFromExternalSourcesOnly(
   query: string,
   requestedIdentifiers: string[],
@@ -2674,13 +2866,16 @@ export async function searchFlights(query: string, options: SearchFlightsOptions
       const freshResult = await fetchFreshFlights(remainingQuery, remainingIdentifiers, {
         openSkyDataMode,
       });
-      const resultToCache = allowExternalData
+      const enrichedResult = allowExternalData
         ? await enrichSearchResultWithExternalSources(freshResult, {
             forceRefresh: options.forceRefresh,
             preferCachedFlightAware,
             forceFlightAwareRefresh: options.forceFlightAwareRefresh,
           })
         : freshResult;
+      const resultToCache = allowExternalData
+        ? await hydrateProviderFlightsWithOpenSky(enrichedResult, { openSkyDataMode })
+        : enrichedResult;
       const cachedResult = await writeFlightSearchCache(
         cacheKey,
         mergeWithDemoPayload(resultToCache),
